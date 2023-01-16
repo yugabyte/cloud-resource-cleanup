@@ -1,3 +1,5 @@
+# Copyright (c) Yugabyte, Inc.
+
 import abc
 import datetime
 import logging
@@ -5,8 +7,6 @@ import os
 from typing import Dict
 
 from crc.utils import init_logging
-
-# Copyright (c) Yugabyte, Inc. All rights reserved.
 
 
 class Service(abc.ABC):

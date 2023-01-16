@@ -1,3 +1,5 @@
+# Copyright (c) Yugabyte, Inc.
+
 GCP_REGION_LIST = [
     "us-east1",
     "asia-east1",

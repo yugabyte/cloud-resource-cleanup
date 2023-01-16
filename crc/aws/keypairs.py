@@ -1,3 +1,5 @@
+# Copyright (c) Yugabyte, Inc.
+
 import datetime
 import logging
 import re

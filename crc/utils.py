@@ -1,4 +1,4 @@
-# Copyright (c) Yugabyte, Inc. All rights reserved.
+# Copyright (c) Yugabyte, Inc.
 
 import logging
 

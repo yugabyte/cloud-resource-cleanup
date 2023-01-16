@@ -1,3 +1,5 @@
+# Copyright (c) Yugabyte, Inc.
+
 import logging
 
 import boto3

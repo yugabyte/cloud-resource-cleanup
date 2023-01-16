@@ -1,3 +1,5 @@
+# Copyright (c) Yugabyte, Inc.
+
 import logging
 from typing import List
 

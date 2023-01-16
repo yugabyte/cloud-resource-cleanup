@@ -74,7 +74,9 @@ class VM(Service):
         logging.info(f"count of items in instance_names_to_stop: {count}")
         return count
 
-    def _get_filter(self, instance_state: List[str]) -> List[Dict[str, List[str]]]:
+    def _get_filter(
+        self, instance_state: List[str]
+    ) -> List[Dict[str, List[str]]]:
         """
         Creates a filter to be used when searching for instances, based on the provided instance state and the filter tags provided during initialization.
 
@@ -127,7 +129,9 @@ class VM(Service):
                     continue
 
                 instance_id = i["InstanceId"]
-                network_interface_id = i["NetworkInterfaces"][0]["NetworkInterfaceId"]
+                network_interface_id = i["NetworkInterfaces"][0][
+                    "NetworkInterfaceId"
+                ]
                 network_interface_details = ec2.describe_network_interfaces(
                     NetworkInterfaceIds=[network_interface_id]
                 )
@@ -138,7 +142,9 @@ class VM(Service):
                     tzinfo=network_interface_id_attached_time.tzinfo
                 )
 
-                if self.is_old(self.age, dt, network_interface_id_attached_time):
+                if self.is_old(
+                    self.age, dt, network_interface_id_attached_time
+                ):
                     instance_ids.append(instance_id)
                     instance_names.append(instance_name)
                     logging.info(
@@ -151,7 +157,9 @@ class VM(Service):
         return instance_ids, instance_names
 
     def _perform_operation(
-        self, operation_type: str, instance_state: List[str] = default_instance_state
+        self,
+        operation_type: str,
+        instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Perform the specified operation (delete or stop) on instances that match the specified filter labels and are older than the specified age.
@@ -161,7 +169,9 @@ class VM(Service):
         :type instance_state: List[str]
         """
         filter = self._get_filter(instance_state)
-        for region in get_all_regions(self.service_name, self.default_region_name):
+        for region in get_all_regions(
+            self.service_name, self.default_region_name
+        ):
             with boto3.client(self.service_name, region_name=region) as client:
                 instance_details = client.describe_instances(Filters=filter)
 
@@ -173,7 +183,9 @@ class VM(Service):
                 if instances_to_operate:
                     try:
                         if operation_type == "delete":
-                            client.terminate_instances(InstanceIds=instances_to_operate)
+                            client.terminate_instances(
+                                InstanceIds=instances_to_operate
+                            )
                             for i in range(len(instances_to_operate)):
                                 logging.info(
                                     f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
@@ -182,7 +194,9 @@ class VM(Service):
                                 instance_names_to_operate
                             )
                         elif operation_type == "stop":
-                            client.stop_instances(InstanceIds=instances_to_operate)
+                            client.stop_instances(
+                                InstanceIds=instances_to_operate
+                            )
                             for i in range(len(instances_to_operate)):
                                 logging.info(
                                     f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
@@ -195,7 +209,10 @@ class VM(Service):
                             f"Error occurred while {operation_type} instances: {e}"
                         )
 
-        if not self.instance_names_to_delete and not self.instance_names_to_stop:
+        if (
+            not self.instance_names_to_delete
+            and not self.instance_names_to_stop
+        ):
             logging.info(f"No instances to {operation_type}.")
 
         if operation_type == "delete":
@@ -208,7 +225,9 @@ class VM(Service):
                 f"number of instances stopped: {len(self.instance_names_to_stop)}"
             )
 
-    def delete(self, instance_state: List[str] = default_instance_state) -> None:
+    def delete(
+        self, instance_state: List[str] = default_instance_state
+    ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception tags.
 

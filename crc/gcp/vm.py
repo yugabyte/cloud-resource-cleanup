@@ -82,7 +82,9 @@ class VM(Service):
         return count
 
     def _perform_operation(
-        self, operation_type: str, instance_state: List[str] = default_instance_state
+        self,
+        operation_type: str,
+        instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Perform the specified operation (delete or stop) on VMs that match the specified filter labels and are older than the specified age.
@@ -93,7 +95,9 @@ class VM(Service):
         :type instance_state: List[str]
         """
         # Build the service for making API calls
-        with discovery.build(self.service_name, self.service_version) as service:
+        with discovery.build(
+            self.service_name, self.service_version
+        ) as service:
             request = service.zones().list(project=self.project_id)
             zones = request.execute()["items"]
             instance_client = compute_v1.InstancesClient()
@@ -101,7 +105,9 @@ class VM(Service):
         # Iterate over all zones and instances
         for zone_obj in zones:
             zone = zone_obj["name"]
-            for instance in instance_client.list(project=self.project_id, zone=zone):
+            for instance in instance_client.list(
+                project=self.project_id, zone=zone
+            ):
                 if instance.status not in instance_state:
                     continue
                 # Check if the instance has any labels that are in the exception list
@@ -117,8 +123,12 @@ class VM(Service):
                 ):
                     timestamp = instance.creation_timestamp
                     timestamp = timestamp[0:-3] + timestamp[-2:]
-                    created_timestamp = datetime.strptime(timestamp, self.time_format)
-                    dt = datetime.now().replace(tzinfo=created_timestamp.tzinfo)
+                    created_timestamp = datetime.strptime(
+                        timestamp, self.time_format
+                    )
+                    dt = datetime.now().replace(
+                        tzinfo=created_timestamp.tzinfo
+                    )
                     # Check if the instance is older than the specified age
                     if self.is_old(self.age, dt, created_timestamp):
                         try:
@@ -130,9 +140,13 @@ class VM(Service):
                                     instance=instance.name,
                                 ).execute()
                                 # log the instance that is being deleted
-                                logging.info(f"Deleting instance {instance.name}")
+                                logging.info(
+                                    f"Deleting instance {instance.name}"
+                                )
                                 # add the instance to the list of instances that have been deleted
-                                self.instance_names_to_delete.append(instance.name)
+                                self.instance_names_to_delete.append(
+                                    instance.name
+                                )
                             elif operation_type == "stop":
                                 # perform the stop operation
                                 service.instances().stop(
@@ -141,16 +155,22 @@ class VM(Service):
                                     instance=instance.name,
                                 ).execute()
                                 # log the instance that is being stopped
-                                logging.info(f"Stopping instance {instance.name}")
+                                logging.info(
+                                    f"Stopping instance {instance.name}"
+                                )
                                 # add the instance to the list of instances that have been stopped
-                                self.instance_names_to_stop.append(instance.name)
+                                self.instance_names_to_stop.append(
+                                    instance.name
+                                )
                         except Exception as e:
                             # log the error message if an exception occurs
                             logging.error(
                                 f"Error occurred while {operation_type} instance {instance.name}: {e}"
                             )
 
-    def delete(self, instance_state: List[str] = default_instance_state) -> None:
+    def delete(
+        self, instance_state: List[str] = default_instance_state
+    ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception labels.
 

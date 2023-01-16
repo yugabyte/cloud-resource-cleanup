@@ -16,6 +16,8 @@ def get_all_regions(service_name: str, default_region_name: str) -> List[str]:
     :rtype: List[str]
     """
     client = boto3.client(service_name, region_name=default_region_name)
-    regions = [region["RegionName"] for region in client.describe_regions()["Regions"]]
+    regions = [
+        region["RegionName"] for region in client.describe_regions()["Regions"]
+    ]
     logging.info(f"Retrieved list of regions: {regions}")
     return regions

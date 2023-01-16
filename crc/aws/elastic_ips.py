@@ -48,13 +48,17 @@ class ElasticIPs(Service):
         """
         eips_to_delete = {}
         # Iterate through all regions
-        for region in get_all_regions(self.service_name, self.default_region_name):
+        for region in get_all_regions(
+            self.service_name, self.default_region_name
+        ):
             with boto3.client(self.service_name, region_name=region) as client:
                 addresses_dict = client.describe_addresses()
                 # Iterate through all Elastic IPs
                 for eip_dict in addresses_dict["Addresses"]:
                     # Check that the Elastic IP is not associated with a network interface and has tags
-                    if ("NetworkInterfaceId" not in eip_dict) and ("Tags" in eip_dict):
+                    if ("NetworkInterfaceId" not in eip_dict) and (
+                        "Tags" in eip_dict
+                    ):
                         # Check if filter_tags are not empty
                         if not self.filter_tags:
                             eips_to_delete[eip_dict["PublicIp"]] = eip_dict[
@@ -74,9 +78,9 @@ class ElasticIPs(Service):
                                     tag["Key"] == key and tag["Value"] in value
                                     for key, value in self.filter_tags.items()
                                 ):
-                                    eips_to_delete[eip_dict["PublicIp"]] = eip_dict[
-                                        "AllocationId"
-                                    ]
+                                    eips_to_delete[
+                                        eip_dict["PublicIp"]
+                                    ] = eip_dict["AllocationId"]
 
         # Release the Elastic IPs
         with boto3.client(

@@ -15,7 +15,10 @@ class IP(Service):
     default_state = "RESERVED"
 
     def __init__(
-        self, project_id: str, filter_regex: List[str], exception_regex: List[str]
+        self,
+        project_id: str,
+        filter_regex: List[str],
+        exception_regex: List[str],
     ) -> None:
         """
         Initialize the IP class with the project id, filter regex, and exception regex.
@@ -46,9 +49,9 @@ class IP(Service):
                 name = address.name
                 if address.status != self.default_state:
                     continue
-                if any(regex in name for regex in self.filter_regex) and not any(
-                    regex in name for regex in self.exception_regex
-                ):
+                if any(
+                    regex in name for regex in self.filter_regex
+                ) and not any(regex in name for regex in self.exception_regex):
                     ips_to_delete.append(name)
 
             for ip in ips_to_delete:

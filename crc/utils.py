@@ -2,9 +2,7 @@
 
 import logging
 
-LOG_FORMATTER = (
-    "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
-)
+LOG_FORMATTER = "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
 
 
 def init_logging(filename: str, log_level: str = "debug"):

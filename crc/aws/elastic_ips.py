@@ -1,5 +1,7 @@
-import boto3
 import logging
+
+import boto3
+
 from crc.aws._base import get_all_regions
 from crc.service import Service
 

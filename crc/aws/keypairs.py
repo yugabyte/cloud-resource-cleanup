@@ -1,8 +1,10 @@
-import boto3
 import datetime
 import logging
 import re
 from typing import Dict, List
+
+import boto3
+
 from crc.aws._base import get_all_regions
 from crc.service import Service
 

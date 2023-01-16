@@ -1,6 +1,7 @@
-import boto3
 import logging
 from typing import List
+
+import boto3
 
 
 def get_all_regions(service_name: str, default_region_name: str) -> List[str]:

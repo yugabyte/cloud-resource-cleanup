@@ -1,8 +1,10 @@
 import logging
 from datetime import datetime
-from typing import List, Dict
+from typing import Dict, List
+
 from google.cloud import compute_v1
 from googleapiclient import discovery
+
 from crc.service import Service
 
 

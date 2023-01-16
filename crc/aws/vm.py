@@ -1,9 +1,11 @@
 # Copyright (c) Yugabyte, Inc.
 
-import boto3
 import datetime
 import logging
 from typing import Dict, List, Tuple
+
+import boto3
+
 from crc.aws._base import get_all_regions
 from crc.service import Service
 

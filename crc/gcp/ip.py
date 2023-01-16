@@ -1,22 +1,16 @@
-from typing import List
-from google.cloud import compute_v1
 import logging
+from typing import List
+
+from google.cloud import compute_v1
+
+from crc.gcp._base import GCP_REGION_LIST
+from crc.service import Service
 
 
-class IP:
+class IP(Service):
     """
     The IP class is a subclass of the Service class and is used for managing IP addresses on GCP.
     """
-
-    GCP_REGION_LIST = [
-        "us-east1",
-        "asia-east1",
-        "asia-northeast1",
-        "asia-southeast1",
-        "europe-west1",
-        "us-central1",
-        "us-west1",
-    ]
 
     default_state = "RESERVED"
 
@@ -43,7 +37,7 @@ class IP:
         """
         Delete the IP addresses that match the filter regex and do not match the exception regex.
         """
-        for region in self.GCP_REGION_LIST:
+        for region in GCP_REGION_LIST:
             ips_to_delete = []
             addresses = compute_v1.AddressesClient().list(
                 project=self.project_id, region=region

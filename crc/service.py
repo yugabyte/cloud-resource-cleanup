@@ -17,7 +17,7 @@ class Service(abc.ABC):
     # Directory where logs will be stored
     logs_dir = "logs"
     # File name of the log file
-    logs_file = "cleanup.log"
+    logs_file = "crc.log"
 
     def __init__(self) -> None:
         """

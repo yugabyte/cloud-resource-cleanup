@@ -42,6 +42,16 @@ class IP(Service):
         self.filter_regex = filter_regex
         self.exception_regex = exception_regex
 
+    @property
+    def count(self) -> int:
+        """
+        Returns the number of IPs that have been deleted.
+        :return: The number of IPs that have been deleted.
+        """
+        count = len(self.deleted_ips)
+        logging.info(f"count of items in deleted_ips: {count}")
+        return count
+
     def delete(self):
         """
         Delete the IP addresses that match the filter regex and do not match the exception regex.

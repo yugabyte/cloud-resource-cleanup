@@ -211,10 +211,9 @@ class VM(Service):
                 )
                 deleted_nic = True
                 logging.info(f"Deleted the NIC - {nic_name}")
+                self.nics_names_to_delete.append(nic_name)
             except Exception as e:
                 failure_count -= 1
 
         if not failure_count:
             logging.error(f"Failed to delete the NIC - {nic_name}")
-        else:
-            self.nics_names_to_delete.append(nic_name)

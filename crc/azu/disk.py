@@ -33,29 +33,18 @@ class VM(Service):
         """
         super().__init__()
         self.disks_names_to_delete = []
-        self.disks_names_to_stop = []
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
 
     @property
-    def delete_count(self):
+    def count(self):
         """
         This is a property decorator that returns the count of items in the disks_names_to_delete list.
         It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
         """
         count = len(self.disks_names_to_delete)
         logging.info(f"count of items in disks_names_to_delete: {count}")
-        return count
-
-    @property
-    def stopped_count(self):
-        """
-        This is a property decorator that returns the count of items in the disks_names_to_stop list.
-        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
-        """
-        count = len(self.disks_names_to_stop)
-        logging.info(f"count of items in instance_names_to_stop: {count}")
         return count
 
     def delete(self):

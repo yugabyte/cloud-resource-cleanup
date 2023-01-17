@@ -160,7 +160,7 @@ class VM(Service):
         compute_client.virtual_machines.begin_delete(resourceGroup, vm_name)
         logging.info("Deleting virtual machine: %s", vm_name)
         self.instance_names_to_delete.append(vm_name)
-        self.delete_nics(vm_name)
+        self._delete_nic(vm_name)
 
     def _stop_vm(self, vm_name: str):
         """
@@ -193,7 +193,7 @@ class VM(Service):
         """
         self._perform_operation("stop", self.default_instance_state)
 
-    def delete_nics(self, vm_name):
+    def _delete_nic(self, vm_name):
         """
         Deletes the network interface (NIC) associated with a virtual machine.
 
@@ -214,6 +214,11 @@ class VM(Service):
                 self.nics_names_to_delete.append(nic_name)
             except Exception as e:
                 failure_count -= 1
+                logging.error(
+                    f"Error occurred while processing {nic_name} NIC: {e}"
+                )
+                if failure_count:
+                    logging.info(f"Retrying Deletion of NIC {nic_name}")
 
         if not failure_count:
             logging.error(f"Failed to delete the NIC - {nic_name}")

@@ -107,4 +107,4 @@ class KeyPairs(Service):
                     logging.info(
                         f"Deleted keypair: {keypair_to_delete} with response: {response}"
                     )
-                    self.deleted_keypairs.extend(keypair_to_delete)
+                    self.deleted_keypairs.append(keypair_to_delete)

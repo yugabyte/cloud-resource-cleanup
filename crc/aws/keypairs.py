@@ -77,16 +77,17 @@ class KeyPairs(Service):
                         tzinfo=keypair_create_time.tzinfo
                     )
 
-                    if not self.name_regex or (
-                        any(
-                            re.search(kpn, keypair_name)
-                            for kpn in self.name_regex
-                        )
-                        and not any(
-                            re.search(kpn, keypair_name)
-                            for kpn in exception_regex
-                        )
-                    ):
+                    # Check if keypair name matches specified regex
+                    match_name_regex = any(
+                        re.search(kpn, keypair_name) for kpn in self.name_regex
+                    )
+                    match_exception_regex = any(
+                        re.search(kpn, keypair_name) for kpn in exception_regex
+                    )
+
+                    if (
+                        not self.name_regex or match_name_regex
+                    ) and not match_exception_regex:
                         if self.is_old(self.age, dt, keypair_create_time):
                             keypairs_to_delete.add(keypair_name)
                         else:
@@ -94,13 +95,11 @@ class KeyPairs(Service):
                                 f"Keypair {keypair_name} is not old enough to be deleted."
                             )
                     else:
-                        if any(
-                            re.search(kpn, keypair_name)
-                            for kpn in self.exception_regex
-                        ):
+                        if match_exception_regex:
                             logging.info(
                                 f"Keypair {keypair_name} is in exception_regex {self.exception_regex}."
                             )
+
                 for keypair_to_delete in keypairs_to_delete:
                     response = client.delete_key_pair(
                         KeyName=keypair_to_delete

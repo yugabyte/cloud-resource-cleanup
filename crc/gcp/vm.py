@@ -83,13 +83,14 @@ class VM(Service):
         logging.info(f"count of items in instance_names_to_stop: {count}")
         return count
 
-    def _perform_operation(
+    def perform_operation(
         self,
         operation_type: str,
         instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Perform the specified operation (delete or stop) on VMs that match the specified filter labels and are older than the specified age.
+        It checks if the filter_labels attribute of the class is empty, if so, it returns True because there are no labels set to filter the VMs, so any vm should be considered.
 
         :param operation_type: The type of operation to perform (delete or stop)
         :type operation_type: str
@@ -112,69 +113,86 @@ class VM(Service):
             ):
                 if instance.status not in instance_state:
                     continue
-                # Check if the instance has any labels that are in the exception list
-                if any(
-                    key in instance.labels and instance.labels[key] in value
-                    for key, value in self.exception_labels.items()
-                ):
+                if self._has_exception_label(instance):
                     continue
-                # Check if the instance has any labels that match the filter
-                if not self.filter_labels and any(
-                    key in instance.labels and instance.labels[key] in value
-                    for key, value in self.filter_labels.items()
-                ):
-                    timestamp = instance.creation_timestamp
-                    timestamp = timestamp[0:-3] + timestamp[-2:]
-                    created_timestamp = datetime.strptime(
-                        timestamp, self.time_format
-                    )
-                    dt = datetime.now().replace(
-                        tzinfo=created_timestamp.tzinfo
-                    )
-                    # Check if the instance is older than the specified age
-                    if self.is_old(self.age, dt, created_timestamp):
-                        try:
-                            if operation_type == "delete":
-                                # perform the delete operation
-                                service.instances().delete(
-                                    project=self.project_id,
-                                    zone=zone,
-                                    instance=instance.name,
-                                ).execute()
-                                # log the instance that is being deleted
-                                logging.info(
-                                    f"Deleting instance {instance.name}"
-                                )
-                                # add the instance to the list of instances that have been deleted
-                                self.instance_names_to_delete.append(
-                                    instance.name
-                                )
-                            elif operation_type == "stop":
-                                # perform the stop operation
-                                service.instances().stop(
-                                    project=self.project_id,
-                                    zone=zone,
-                                    instance=instance.name,
-                                ).execute()
-                                # log the instance that is being stopped
-                                logging.info(
-                                    f"Stopping instance {instance.name}"
-                                )
-                                # add the instance to the list of instances that have been stopped
-                                self.instance_names_to_stop.append(
-                                    instance.name
-                                )
-                        except Exception as e:
-                            # log the error message if an exception occurs
-                            logging.error(
-                                f"Error occurred while {operation_type} instance {instance.name}: {e}"
-                            )
+                if not self._has_matching_filter_label(instance):
+                    continue
+                if self._is_old_instance(instance):
+                    try:
+                        if operation_type == "delete":
+                            service.instances().delete(
+                                project=self.project_id,
+                                zone=zone,
+                                instance=instance.name,
+                            ).execute()
+                            logging.info(f"Deleting instance {instance.name}")
+                            self.instance_names_to_delete.append(instance.name)
+                        elif operation_type == "stop":
+                            service.instances().stop(
+                                project=self.project_id,
+                                zone=zone,
+                                instance=instance.name,
+                            ).execute()
+                            logging.info(f"Stopping instance {instance.name}")
+                            self.instance_names_to_stop.append(instance.name)
+                    except Exception as e:
+                        # log the error message if an exception occurs
+                        logging.error(
+                            f"Error occurred while {operation_type} instance {instance.name}: {e}"
+                        )
+
+    def _has_exception_label(self, instance):
+        """
+        Check if the instance has any labels that are in the exception list
+
+        :param instance: The instance to check for exception labels
+        :type instance: dict
+        :return: True if the instance has a label that is in the exception list, False otherwise
+        :rtype: bool
+        """
+        return any(
+            key in instance.labels and instance.labels[key] in value
+            for key, value in self.exception_labels.items()
+        )
+
+    def _has_matching_filter_label(self, instance):
+        """
+        Check if the instance has any labels that match the filter
+        This method return True if filter_labels is empty
+
+        :param instance: The instance to check for filter labels
+        :type instance: dict
+        :return: True if the instance has a label that matches the filter, False otherwise
+        :rtype: bool
+        """
+        if not self.filter_labels:
+            return True
+        return any(
+            key in instance.labels and instance.labels[key] in value
+            for key, value in self.filter_labels.items()
+        )
+
+    def _is_old_instance(self, instance):
+        """
+        Check if the instance is older than the specified age
+
+        :param instance: The instance to check age
+        :type instance: dict
+        :return: True if the instance is older than the specified age, False otherwise
+        :rtype: bool
+        """
+        timestamp = instance.creation_timestamp
+        timestamp = timestamp[0:-3] + timestamp[-2:]
+        created_timestamp = datetime.strptime(timestamp, self.time_format)
+        dt = datetime.now().replace(tzinfo=created_timestamp.tzinfo)
+        return self.is_old(self.age, dt, created_timestamp)
 
     def delete(
         self, instance_state: List[str] = default_instance_state
     ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception labels.
+        It checks if the filter_labels attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
 
         :param instance_state: List of valid statuses of instances to delete.
         :type instance_state: List[str]
@@ -184,5 +202,6 @@ class VM(Service):
     def stop(self) -> None:
         """
         Stop VMs that match the specified filter labels and are older than the specified age.
+        It checks if the filter_labels attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
         """
         self._perform_operation("stop", self.default_instance_state)

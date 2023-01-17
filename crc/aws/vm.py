@@ -97,88 +97,111 @@ class VM(Service):
     ) -> Tuple[List[str], List[str]]:
         """
         Retrieves a list of instances that match the filter and age threshold, and also checks for exception tags.
-
-        :param ec2: EC2 service client
-        :type ec2: boto3.client
-        :param instance_details: dictionary containing instance details
-        :type instance_details: dict
-        :return: tuple containing a list of instance ids and a list of instance names
-        :rtype: Tuple[List[str], List[str]]
         """
         instance_ids = []
         instance_names = []
-        for i in instance_details["Reservations"]:
-            try:
-                instance_name = None
-                autoclean = True
-                i = i["Instances"][0]
-                if "Tags" not in i:
-                    continue
-
-                for tag in i["Tags"]:
-                    if (
-                        tag["Key"] in self.exception_tags
-                        and tag["Value"] in self.exception_tags.values()
-                    ):
-                        autoclean = False
-                        break
-                    if tag["Key"] == "Name":
-                        instance_name = tag["Value"]
-
-                if not autoclean:
-                    continue
-
-                instance_id = i["InstanceId"]
-                network_interface_id = i["NetworkInterfaces"][0][
-                    "NetworkInterfaceId"
-                ]
-                network_interface_details = ec2.describe_network_interfaces(
-                    NetworkInterfaceIds=[network_interface_id]
-                )
-                network_interface_id_attached_time = network_interface_details[
-                    "NetworkInterfaces"
-                ][0]["Attachment"]["AttachTime"]
-                dt = datetime.datetime.now().replace(
-                    tzinfo=network_interface_id_attached_time.tzinfo
-                )
-
-                if self.is_old(
-                    self.age, dt, network_interface_id_attached_time
-                ):
-                    instance_ids.append(instance_id)
-                    instance_names.append(instance_name)
-                    logging.info(
-                        f"Instance {instance_name} with ID {instance_id} added to list of instances to be cleaned up."
+        for reservation in instance_details["Reservations"]:
+            for i in reservation["Instances"]:
+                try:
+                    instance_name = None
+                    if "Tags" not in i:
+                        continue
+                    if self._should_skip_instance(i["Tags"]):
+                        continue
+                    if self._get_instance_name(i["Tags"]):
+                        instance_name = self._get_instance_name(i["Tags"])
+                    instance_id = i["InstanceId"]
+                    network_interface_id = i["NetworkInterfaces"][0][
+                        "NetworkInterfaceId"
+                    ]
+                    network_interface_details = (
+                        ec2.describe_network_interfaces(
+                            NetworkInterfaceIds=[network_interface_id]
+                        )
                     )
-            except Exception as e:
-                logging.error(
-                    f"Error occurred while processing {instance_name} instance: {e}"
-                )
+                    network_interface_attached_time = (
+                        network_interface_details["NetworkInterfaces"][0][
+                            "Attachment"
+                        ]["AttachTime"]
+                    )
+                    if self.is_old(
+                        self.age,
+                        datetime.datetime.now().replace(
+                            tzinfo=network_interface_attached_time.tzinfo
+                        ),
+                        network_interface_attached_time,
+                    ):
+                        instance_ids.append(instance_id)
+                        instance_names.append(instance_name)
+                        logging.info(
+                            f"Instance {instance_name} with ID {instance_id} added to list of instances to be cleaned up."
+                        )
+                except Exception as e:
+                    logging.error(
+                        f"Error occurred while processing {instance_name} instance: {e}"
+                    )
         return instance_ids, instance_names
 
-    def _perform_operation(
+    def _should_skip_instance(self, tags: List[Dict[str, str]]) -> bool:
+        """
+        Check if the instance should be skipped based on the exception tags.
+        :param tags: List of tags associated with the instance
+        :type tags: List[Dict[str,str]]
+        :return: True if the instance should be skipped, False otherwise
+        :rtype: bool
+        """
+        for tag in tags:
+            if (
+                tag["Key"] in self.exception_tags
+                and tag["Value"] in self.exception_tags.values()
+            ):
+                return True
+        return False
+
+    def _get_instance_name(self, tags: List[Dict[str, str]]) -> str:
+        """
+        Retrieves the instance name from its tags
+        :param tags: List of tags associated with the instance
+        :type tags: List[Dict[str,str]]
+        :return: the instance name if found, None otherwise
+        :rtype: str
+        """
+        for tag in tags:
+            if tag["Key"] == "Name":
+                return tag["Value"]
+        return None
+
+    def perform_operation(
         self,
         operation_type: str,
         instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Perform the specified operation (delete or stop) on instances that match the specified filter labels and are older than the specified age.
+        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+
         :param operation_type: The type of operation to perform (delete or stop)
         :type operation_type: str
         :param instance_state: List of valid statuses of instances to perform the operation on.
         :type instance_state: List[str]
         """
-        filter = self._get_filter(instance_state)
+        # Renaming filter to instance_filter for better understanding
+        instance_filter = self._get_filter(instance_state)
         for region in get_all_regions(
             self.service_name, self.default_region_name
         ):
             with boto3.client(self.service_name, region_name=region) as client:
-                instance_details = client.describe_instances(Filters=filter)
+                # Renaming instance_details to describe_instances_response for better understanding
+                describe_instances_response = client.describe_instances(
+                    Filters=instance_filter
+                )
 
                 (
                     instances_to_operate,
                     instance_names_to_operate,
-                ) = self._get_filtered_instances(client, instance_details)
+                ) = self._get_filtered_instances(
+                    client, describe_instances_response
+                )
 
                 if instances_to_operate:
                     try:
@@ -209,6 +232,7 @@ class VM(Service):
                             f"Error occurred while {operation_type} instances: {e}"
                         )
 
+        # Using more descriptive if conditions
         if (
             not self.instance_names_to_delete
             and not self.instance_names_to_stop
@@ -230,6 +254,7 @@ class VM(Service):
     ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception tags.
+        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
 
         :param instance_state: list of strings representing the state of instances.
         :type instance_state: List[str]
@@ -239,5 +264,6 @@ class VM(Service):
     def stop(self):
         """
         Stop VMs that match the specified filter labels and are older than the specified age.
+        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
         """
         self._perform_operation("stop", self.default_instance_state)

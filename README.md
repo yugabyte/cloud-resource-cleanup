@@ -22,7 +22,7 @@ The tool also includes a feature that allows you to filter resources based on th
 
 ## Installation
 ```
-git clone https://github.com/<username>/cloud-resource-cleanup.git
+git clone https://github.com/yugabyte/cloud-resource-cleanup.git
 cd cloud-resource-cleanup
 pip install -r requirements.txt
 ```

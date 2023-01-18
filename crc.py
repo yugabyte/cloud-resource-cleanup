@@ -360,12 +360,12 @@ def main():
         resources = [resources]
 
     # Validate Input Values
-    is_list(resource_states)
-    is_value_of_dict_list(filter_tags)
-    is_value_of_dict_list(exception_tags)
-    is_list(name_regex)
-    is_list(exception_regex)
-    is_dict(age)
+    is_valid_list(resource_states)
+    are_values_of_dict_lists(filter_tags)
+    are_values_of_dict_lists(exception_tags)
+    is_valid_list(name_regex)
+    is_valid_list(exception_regex)
+    is_valid_dict(age)
 
     # Perform operations
     for cloud in clouds:

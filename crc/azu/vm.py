@@ -5,11 +5,19 @@ import logging
 import time
 from typing import Dict, List
 
-from crc.azu._base import compute_client, network_client, resourceGroup
+from crc.azu._base import (
+    compute_client,
+    network_client,
+    resourceGroup,
+)
 from crc.service import Service
 
 
 class VM(Service):
+    """
+    This class provides an implementation of the Service class for managing virtual machines (VMs) on Azure Cloud.
+    By Default this will clean NICs as well
+    """
 
     default_instance_state = ["running"]
     """
@@ -89,9 +97,7 @@ class VM(Service):
 
         for vm in vms:
             if self._should_perform_operation_on_vm(vm):
-                dt = datetime.datetime.now().replace(
-                    tzinfo=vm.time_created.tzinfo
-                )
+                dt = datetime.datetime.now().replace(tzinfo=vm.time_created.tzinfo)
 
                 if self.is_old(self.age, dt, vm.time_created):
                     status = self._get_vm_status(vm.name)
@@ -101,6 +107,23 @@ class VM(Service):
                             self._delete_vm(vm.name)
                         elif operation_type == "stop":
                             self._stop_vm(vm.name)
+
+        # Using more descriptive if conditions
+        if not self.instance_names_to_delete and not self.instance_names_to_stop:
+            logging.info(f"No Azure instances to {operation_type}.")
+
+        if operation_type == "delete":
+            logging.info(
+                f"number of Azure instances deleted: {len(self.instance_names_to_delete)}"
+            )
+            logging.info(
+                f"number of Azure nics deleted: {len(self.nics_names_to_delete)}"
+            )
+
+        if operation_type == "stop":
+            logging.info(
+                f"number of Azure instances stopped: {len(self.instance_names_to_stop)}"
+            )
 
     def _should_perform_operation_on_vm(self, vm) -> bool:
         """
@@ -115,11 +138,11 @@ class VM(Service):
         :return: True if the operation should be performed, False otherwise.
         :rtype: bool
         """
-        if not self.filter_tags:
-            return True
-
         if not vm.tags:
             return False
+
+        if not self.filter_tags:
+            return True
 
         if any(
             key in vm.tags and vm.tags[key] in value
@@ -143,9 +166,7 @@ class VM(Service):
         :rtype: str
         """
         return (
-            compute_client.virtual_machines.instance_view(
-                resourceGroup, vm_name
-            )
+            compute_client.virtual_machines.instance_view(resourceGroup, vm_name)
             .statuses[1]
             .display_status
         )
@@ -173,7 +194,8 @@ class VM(Service):
         logging.info("Stopping virtual machine: %s", vm_name)
 
     def delete(
-        self, instance_state: List[str] = default_instance_state
+        self,
+        instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Deletes instances and NICs that match the filter and age threshold, and also checks for exception tags.
@@ -206,17 +228,13 @@ class VM(Service):
         while not deleted_nic and failure_count:
             try:
                 time.sleep(60)
-                network_client.network_interfaces.begin_delete(
-                    resourceGroup, nic_name
-                )
+                network_client.network_interfaces.begin_delete(resourceGroup, nic_name)
                 deleted_nic = True
                 logging.info(f"Deleted the NIC - {nic_name}")
                 self.nics_names_to_delete.append(nic_name)
             except Exception as e:
                 failure_count -= 1
-                logging.error(
-                    f"Error occurred while processing {nic_name} NIC: {e}"
-                )
+                logging.error(f"Error occurred while processing {nic_name} NIC: {e}")
                 if failure_count:
                     logging.info(f"Retrying Deletion of NIC {nic_name}")
 

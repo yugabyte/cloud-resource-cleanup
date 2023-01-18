@@ -54,7 +54,7 @@ class KeyPairs(Service):
         It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
         """
         count = len(self.deleted_keypairs)
-        logging.info(f"count of items in keypairs_to_delete: {count}")
+        logging.info(f"count of items in deleted_keypairs: {count}")
         return count
 
     def delete(self):
@@ -62,9 +62,7 @@ class KeyPairs(Service):
         Delete all keypairs that match the specified name regex and are older than the specified age.
         """
         exception_regex = set(self.exception_regex)
-        for region in get_all_regions(
-            self.service_name, self.default_region_name
-        ):
+        for region in get_all_regions(self.service_name, self.default_region_name):
             keypairs_to_delete = set()
             with boto3.client(self.service_name, region_name=region) as client:
                 keypairs = client.describe_key_pairs()
@@ -88,7 +86,11 @@ class KeyPairs(Service):
                     if (
                         not self.name_regex or match_name_regex
                     ) and not match_exception_regex:
-                        if self.is_old(self.age, dt, keypair_create_time):
+                        if self.is_old(
+                            self.age,
+                            dt,
+                            keypair_create_time,
+                        ):
                             keypairs_to_delete.add(keypair_name)
                         else:
                             logging.info(
@@ -101,10 +103,9 @@ class KeyPairs(Service):
                             )
 
                 for keypair_to_delete in keypairs_to_delete:
-                    response = client.delete_key_pair(
-                        KeyName=keypair_to_delete
-                    )
+                    response = client.delete_key_pair(KeyName=keypair_to_delete)
                     logging.info(
                         f"Deleted keypair: {keypair_to_delete} with response: {response}"
                     )
                     self.deleted_keypairs.append(keypair_to_delete)
+        logging.info(f"number of AWS keypairs deleted: {len(self.deleted_keypairs)}")

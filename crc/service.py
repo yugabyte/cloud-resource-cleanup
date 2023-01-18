@@ -1,6 +1,5 @@
 # Copyright (c) Yugabyte, Inc.
 
-import abc
 import datetime
 import logging
 import os
@@ -9,7 +8,7 @@ from typing import Dict
 from crc.utils import init_logging
 
 
-class Service(abc.ABC):
+class Service:
     """
     The Service class provides an abstract interface for interacting with different services.
     """
@@ -26,17 +25,8 @@ class Service(abc.ABC):
         log_filename = os.path.join(self.logs_dir, self.logs_file)
         init_logging(log_filename)
 
-    @abc.abstractmethod
-    def delete(self, id: str) -> None:
-        """
-        Deletes an item with the given id.
-
-        :param id: the id of the item to be deleted
-        :type id: str
-        """
-        pass
-
     def is_old(
+        self,
         age: Dict[str, int],
         current_time: datetime.datetime,
         creation_time: datetime.datetime,
@@ -88,6 +78,6 @@ class Service(abc.ABC):
                 )
                 return True
         logging.info(
-            f"The resource is not older than the threshold specified in the age argument"
+            "The resource is not older than the threshold specified in the age argument"
         )
         return False

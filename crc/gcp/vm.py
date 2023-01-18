@@ -13,6 +13,7 @@ from crc.service import Service
 class VM(Service):
     """
     This class provides an implementation of the Service class for managing virtual machines (VMs) on Google Cloud.
+    By Default this will clean attached resources with the VM like NICs, Disks.
     """
 
     # Initialize class variables
@@ -83,7 +84,7 @@ class VM(Service):
         logging.info(f"count of items in instance_names_to_stop: {count}")
         return count
 
-    def perform_operation(
+    def _perform_operation(
         self,
         operation_type: str,
         instance_state: List[str] = default_instance_state,
@@ -98,9 +99,7 @@ class VM(Service):
         :type instance_state: List[str]
         """
         # Build the service for making API calls
-        with discovery.build(
-            self.service_name, self.service_version
-        ) as service:
+        with discovery.build(self.service_name, self.service_version) as service:
             request = service.zones().list(project=self.project_id)
             zones = request.execute()["items"]
             instance_client = compute_v1.InstancesClient()
@@ -108,9 +107,7 @@ class VM(Service):
         # Iterate over all zones and instances
         for zone_obj in zones:
             zone = zone_obj["name"]
-            for instance in instance_client.list(
-                project=self.project_id, zone=zone
-            ):
+            for instance in instance_client.list(project=self.project_id, zone=zone):
                 if instance.status not in instance_state:
                     continue
                 if self._has_exception_label(instance):
@@ -140,6 +137,20 @@ class VM(Service):
                         logging.error(
                             f"Error occurred while {operation_type} instance {instance.name}: {e}"
                         )
+
+        # Using more descriptive if conditions
+        if not self.instance_names_to_delete and not self.instance_names_to_stop:
+            logging.info(f"No GCP instances to {operation_type}.")
+
+        if operation_type == "delete":
+            logging.info(
+                f"number of GCP instances deleted: {len(self.instance_names_to_delete)}"
+            )
+
+        if operation_type == "stop":
+            logging.info(
+                f"number of GCP instances stopped: {len(self.instance_names_to_stop)}"
+            )
 
     def _has_exception_label(self, instance):
         """
@@ -188,7 +199,8 @@ class VM(Service):
         return self.is_old(self.age, dt, created_timestamp)
 
     def delete(
-        self, instance_state: List[str] = default_instance_state
+        self,
+        instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception labels.

@@ -74,9 +74,7 @@ class VM(Service):
         logging.info(f"count of items in instance_names_to_stop: {count}")
         return count
 
-    def _get_filter(
-        self, instance_state: List[str]
-    ) -> List[Dict[str, List[str]]]:
+    def _get_filter(self, instance_state: List[str]) -> List[Dict[str, List[str]]]:
         """
         Creates a filter to be used when searching for instances, based on the provided instance state and the filter tags provided during initialization.
 
@@ -85,7 +83,12 @@ class VM(Service):
         :return: list of filters.
         :rtype: List[Dict[str, List[str]]]
         """
-        filters = [{"Name": "instance-state-name", "Values": instance_state}]
+        filters = [
+            {
+                "Name": "instance-state-name",
+                "Values": instance_state,
+            }
+        ]
         for key, value in self.filter_tags.items():
             filters.append({"Name": f"tag:{key}", "Values": value})
 
@@ -108,22 +111,22 @@ class VM(Service):
                         continue
                     if self._should_skip_instance(i["Tags"]):
                         continue
-                    if self._get_instance_name(i["Tags"]):
-                        instance_name = self._get_instance_name(i["Tags"])
+                    instance_name = self._get_instance_name(i["Tags"])
+                    if not instance_name:
+                        logging.error(
+                            f"{instance_name} instance doesn't have Name Tag. Skipping it"
+                        )
+                        continue
                     instance_id = i["InstanceId"]
                     network_interface_id = i["NetworkInterfaces"][0][
                         "NetworkInterfaceId"
                     ]
-                    network_interface_details = (
-                        ec2.describe_network_interfaces(
-                            NetworkInterfaceIds=[network_interface_id]
-                        )
+                    network_interface_details = ec2.describe_network_interfaces(
+                        NetworkInterfaceIds=[network_interface_id]
                     )
-                    network_interface_attached_time = (
-                        network_interface_details["NetworkInterfaces"][0][
-                            "Attachment"
-                        ]["AttachTime"]
-                    )
+                    network_interface_attached_time = network_interface_details[
+                        "NetworkInterfaces"
+                    ][0]["Attachment"]["AttachTime"]
                     if self.is_old(
                         self.age,
                         datetime.datetime.now().replace(
@@ -151,10 +154,9 @@ class VM(Service):
         :rtype: bool
         """
         for tag in tags:
-            if (
-                tag["Key"] in self.exception_tags
-                and tag["Value"] in self.exception_tags.values()
-            ):
+            key = tag["Key"]
+            tag["Value"]
+            if key in self.exception_tags and tag["Value"] in self.exception_tags[key]:
                 return True
         return False
 
@@ -171,7 +173,7 @@ class VM(Service):
                 return tag["Value"]
         return None
 
-    def perform_operation(
+    def _perform_operation(
         self,
         operation_type: str,
         instance_state: List[str] = default_instance_state,
@@ -187,9 +189,7 @@ class VM(Service):
         """
         # Renaming filter to instance_filter for better understanding
         instance_filter = self._get_filter(instance_state)
-        for region in get_all_regions(
-            self.service_name, self.default_region_name
-        ):
+        for region in get_all_regions(self.service_name, self.default_region_name):
             with boto3.client(self.service_name, region_name=region) as client:
                 # Renaming instance_details to describe_instances_response for better understanding
                 describe_instances_response = client.describe_instances(
@@ -199,16 +199,12 @@ class VM(Service):
                 (
                     instances_to_operate,
                     instance_names_to_operate,
-                ) = self._get_filtered_instances(
-                    client, describe_instances_response
-                )
+                ) = self._get_filtered_instances(client, describe_instances_response)
 
                 if instances_to_operate:
                     try:
                         if operation_type == "delete":
-                            client.terminate_instances(
-                                InstanceIds=instances_to_operate
-                            )
+                            client.terminate_instances(InstanceIds=instances_to_operate)
                             for i in range(len(instances_to_operate)):
                                 logging.info(
                                     f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
@@ -217,9 +213,7 @@ class VM(Service):
                                 instance_names_to_operate
                             )
                         elif operation_type == "stop":
-                            client.stop_instances(
-                                InstanceIds=instances_to_operate
-                            )
+                            client.stop_instances(InstanceIds=instances_to_operate)
                             for i in range(len(instances_to_operate)):
                                 logging.info(
                                     f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
@@ -233,24 +227,22 @@ class VM(Service):
                         )
 
         # Using more descriptive if conditions
-        if (
-            not self.instance_names_to_delete
-            and not self.instance_names_to_stop
-        ):
-            logging.info(f"No instances to {operation_type}.")
+        if not self.instance_names_to_delete and not self.instance_names_to_stop:
+            logging.info(f"No AWS instances to {operation_type}.")
 
         if operation_type == "delete":
             logging.info(
-                f"number of instances deleted: {len(self.instance_names_to_delete)}"
+                f"number of AWS instances deleted: {len(self.instance_names_to_delete)}"
             )
 
         if operation_type == "stop":
             logging.info(
-                f"number of instances stopped: {len(self.instance_names_to_stop)}"
+                f"number of AWS instances stopped: {len(self.instance_names_to_stop)}"
             )
 
     def delete(
-        self, instance_state: List[str] = default_instance_state
+        self,
+        instance_state: List[str] = default_instance_state,
     ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception tags.

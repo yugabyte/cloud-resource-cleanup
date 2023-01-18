@@ -8,7 +8,7 @@ from typing import Dict, List
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
 from crc.aws.vm import VM as AWS_VM
-from crc.azu.disk import Disk as Disk
+from crc.azu.disk import Disk
 from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.ip import IP as GCP_IP
@@ -64,10 +64,15 @@ class CRC:
         """
         if self.cloud == "aws":
             return AWS_VM(filter_tags, exception_tags, age)
-        elif self.cloud == "azu":
+        if self.cloud == "azu":
             return AZU_VM(filter_tags, exception_tags, age)
-        elif self.cloud == "gcp":
-            return GCP_VM(self.project_id, filter_tags, exception_tags, age)
+        if self.cloud == "gcp":
+            return GCP_VM(
+                self.project_id,
+                filter_tags,
+                exception_tags,
+                age,
+            )
         raise TypeError("Incorrect Cloud Provided")
 
     def _get_ip(
@@ -91,7 +96,11 @@ class CRC:
         elif self.cloud == "azu":
             return AZU_IP(filter_tags, exception_tags)
         elif self.cloud == "gcp":
-            return GCP_IP(self.project_id, name_regex, exception_regex)
+            return GCP_IP(
+                self.project_id,
+                name_regex,
+                exception_regex,
+            )
         raise TypeError("Incorrect Cloud Provided")
 
     def delete_vm(
@@ -144,7 +153,10 @@ class CRC:
         :param exception_regex: List of regex patterns to exclude the IP.
         """
         ip = self._get_ip(
-            filter_tags, exception_tags, name_regex, exception_regex
+            filter_tags,
+            exception_tags,
+            name_regex,
+            exception_regex,
         )
         ip.delete()
 
@@ -318,14 +330,20 @@ def main():
                 crc.delete_disks(filter_tags, exception_regex, age)
             elif resource == "ip":
                 crc.delete_ip(
-                    filter_tags, exception_tags, name_regex, exception_regex
+                    filter_tags,
+                    exception_tags,
+                    name_regex,
+                    exception_regex,
                 )
             elif resource == "keypair":
                 crc.delete_keypairs(name_regex, exception_regex, age)
             elif resource == "vm":
                 if operation_type == "delete":
                     crc.delete_vm(
-                        filter_tags, exception_tags, age, resource_states
+                        filter_tags,
+                        exception_tags,
+                        age,
+                        resource_states,
                     )
                 elif operation_type == "stop":
                     crc.stop_vm(filter_tags, exception_tags, age)

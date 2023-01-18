@@ -5,8 +5,6 @@ import logging
 from crc.azu._base import network_client, resourceGroup
 from crc.service import Service
 
-logging.basicConfig(level=logging.INFO)
-
 
 class IP(Service):
     """
@@ -48,19 +46,20 @@ class IP(Service):
                 )
             )
 
-            exception_tags_match = not any(
+            exception_tags_match = any(
                 key in ip.tags and ip.tags[key] in value
                 for key, value in self.exception_tags.items()
             )
 
             if (
                 filter_tags_match
-                and exception_tags_match
+                and not exception_tags_match
                 and ip.ip_configuration is None
             ):
                 network_client.public_ip_addresses.begin_delete(
                     resource_group_name=resourceGroup,
                     public_ip_address_name=ip.name,
                 )
-                self.deleted_ips.append(ip.name)
                 logging.info(f"Deleted IP address: {ip.name}")
+                self.deleted_ips.append(ip.name)
+        logging.info(f"number of Azure IPs deleted: {len(self.deleted_ips)}")

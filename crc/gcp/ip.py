@@ -75,16 +75,18 @@ class IP(Service):
                 # Check if address name matches filter regex and does not match exception regex
                 if not self.filter_regex or (
                     any(regex in name for regex in self.filter_regex)
-                    and not any(
-                        regex in name for regex in self.exception_regex
-                    )
+                    and not any(regex in name for regex in self.exception_regex)
                 ):
                     ips_to_delete.append(name)
 
             for ip in ips_to_delete:
                 # Delete IP addresses
                 compute_v1.AddressesClient().delete(
-                    project=self.project_id, region=region, address=ip
+                    project=self.project_id,
+                    region=region,
+                    address=ip,
                 )
                 logging.info(f"Deleting IP address: {ip}")
             self.deleted_ips.extend(ips_to_delete)
+
+        logging.info(f"number of GCP IPs deleted: {len(self.deleted_ips)}")

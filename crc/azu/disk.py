@@ -66,26 +66,25 @@ class Disk(Service):
             )
 
             # Check if the disk has the specified exception tags
-            exception_tags_match = not any(
+            exception_tags_match = any(
                 key in disk.tags and disk.tags[key] in value
                 for key, value in self.exception_tags.items()
             )
 
-            # Check if the disk matches the specified filter tags and exception tags
-            if filter_tags_match and exception_tags_match:
+            # Check if the disk matches the specified filter tags and not exception tags
+            if filter_tags_match and not exception_tags_match:
                 # Get the current time and compare it to the disk's time created
-                dt = datetime.datetime.now().replace(
-                    tzinfo=disk.time_created.tzinfo
-                )
+                dt = datetime.datetime.now().replace(tzinfo=disk.time_created.tzinfo)
                 if self.is_old(self.age, dt, disk.time_created):
-                    status = disk.disk_state
                     # Check if the disk is in a state that is allowed for deletion
                     if any(
-                        status in state for state in self.default_disk_state
+                        disk.disk_state in state for state in self.default_disk_state
                     ):
                         # Delete the disk
-                        compute_client.disks.begin_delete(
-                            resourceGroup, disk.name
-                        )
+                        compute_client.disks.begin_delete(resourceGroup, disk.name)
                         # Log that the disk was deleted
                         logging.info("Deleted disk: " + disk.name)
+                        self.disks_names_to_delete.append(disk.name)
+        logging.info(
+            f"number of Azure Disks deleted: {len(self.disks_names_to_delete)}"
+        )

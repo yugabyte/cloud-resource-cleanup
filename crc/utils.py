@@ -2,7 +2,9 @@
 
 import logging
 
-LOG_FORMATTER = "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
+LOG_FORMATTER = (
+    "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
+)
 
 
 def init_logging(filename: str, log_level: str = "debug"):
@@ -15,7 +17,7 @@ def init_logging(filename: str, log_level: str = "debug"):
     :type log_level: str
     """
     logger = logging.getLogger()
-    print("Setting loglevel to logging.{}".format(log_level.upper()))
+    print(f"Setting loglevel to logging: {log_level.upper()}")
     logger.setLevel(getattr(logging, log_level.upper()))
 
     # Create a log message formatter.
@@ -37,7 +39,5 @@ def init_logging(filename: str, log_level: str = "debug"):
     logger.addHandler(fh)
     logger.addHandler(ch)
     logging.info(
-        "Logging initialized with file: {} and level: {}".format(
-            filename, log_level.upper()
-        )
+        f"Logging initialized with file: {filename} and level: {log_level.upper()}"
     )

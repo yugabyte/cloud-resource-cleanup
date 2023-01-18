@@ -48,41 +48,37 @@ class ElasticIPs(Service):
         """
         Delete Elastic IPs that match the specified filter_tags and do not match the specified exception_tags.
         """
-        eips_to_delete = {}
         regions = get_all_regions(self.service_name, self.default_region_name)
         for region in regions:
+            eips_to_delete = {}
             client = boto3.client(self.service_name, region_name=region)
             addresses = client.describe_addresses()["Addresses"]
             for eip in addresses:
                 if "NetworkInterfaceId" not in eip and "Tags" in eip:
                     tags = eip["Tags"]
-                    is_exception = False
                     for tag in tags:
                         # check for exception_tags match
-                        if any(
-                            tag["Key"] == key and tag["Value"] in value
-                            for key, value in self.exception_tags.items()
+                        key = tag["Key"]
+                        if (
+                            key in self.exception_tags
+                            and tag["Value"] in self.exception_tags[key]
                         ):
-                            is_exception = True
-                            break
-                    if not is_exception and self.filter_tags:
-                        for tag in tags:
-                            # check for filter_tags match
-                            if any(
-                                tag["Key"] == key and tag["Value"] in value
-                                for key, value in self.filter_tags.items()
-                            ):
-                                eips_to_delete[eip["PublicIp"]] = eip[
-                                    "AllocationId"
-                                ]
-                    elif not self.filter_tags:
+                            continue
+                    if not self.filter_tags:
                         eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
-        # Release the Elastic IPs
-        client = boto3.client(
-            self.service_name, region_name=self.default_region_name
-        )
-        for ip in eips_to_delete:
-            client.release_address(AllocationId=eips_to_delete[ip])
-            logging.info(f"Deleted IP: {ip}")
-        # Add deleted IPs to deleted_ips list
-        self.deleted_ips.extend(list(eips_to_delete.keys()))
+                        continue
+                    for tag in tags:
+                        key = tag["Key"]
+                        # check for filter_tags match
+                        if (
+                            key in self.filter_tags
+                            and tag["Value"] in self.filter_tags[key]
+                        ):
+                            eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
+            for ip in eips_to_delete:
+                client.release_address(AllocationId=eips_to_delete[ip])
+                logging.info(f"Deleted IP: {ip}")
+            # Add deleted IPs to deleted_ips list
+            self.deleted_ips.extend(list(eips_to_delete.keys()))
+
+        logging.info(f"number of AWS Elastic IPs deleted: {len(self.deleted_ips)}")

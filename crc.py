@@ -251,12 +251,14 @@ def get_argparser():
     # Add Argument for Name Regex
     parser.add_argument(
         "--name_regex",
+        type=ast.literal_eval,
         help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Format: --name_regex perftest_",
     )
 
     # Add Argument for Exception Regex
     parser.add_argument(
         "--exception_regex",
+        type=ast.literal_eval,
         help="Exception Regex to filter out resources. Format: --exception_regex perftest_keep_resources",
     )
 

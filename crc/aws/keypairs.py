@@ -13,8 +13,21 @@ from crc.service import Service
 
 class KeyPairs(Service):
     """
-    A class that deletes all keypairs that match the specified name regex and are older than the specified age.
-    This skips deleting variables which are in exception_regex
+    The KeyPairs class is a subclass of the Service class and is used to interact with the AWS EC2 service.
+    It allows for deletion of keypairs that match the specified name regular expressions and are older than the specified age.
+    It also skips deleting keypairs which match the specified exception regular expressions.
+
+    Attributes:
+        service_name (str): The name of the AWS service that the class interacts with.
+        default_region_name (str): The default region to be used when interacting with the AWS service.
+        deleted_keypairs (List[str]): A list of keypairs that have been deleted.
+        name_regex (List[str]): A list of regular expressions that match the keypair names to be deleted.
+        exception_regex (List[str]): A list of regular expressions that match the keypair names to be ignored.
+        age (Dict[str, int]): A dictionary containing the time unit (hours, days, weeks) and the corresponding time value. For example: {'days': 30}
+
+    Methods:
+        count: Returns the number of keypairs that have been deleted.
+        delete: Deletes all keypairs that match the specified name regular expressions and are older than the specified age, and also skips deleting keypairs which match the specified exception regular expressions.
     """
 
     service_name = "ec2"

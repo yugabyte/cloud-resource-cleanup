@@ -11,6 +11,18 @@ from crc.service import Service
 class ElasticIPs(Service):
     """
     The ElasticIPs class is a subclass of the Service class and is used to interact with the AWS EC2 service.
+    It allows for deletion of Elastic IPs based on specified filter and exception tags.
+
+    Attributes:
+        service_name (str): The name of the AWS service that the class interacts with.
+        default_region_name (str): The default region to be used when interacting with the AWS service.
+        deleted_ips (List[str]): A list of Elastic IPs that have been deleted.
+        filter_tags (Dict[str, List[str]]): A dictionary of tags that should be filtered when searching for Elastic IPs to delete.
+        exception_tags (Dict[str, List[str]]): A dictionary of tags that should be excluded when searching for Elastic IPs to delete.
+
+    Methods:
+        count: Returns the number of Elastic IPs that have been deleted.
+        delete: Deletes Elastic IPs that match the specified filter_tags and do not match the specified exception_tags.
     """
 
     service_name = "ec2"

@@ -1,3 +1,5 @@
+# Copyright (c) Yugabyte, Inc.
+
 import argparse
 import ast
 from typing import Dict, List

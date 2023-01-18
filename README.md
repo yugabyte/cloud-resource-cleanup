@@ -2,9 +2,9 @@
 
 Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds. Whether you're working with **AWS**, **Azure**, or **GCP**, this tool has got you covered. With `cloud-resource-cleanup`, you can:
 
-* Delete Elastic IPs, keypairs, and VMs (including attached resources such as disks and NICs) from AWS
-* Delete disks, VMs, NICs and public IPs from Azure
-* Delete IPs, VMs (including attached resources such as disks and NICs) from GCP
+* Delete Orphan Elastic IPs, Orphan keypairs, and VMs (including attached resources such as disks and NICs) from AWS
+* Delete Orphan disks, VMs, NICs and Orphan public IPs from Azure
+* Delete Orphan IPs, VMs (including attached resources such as disks and NICs) from GCP
 * Stop VMs from AWS, Azure, and GCP
 
 The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
@@ -44,6 +44,17 @@ python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resourc
 * `name_regex`: Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs (e.g. ['perftest_', 'feature_'])
 * `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
 * `age`: Age Threshold for resources is mandatory argument (e.g. {'days': 3, 'hours': 12})
+
+## Examples
+Delete all the VMs in AWS which are tagged with 'task:qa', exclude 'type:prod' and are older than 10 days
+```
+python crc.py --cloud aws --resource vm --filter_tags '{"task":["qa"]}' --exception_tags '{"type":["prod"]}' --age '{"days":10}'
+```
+
+Delete all the ips in GCP which have regex ["test_", "qa_"] and don't have ["prod", "dont_delete"] in the name and are older than 2 days and 6 hours
+```
+python crc.py --cloud gcp --project_id <project_id> --resource ip --name_regex '["test_", "qa_"]' --exception_regex '["prod", "dont_delete"]' --age '{"days":2, "hours":6}'
+```
 
 ## Logging
 The script will log all deleted resources to a file called crc.log in the same directory as the script. The log file will contain the resource type, name, and the date and time it was deleted.

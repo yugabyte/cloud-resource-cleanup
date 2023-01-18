@@ -285,23 +285,40 @@ def get_argparser():
     return vars(parser.parse_args())
 
 
-def is_list(name, value):
+def is_valid_list(name, value):
+    """
+    Check if the given value is a list and raises a TypeError if it is not.
+    :param name: name of the variable being checked
+    :param value: the value of the variable being checked
+    :return: True if value is a list, raises TypeError otherwise
+    """
     if type(value) is not list:
-        raise TypeError(f"{value} in {name} should be a list")
+        raise TypeError(f"{name} should be a list, but got {type(value)}")
     return True
 
 
-def is_dict(name, value):
+def is_valid_dict(name, value):
+    """
+    Check if the given value is a dict and raises a TypeError if it is not.
+    :param name: name of the variable being checked
+    :param value: the value of the variable being checked
+    :return: True if value is a dict, raises TypeError otherwise
+    """
     if type(value) is not dict:
-        raise TypeError(f"{value} in {name} should be a dict")
+        raise TypeError(f"{name} should be a dict, but got {type(value)}")
     return True
 
 
-def is_value_of_dict_list(name, value):
-    if type(value) is not dict:
-        raise TypeError(f"{value} in {name} should be a dict")
-    for val in value.items():
-        is_list(name, val)
+def are_values_of_dict_lists(name, value):
+    """
+    Check if the values of the given dict are lists and raises a TypeError if any of them is not.
+    :param name: name of the variable being checked
+    :param value: the value of the variable being checked
+    :return: True if all values of the dict are lists, raises TypeError otherwise
+    """
+    is_valid_dict(name, value)
+    for key, val in value.items():
+        is_valid_list(f"Value of {name} with key {key}", val)
     return True
 
 

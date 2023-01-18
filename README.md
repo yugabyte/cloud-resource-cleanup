@@ -27,6 +27,41 @@ cd cloud-resource-cleanup
 pip install -r requirements.txt
 ```
 
+## Environment Variables
+The script requires certain environment variables to be set in order to interact with different cloud providers. The following environment variables must be set before running the script:
+
+### Google Cloud Platform
+* `GOOGLE_APPLICATION_CREDENTIALS`: The path to the JSON file containing your GCP service account credentials.
+### Amazon Web Services
+* `AWS_SECRET_ACCESS_KEY`: The secret access key for your AWS account.
+* `AWS_ACCESS_KEY_ID`: The access key ID for your AWS account.
+### Azure
+* `AZURE_CREDENTIALS_TENANT_ID`: The tenant ID for your Azure subscription.
+* `AZURE_CREDENTIALS_SUBSCRIPTION_ID`: The subscription ID for your Azure subscription.
+* `AZURE_CREDENTIALS_CLIENT_SECRET`: The client secret for your Azure application.
+* `AZURE_CREDENTIALS_CLIENT_ID`: The client ID for your Azure application.
+* `AZURE_RESOURCE_GROUP`: The name of the resource group in Azure to use.
+
+It's important to note that you only need to set the environment variables for the cloud providers you are interacting with. For example, if you are only using the script to delete resources on AWS, you would only need to set the `AWS_SECRET_ACCESS_KEY` and `AWS_ACCESS_KEY_ID` environment variables.
+
+You can set the environment variables in your shell by using the `export` command. For example, to set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable, you would use the following command:
+```
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
+```
+Similarly, you can set the other environment variables as well.
+```
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AZURE_CREDENTIALS_TENANT_ID="your_tenant_id"
+export AZURE_CREDENTIALS_SUBSCRIPTION_ID="your_subscription_id"
+export AZURE_CREDENTIALS_CLIENT_SECRET="your_client_secret"
+export AZURE_CREDENTIALS_CLIENT_ID="your_client_id"
+export AZURE_RESOURCE_GROUP="your_resource_group"
+```
+You can also add these commands to your shell profile file, such as `~/.bash_profile` or `~/.bashrc`, to ensure that these environment variables are set every time you start a new shell session.
+
+Make sure to replace the placeholders with the appropriate values for your environment.
+
 ## Usage
 To use `crc`, you will need to provide your AWS, Azure, and/or GCP credentials. You can do this by setting the appropriate environment variables.
 

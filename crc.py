@@ -206,7 +206,8 @@ def get_argparser():
     :return: A dictionary containing all the command line arguments.
     """
     parser = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="Cleanup Resources across different clouds",
     )
 
     # Add Argument for Cloud
@@ -217,18 +218,19 @@ def get_argparser():
         help="The cloud to operate on. Valid options are: 'aws', 'azu', 'gcp', 'all'. Example: --cloud all",
     )
 
-    # Add Argument for Project ID (GCP only)
-    parser.add_argument(
-        "--project_id",
-        help="Project ID for GCP. Required only for GCP. Example: --project_id testing",
-    )
-
     # Add Argument for Resource Type
     parser.add_argument(
         "--resource",
         default="all",
         choices=["disk", "ip", "keypair", "vm", "all"],
         help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: --resource vm",
+    )
+
+    # Add Argument for Project ID (GCP only)
+    parser.add_argument(
+        "-p",
+        "--project_id",
+        help="Project ID for GCP. Required only for GCP. Example: --project_id testing",
     )
 
     # Add Argument for Operation Type
@@ -241,6 +243,7 @@ def get_argparser():
 
     # Add argument for resource states
     parser.add_argument(
+        "-s",
         "--resource_states",
         type=ast.literal_eval,
         help="State of the resource to filter. Format: --resource_states ['RUNNING', 'STOPPED']",
@@ -248,6 +251,7 @@ def get_argparser():
 
     # Add argument for filter tags
     parser.add_argument(
+        "-f",
         "--filter_tags",
         type=ast.literal_eval,
         help="Tags to use for filtering resources. Format: --filter_tags {'test_task': ['test', 'stress-test']}",
@@ -255,6 +259,7 @@ def get_argparser():
 
     # Add argument for exception tags
     parser.add_argument(
+        "-e",
         "--exception_tags",
         type=ast.literal_eval,
         help="Exception tags to use for filtering resources. Format: --exception_tags {'test_task': ['test-keep-resources', 'stress-test-keep-resources']}",
@@ -262,6 +267,7 @@ def get_argparser():
 
     # Add Argument for Name Regex
     parser.add_argument(
+        "-n",
         "--name_regex",
         type=ast.literal_eval,
         help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Format: --name_regex perftest_",
@@ -269,6 +275,7 @@ def get_argparser():
 
     # Add Argument for Exception Regex
     parser.add_argument(
+        "-x",
         "--exception_regex",
         type=ast.literal_eval,
         help="Exception Regex to filter out resources. Format: --exception_regex perftest_keep_resources",
@@ -276,6 +283,7 @@ def get_argparser():
 
     # Add Argument for Age Threshold
     parser.add_argument(
+        "-a",
         "--age",
         required=True,
         type=ast.literal_eval,

@@ -2,15 +2,15 @@
 
 import datetime
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-from crc.azu._base import compute_client, network_client, resourceGroup
+from crc.azu._base import compute_client, resourceGroup
 from crc.service import Service
 
 
-class VM(Service):
+class Disk(Service):
     """
-    A class for managing virtual machines on Azure.
+    A class for managing Disks on Azure.
     """
 
     default_disk_state = ["Unattached"]
@@ -25,7 +25,7 @@ class VM(Service):
         age: Dict[str, int],
     ) -> None:
         """
-        Initialize the virtual machine management class.
+        Initialize the Disk management class.
 
         :param filter_tags: A dictionary of tags to filter virtual machines by.
         :param exception_tags: A dictionary of tags to exclude virtual machines by.
@@ -49,19 +49,19 @@ class VM(Service):
 
     def delete(self):
         """
-        Deletes disks that match the specified filter labels and exception tags, and are older than the specified age.
+        Deletes disks that match the specified filter tags and exception tags, and are older than the specified age.
         """
         # Get a list of all disks
         disks = compute_client.disks.list()
 
         # Iterate through each disk
         for disk in disks:
-            # Check if the disk has the specified filter labels
-            filter_labels_match = not self.filter_tags or (
+            # Check if the disk has the specified filter tags
+            filter_tags_match = not self.filter_tags or (
                 disk.tags
                 and any(
                     key in disk.tags and disk.tags[key] in value
-                    for key, value in self.filter_labels.items()
+                    for key, value in self.filter_tags.items()
                 )
             )
 
@@ -71,8 +71,8 @@ class VM(Service):
                 for key, value in self.exception_tags.items()
             )
 
-            # Check if the disk matches the specified filter labels and exception tags
-            if filter_labels_match and exception_tags_match:
+            # Check if the disk matches the specified filter tags and exception tags
+            if filter_tags_match and exception_tags_match:
                 # Get the current time and compare it to the disk's time created
                 dt = datetime.datetime.now().replace(
                     tzinfo=disk.time_created.tzinfo

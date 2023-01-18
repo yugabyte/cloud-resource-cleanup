@@ -3,7 +3,7 @@
 import datetime
 import logging
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from crc.azu._base import compute_client, network_client, resourceGroup
 from crc.service import Service

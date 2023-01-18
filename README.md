@@ -41,8 +41,8 @@ python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resourc
 * `resource_states`: Resource State to consider for Delete. It is applicable only for VMs (['RUNNING', 'STOPPED']). Default: ['RUNNING']
 * `filter_tags`: Specify the tags to filter the resources. Doesn't apply to AWS keypairs and GCP IPs (e.g. {'test_task': ['test', 'stress-test']})
 * `exception_tags`: Specify the tags to exclude the resources. Doesn't apply if `filter_tags` is empty. (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
-* `name_regex`: Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs (e.g. perftest_)
-* `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty (e.g. perftest_keep_resources)
+* `name_regex`: Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs (e.g. ['perftest_', 'feature_'])
+* `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
 * `age`: Age Threshold for resources is mandatory argument (e.g. {'days': 3, 'hours': 12})
 
 ## Logging
@@ -51,7 +51,7 @@ The script will log all deleted resources to a file called crc.log in the same d
 ## Note
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
 * Use filter_tags and exception_tags in json format (Dict[str, List[str]])
-* Use name_regex and exception_regex in list format (List[str])
+* Use resource_states, name_regex and exception_regex in list format (List[str])
 * Use age in json format. Example : {"days":60} (Dict[str, int])
 
 ## Contributing

@@ -263,6 +263,7 @@ def get_argparser():
     # Add Argument for Age Threshold
     parser.add_argument(
         "--age",
+        required=True,
         type=ast.literal_eval,
         help="Age Threshold for resources. Format: --age {'days': 3, 'hours': 12}",
     )

@@ -43,8 +43,7 @@ python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resourc
 * `exception_tags`: Specify the tags to exclude the resources. Doesn't apply if `filter_tags` is empty. (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
 * `name_regex`: Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs (e.g. perftest_)
 * `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty (e.g. perftest_keep_resources)
-
-
+* `age`: Age Threshold for resources is mandatory argument (e.g. {'days': 3, 'hours': 12})
 
 ## Logging
 The script will log all deleted resources to a file called crc.log in the same directory as the script. The log file will contain the resource type, name, and the date and time it was deleted.

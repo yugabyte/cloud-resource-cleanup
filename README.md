@@ -1,6 +1,12 @@
 # cloud-resource-cleanup
 
-Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds. Whether you're working with **AWS**, **Azure**, or **GCP**, this tool has got you covered. With `cloud-resource-cleanup`, you can delete **Elastic IPs**, **keypairs**, and **VMs** (including attached resources such as **disks** and **NICs**) from **AWS**, **disks**, **VMs**, **NICs**, and **public IPs** from **Azure**, and **IPs**, **VMs** (including attached resources such as **disks** and **NICs**) from **GCP**. Additionally, you can also **stop** **VMs** from **AWS**, **Azure**, and **GCP**. The tool also includes a feature that allows you to filter resources based on the **age** of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
+Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds. Whether you're working with **AWS**, **Azure**, or **GCP**, this tool has got you covered. With `cloud-resource-cleanup`, you can:
+
+* Delete Elastic IPs, keypairs, and VMs (including attached resources such as disks and NICs) from AWS
+* Delete disks, VMs, NICs and public IPs from Azure
+* Delete IPs, VMs (including attached resources such as disks and NICs) from GCP
+* Stop VMs from AWS, Azure, and GCP
+The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
 ## Prerequisites
 * Python 3.x

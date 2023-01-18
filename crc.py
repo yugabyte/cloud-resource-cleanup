@@ -285,6 +285,26 @@ def get_argparser():
     return vars(parser.parse_args())
 
 
+def is_list(name, value):
+    if type(value) is not list:
+        raise TypeError(f"{value} in {name} should be a list")
+    return True
+
+
+def is_dict(name, value):
+    if type(value) is not dict:
+        raise TypeError(f"{value} in {name} should be a dict")
+    return True
+
+
+def is_value_of_dict_list(name, value):
+    if type(value) is not dict:
+        raise TypeError(f"{value} in {name} should be a dict")
+    for val in value.items():
+        is_list(name, val)
+    return True
+
+
 def main():
     """
     Main function to perform resource cleanup operations on the specified cloud(s) and resource(s).
@@ -321,6 +341,14 @@ def main():
         resources = RESOURCES
     else:
         resources = [resources]
+
+    # Validate Input Values
+    is_list(resource_states)
+    is_value_of_dict_list(filter_tags)
+    is_value_of_dict_list(exception_tags)
+    is_list(name_regex)
+    is_list(exception_regex)
+    is_dict(age)
 
     # Perform operations
     for cloud in clouds:

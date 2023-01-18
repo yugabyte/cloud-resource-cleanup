@@ -1,0 +1,7 @@
+boto3
+msrestazure
+azure.mgmt.compute
+azure.identity
+azure.mgmt.network
+google-cloud-compute
+google-api-python-client

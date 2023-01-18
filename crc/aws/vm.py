@@ -12,10 +12,10 @@ from crc.service import Service
 
 class VM(Service):
     """
-    The VM class provides an interface for managing AWS EC2 instances. 
-    It inherits from the Service class and uses boto3 to interact with the AWS EC2 service. 
-    By default, boto3 will clean up any attached resources (NICs, disks, etc.) when a VM is deleted. 
-    The class allows for filtering and excluding instances based on specified tags, as well as an age threshold for instances. 
+    The VM class provides an interface for managing AWS EC2 instances.
+    It inherits from the Service class and uses boto3 to interact with the AWS EC2 service.
+    By default, boto3 will clean up any attached resources (NICs, disks, etc.) when a VM is deleted.
+    The class allows for filtering and excluding instances based on specified tags, as well as an age threshold for instances.
     The class also has properties for the number of instances that will be deleted and stopped.
     """
 

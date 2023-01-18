@@ -11,11 +11,11 @@ This module contains functions to authenticate and connect to Azure, and clients
 """
 
 # Environment variables for Azure credentials
-Subscription_Id = os.environ["AZURE_CREDENTIALS_SUBSCRIPTION_ID"]
-Tenant_Id = os.environ["AZURE_CREDENTIALS_TENANT_ID"]
-Client_Id = os.environ["AZURE_CREDENTIALS_CLIENT_ID"]
-Secret = os.environ["AZURE_CREDENTIALS_CLIENT_SECRET"]
-resourceGroup = os.environ["AZURE_RESOURCE_GROUP"]
+Subscription_Id = os.environ.get("AZURE_CREDENTIALS_SUBSCRIPTION_ID")
+Tenant_Id = os.environ.get("AZURE_CREDENTIALS_TENANT_ID")
+Client_Id = os.environ.get("AZURE_CREDENTIALS_CLIENT_ID")
+Secret = os.environ.get("AZURE_CREDENTIALS_CLIENT_SECRET")
+resourceGroup = os.environ.get("AZURE_RESOURCE_GROUP")
 
 
 # Property to return the credential object

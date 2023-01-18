@@ -34,7 +34,7 @@ To run the script, use the following command:
 ```
 python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resource_name> --filter_tags <tags> --exception_tags <tags>
 ```
-* `cloud`: Specify the cloud name (aws, azu, gcp or all)
+* `cloud`: Specify the cloud name (aws, azu, gcp or all). It is a mandatory argument
 * `project_id`: Project id is mandatory for gcp.
 * `resource`: Specify the resource name (vm, disk, ip, keypair or all). Default : 'all'
 * `operation_type`: Type of operation to perform on resource (delete or stop). Default: 'delete'

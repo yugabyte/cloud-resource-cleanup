@@ -6,6 +6,7 @@ Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that all
 * Delete disks, VMs, NICs and public IPs from Azure
 * Delete IPs, VMs (including attached resources such as disks and NICs) from GCP
 * Stop VMs from AWS, Azure, and GCP
+
 The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
 ## Prerequisites

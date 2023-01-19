@@ -79,7 +79,7 @@ python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resourc
 * `exception_tags`: Specify the tags to exclude the resources. Doesn't apply if `filter_tags` is empty. (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
 * `name_regex`: Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs (e.g. ['perftest_', 'feature_'])
 * `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
-* `age`: Age Threshold for resources is mandatory argument (e.g. {'days': 3, 'hours': 12})
+* `age`: Age Threshold for resources is mandatory argument while deleting resources other than IPs (e.g. {'days': 3, 'hours': 12})
 
 
 ## Examples

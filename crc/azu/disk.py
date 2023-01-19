@@ -87,7 +87,9 @@ class Disk(Service):
                     ):
                         if not self.monitor:
                             # Delete the disk
-                            compute_client().disks.begin_delete(resourceGroup, disk.name)
+                            compute_client().disks.begin_delete(
+                                resourceGroup, disk.name
+                            )
                             # Log that the disk was deleted
                             logging.info("Deleted disk: " + disk.name)
                         self.disks_names_to_delete.append(disk.name)

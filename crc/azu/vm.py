@@ -180,7 +180,8 @@ class VM(Service):
         :rtype: str
         """
         return (
-            compute_client().virtual_machines.instance_view(resourceGroup, vm_name)
+            compute_client()
+            .virtual_machines.instance_view(resourceGroup, vm_name)
             .statuses[1]
             .display_status
         )

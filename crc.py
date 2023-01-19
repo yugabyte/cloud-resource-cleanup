@@ -359,7 +359,7 @@ def main():
     age = args.get("age")
     monitor = args.get("monitor")
 
-    if not age and resources != "ip":
+    if operation_type == "delete" and not age and resources != "ip":
         raise TypeError("Age is mandatory argument for resources other than IP")
 
     # Process Cloud

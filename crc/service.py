@@ -10,7 +10,8 @@ from crc.utils import init_logging
 
 class Service:
     """
-    The Service class provides an abstract interface for interacting with different services.
+    Service class provides a method to check if a resource is older than a specified age threshold.
+    It also sets up logging for the class.
     """
 
     # Directory where logs will be stored

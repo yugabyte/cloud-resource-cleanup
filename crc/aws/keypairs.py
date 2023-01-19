@@ -85,49 +85,47 @@ class KeyPairs(Service):
             exception_regex = set()
         for region in get_all_regions(self.service_name, self.default_region_name):
             keypairs_to_delete = set()
-            with boto3.client(self.service_name, region_name=region) as client:
-                keypairs = client.describe_key_pairs()
-                for keypair in keypairs["KeyPairs"]:
-                    if "KeyName" not in keypair or "CreateTime" not in keypair:
-                        continue
-                    keypair_name = keypair["KeyName"]
-                    keypair_create_time = keypair["CreateTime"]
-                    dt = datetime.datetime.now().replace(
-                        tzinfo=keypair_create_time.tzinfo
-                    )
+            client = boto3.client(self.service_name, region_name=region)
+            keypairs = client.describe_key_pairs()
+            for keypair in keypairs["KeyPairs"]:
+                if "KeyName" not in keypair or "CreateTime" not in keypair:
+                    continue
+                keypair_name = keypair["KeyName"]
+                keypair_create_time = keypair["CreateTime"]
+                dt = datetime.datetime.now().replace(tzinfo=keypair_create_time.tzinfo)
 
-                    # Check if keypair name matches specified regex
-                    match_name_regex = not self.name_regex or any(
-                        re.search(kpn, keypair_name) for kpn in self.name_regex
-                    )
-                    match_exception_regex = self.exception_regex and any(
-                        re.search(kpn, keypair_name) for kpn in exception_regex
-                    )
+                # Check if keypair name matches specified regex
+                match_name_regex = not self.name_regex or any(
+                    re.search(kpn, keypair_name) for kpn in self.name_regex
+                )
+                match_exception_regex = self.exception_regex and any(
+                    re.search(kpn, keypair_name) for kpn in exception_regex
+                )
 
-                    if match_name_regex and not match_exception_regex:
-                        if self.is_old(
-                            self.age,
-                            dt,
-                            keypair_create_time,
-                        ):
-                            keypairs_to_delete.add(keypair_name)
-                        else:
-                            logging.info(
-                                f"Keypair {keypair_name} is not old enough to be deleted."
-                            )
+                if match_name_regex and not match_exception_regex:
+                    if self.is_old(
+                        self.age,
+                        dt,
+                        keypair_create_time,
+                    ):
+                        keypairs_to_delete.add(keypair_name)
                     else:
-                        if match_exception_regex:
-                            logging.info(
-                                f"Keypair {keypair_name} is in exception_regex {self.exception_regex}."
-                            )
-
-                for keypair_to_delete in keypairs_to_delete:
-                    if not self.monitor:
-                        response = client.delete_key_pair(KeyName=keypair_to_delete)
                         logging.info(
-                            f"Deleted keypair: {keypair_to_delete} with response: {response}"
+                            f"Keypair {keypair_name} is not old enough to be deleted."
                         )
-                    self.deleted_keypairs.append(keypair_to_delete)
+                else:
+                    if match_exception_regex:
+                        logging.info(
+                            f"Keypair {keypair_name} is in exception_regex {self.exception_regex}."
+                        )
+
+            for keypair_to_delete in keypairs_to_delete:
+                if not self.monitor:
+                    response = client.delete_key_pair(KeyName=keypair_to_delete)
+                    logging.info(
+                        f"Deleted keypair: {keypair_to_delete} with response: {response}"
+                    )
+                self.deleted_keypairs.append(keypair_to_delete)
 
         if not self.monitor:
             logging.warning(

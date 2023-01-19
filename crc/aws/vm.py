@@ -200,45 +200,39 @@ class VM(Service):
         # Renaming filter to instance_filter for better understanding
         instance_filter = self._get_filter(instance_state)
         for region in get_all_regions(self.service_name, self.default_region_name):
-            with boto3.client(self.service_name, region_name=region) as client:
-                # Renaming instance_details to describe_instances_response for better understanding
-                describe_instances_response = client.describe_instances(
-                    Filters=instance_filter
-                )
+            client = boto3.client(self.service_name, region_name=region)
+            # Renaming instance_details to describe_instances_response for better understanding
+            describe_instances_response = client.describe_instances(
+                Filters=instance_filter
+            )
 
-                (
-                    instances_to_operate,
-                    instance_names_to_operate,
-                ) = self._get_filtered_instances(client, describe_instances_response)
+            (
+                instances_to_operate,
+                instance_names_to_operate,
+            ) = self._get_filtered_instances(client, describe_instances_response)
 
-                if instances_to_operate:
-                    try:
-                        if operation_type == "delete":
-                            if not self.monitor:
-                                client.terminate_instances(
-                                    InstanceIds=instances_to_operate
+            if instances_to_operate:
+                try:
+                    if operation_type == "delete":
+                        if not self.monitor:
+                            client.terminate_instances(InstanceIds=instances_to_operate)
+                            for i in range(len(instances_to_operate)):
+                                logging.info(
+                                    f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
                                 )
-                                for i in range(len(instances_to_operate)):
-                                    logging.info(
-                                        f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
-                                    )
-                            self.instance_names_to_delete.extend(
-                                instance_names_to_operate
-                            )
-                        elif operation_type == "stop":
-                            if not self.monitor:
-                                client.stop_instances(InstanceIds=instances_to_operate)
-                                for i in range(len(instances_to_operate)):
-                                    logging.info(
-                                        f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
-                                    )
-                            self.instance_names_to_stop.extend(
-                                instance_names_to_operate
-                            )
-                    except Exception as e:
-                        logging.error(
-                            f"Error occurred while {operation_type} instances: {e}"
-                        )
+                        self.instance_names_to_delete.extend(instance_names_to_operate)
+                    elif operation_type == "stop":
+                        if not self.monitor:
+                            client.stop_instances(InstanceIds=instances_to_operate)
+                            for i in range(len(instances_to_operate)):
+                                logging.info(
+                                    f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
+                                )
+                        self.instance_names_to_stop.extend(instance_names_to_operate)
+                except Exception as e:
+                    logging.error(
+                        f"Error occurred while {operation_type} instances: {e}"
+                    )
 
         # Using more descriptive if conditions
         if not self.instance_names_to_delete and not self.instance_names_to_stop:

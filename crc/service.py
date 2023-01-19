@@ -53,8 +53,8 @@ class Service:
         age_in_hours = age_in_seconds / 3600
 
         if "days" in age and "hours" in age:
-            threshold_in_days = age["days"]
-            threshold_in_hours = age["hours"]
+            threshold_in_days = int(age["days"])
+            threshold_in_hours = int(age["hours"])
             threshold_in_seconds = (threshold_in_days * 24 * 3600) + (
                 threshold_in_hours * 3600
             )
@@ -65,14 +65,14 @@ class Service:
                 )
                 return True
         elif "days" in age:
-            threshold_in_days = age["days"]
+            threshold_in_days = int(age["days"])
             if age_in_days >= threshold_in_days:
                 logging.info(
                     f"The resource is {age_in_days} days old and older than the threshold of {threshold_in_days} days."
                 )
                 return True
         elif "hours" in age:
-            threshold_in_hours = age["hours"]
+            threshold_in_hours = int(age["hours"])
             if age_in_hours >= threshold_in_hours:
                 logging.info(
                     f"The resource is {age_in_hours} hours old and older than the threshold of {threshold_in_hours} hours."

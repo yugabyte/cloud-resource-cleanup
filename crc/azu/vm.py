@@ -180,7 +180,7 @@ class VM(Service):
         :rtype: str
         """
         return (
-            compute_client.virtual_machines.instance_view(resourceGroup, vm_name)
+            compute_client().virtual_machines.instance_view(resourceGroup, vm_name)
             .statuses[1]
             .display_status
         )
@@ -193,7 +193,7 @@ class VM(Service):
         :type vm_name: str
         """
         if not self.monitor:
-            compute_client.virtual_machines.begin_delete(resourceGroup, vm_name)
+            compute_client().virtual_machines.begin_delete(resourceGroup, vm_name)
             logging.info("Deleting virtual machine: %s", vm_name)
         self.instance_names_to_delete.append(vm_name)
         self._delete_nic(vm_name)
@@ -206,7 +206,7 @@ class VM(Service):
         :type vm_name: str
         """
         if not self.monitor:
-            compute_client.virtual_machines.begin_power_off(resourceGroup, vm_name)
+            compute_client().virtual_machines.begin_power_off(resourceGroup, vm_name)
             logging.info("Stopping virtual machine: %s", vm_name)
         self.instance_names_to_stop.append(vm_name)
 
@@ -246,7 +246,7 @@ class VM(Service):
             try:
                 time.sleep(60)
                 if not self.monitor:
-                    network_client.network_interfaces.begin_delete(
+                    network_client().network_interfaces.begin_delete(
                         resourceGroup, nic_name
                     )
                     logging.info(f"Deleted the NIC - {nic_name}")

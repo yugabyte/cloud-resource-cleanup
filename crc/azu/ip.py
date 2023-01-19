@@ -61,7 +61,7 @@ class IP(Service):
                 and ip.ip_configuration is None
             ):
                 if not self.monitor:
-                    network_client.public_ip_addresses.begin_delete(
+                    network_client().public_ip_addresses.begin_delete(
                         resource_group_name=resourceGroup,
                         public_ip_address_name=ip.name,
                     )

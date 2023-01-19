@@ -47,6 +47,8 @@ class Service:
         Returns:
         bool : True if the resource is older than the specified age threshold and False otherwise.
         """
+        if not age:
+            return True
         age_delta = current_time - creation_time
         age_in_days = age_delta.days
         age_in_seconds = age_delta.total_seconds()

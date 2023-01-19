@@ -7,7 +7,7 @@ Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that all
 * Delete Orphan IPs, VMs (including attached resources such as disks and NICs) from GCP
 * Stop VMs from AWS, Azure, and GCP
 
-The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
+In addition to these features, `cloud-resource-cleanup` also includes a Monitor only mode which allows you to view resources that match certain criteria without performing any operations on them. This is useful for identifying resources that you may want to delete or stop later. The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
 ## Prerequisites
 * Python 3.x

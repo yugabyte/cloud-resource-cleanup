@@ -285,9 +285,8 @@ def get_argparser():
     parser.add_argument(
         "-a",
         "--age",
-        required=True,
         type=ast.literal_eval,
-        help="Age Threshold for resources. Format: --age {'days': 3, 'hours': 12}",
+        help="Age Threshold for resources. Age is not respected for IPs. Format: --age {'days': 3, 'hours': 12}",
     )
 
     return vars(parser.parse_args())
@@ -347,6 +346,9 @@ def main():
     name_regex = args.get("name_regex")
     exception_regex = args.get("exception_regex")
     age = args.get("age")
+
+    if not age and resource != "ip":
+        raise TypeError("Age is mandatory argument for resources other than IP")
 
     # Process Cloud
     if clouds == "all":

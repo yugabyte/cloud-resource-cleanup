@@ -97,8 +97,9 @@ class VM(Service):
                 "Values": instance_state,
             }
         ]
-        for key, value in self.filter_tags.items():
-            filters.append({"Name": f"tag:{key}", "Values": value})
+        if self.filter_tags:
+            for key, value in self.filter_tags.items():
+                filters.append({"Name": f"tag:{key}", "Values": value})
 
         logging.info(f"Filters created: {filters}")
         return filters
@@ -161,6 +162,8 @@ class VM(Service):
         :return: True if the instance should be skipped, False otherwise
         :rtype: bool
         """
+        if not self.exception_tags:
+            return False
         for tag in tags:
             key = tag["Key"]
             if key in self.exception_tags and tag["Value"] in self.exception_tags[key]:

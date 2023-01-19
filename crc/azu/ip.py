@@ -50,7 +50,7 @@ class IP(Service):
                 )
             )
 
-            exception_tags_match = any(
+            exception_tags_match = self.exception_tags and any(
                 key in ip.tags and ip.tags[key] in value
                 for key, value in self.exception_tags.items()
             )

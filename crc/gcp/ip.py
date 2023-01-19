@@ -77,6 +77,7 @@ class IP(Service):
                 # Check if address name matches filter regex and does not match exception regex
                 if not self.filter_regex or (
                     any(regex in name for regex in self.filter_regex)
+                    and self.exception_regex
                     and not any(regex in name for regex in self.exception_regex)
                 ):
                     ips_to_delete.append(name)

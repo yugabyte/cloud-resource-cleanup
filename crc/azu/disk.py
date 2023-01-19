@@ -71,7 +71,7 @@ class Disk(Service):
             )
 
             # Check if the disk has the specified exception tags
-            exception_tags_match = any(
+            exception_tags_match = self.exception_tags and any(
                 key in disk.tags and disk.tags[key] in value
                 for key, value in self.exception_tags.items()
             )

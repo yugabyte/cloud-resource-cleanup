@@ -175,7 +175,7 @@ class VM(Service):
         :return: True if the instance has a label that is in the exception list, False otherwise
         :rtype: bool
         """
-        return any(
+        return self.exception_labels and any(
             key in instance.labels and instance.labels[key] in value
             for key, value in self.exception_labels.items()
         )

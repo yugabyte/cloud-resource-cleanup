@@ -65,6 +65,7 @@ class ElasticIPs(Service):
         Delete Elastic IPs that match the specified filter_tags and do not match the specified exception_tags.
         """
         regions = get_all_regions(self.service_name, self.default_region_name)
+
         for region in regions:
             eips_to_delete = {}
             client = boto3.client(self.service_name, region_name=region)
@@ -76,7 +77,8 @@ class ElasticIPs(Service):
                         # check for exception_tags match
                         key = tag["Key"]
                         if (
-                            key in self.exception_tags
+                            self.exception_tags
+                            and key in self.exception_tags
                             and tag["Value"] in self.exception_tags[key]
                         ):
                             continue

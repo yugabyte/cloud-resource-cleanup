@@ -79,7 +79,10 @@ class KeyPairs(Service):
         """
         Delete all keypairs that match the specified name regex and are older than the specified age.
         """
-        exception_regex = set(self.exception_regex)
+        if self.exception_regex:
+            exception_regex = set(self.exception_regex)
+        else:
+            exception_regex = set()
         for region in get_all_regions(self.service_name, self.default_region_name):
             keypairs_to_delete = set()
             with boto3.client(self.service_name, region_name=region) as client:
@@ -94,16 +97,14 @@ class KeyPairs(Service):
                     )
 
                     # Check if keypair name matches specified regex
-                    match_name_regex = any(
+                    match_name_regex = not self.name_regex or any(
                         re.search(kpn, keypair_name) for kpn in self.name_regex
                     )
-                    match_exception_regex = any(
+                    match_exception_regex = self.exception_regex and any(
                         re.search(kpn, keypair_name) for kpn in exception_regex
                     )
 
-                    if (
-                        not self.name_regex or match_name_regex
-                    ) and not match_exception_regex:
+                    if match_name_regex and not match_exception_regex:
                         if self.is_old(
                             self.age,
                             dt,

@@ -162,7 +162,7 @@ class VM(Service):
             key in vm.tags and vm.tags[key] in value
             for key, value in self.filter_tags.items()
         ):
-            if any(
+            if self.exception_tags and any(
                 key in vm.tags and vm.tags[key] in value
                 for key, value in self.exception_tags.items()
             ):

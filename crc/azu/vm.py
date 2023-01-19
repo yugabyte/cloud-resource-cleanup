@@ -94,7 +94,7 @@ class VM(Service):
         :type instance_state: List[str]
         """
 
-        vms = compute_client.virtual_machines.list_all()
+        vms = compute_client().virtual_machines.list_all()
 
         for vm in vms:
             if self._should_perform_operation_on_vm(vm):

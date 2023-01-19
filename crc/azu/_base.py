@@ -19,7 +19,6 @@ resourceGroup = os.environ.get("AZURE_RESOURCE_GROUP")
 
 
 # Property to return the credential object
-@property
 def credential():
     """
     Return the credential object for connecting to Azure
@@ -32,21 +31,19 @@ def credential():
 
 
 # Property to return the ComputeManagementClient object
-@property
 def compute_client():
     """
     Return the ComputeManagementClient object for managing Azure compute resources
     """
     return ComputeManagementClient(
-        credential=credential,
+        credential=credential(),
         subscription_id=Subscription_Id,
     )
 
 
 # Property to return the NetworkManagementClient object
-@property
 def network_client():
     """
     Return the NetworkManagementClient object for managing Azure network resources
     """
-    return NetworkManagementClient(credential, Subscription_Id)
+    return NetworkManagementClient(credential(), Subscription_Id)

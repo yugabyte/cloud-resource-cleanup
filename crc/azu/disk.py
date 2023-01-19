@@ -57,7 +57,7 @@ class Disk(Service):
         Deletes disks that match the specified filter tags and exception tags, and are older than the specified age.
         """
         # Get a list of all disks
-        disks = compute_client.disks.list()
+        disks = compute_client().disks.list()
 
         # Iterate through each disk
         for disk in disks:

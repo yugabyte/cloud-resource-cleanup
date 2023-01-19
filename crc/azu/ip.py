@@ -39,7 +39,7 @@ class IP(Service):
         """
         Delete public IP addresses that match the filter and exception tags.
         """
-        ips = network_client.public_ip_addresses.list_all()
+        ips = network_client().public_ip_addresses.list_all()
 
         for ip in ips:
             filter_tags_match = not self.filter_tags or (

@@ -20,6 +20,7 @@ class Disk(Service):
 
     def __init__(
         self,
+        monitor: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
@@ -27,12 +28,16 @@ class Disk(Service):
         """
         Initialize the Disk management class.
 
+        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
+        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        but will not perform any operations on them.
         :param filter_tags: A dictionary of tags to filter virtual machines by.
         :param exception_tags: A dictionary of tags to exclude virtual machines by.
         :param age: A dictionary specifying the age threshold for stopping and deleting virtual machines.
         """
         super().__init__()
         self.disks_names_to_delete = []
+        self.monitor = monitor
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
@@ -80,11 +85,17 @@ class Disk(Service):
                     if any(
                         disk.disk_state in state for state in self.default_disk_state
                     ):
-                        # Delete the disk
-                        compute_client.disks.begin_delete(resourceGroup, disk.name)
-                        # Log that the disk was deleted
-                        logging.info("Deleted disk: " + disk.name)
+                        if not self.monitor:
+                            # Delete the disk
+                            compute_client.disks.begin_delete(resourceGroup, disk.name)
+                            # Log that the disk was deleted
+                            logging.info("Deleted disk: " + disk.name)
                         self.disks_names_to_delete.append(disk.name)
-        logging.info(
-            f"number of Azure Disks deleted: {len(self.disks_names_to_delete)}"
-        )
+        if not self.monitor:
+            logging.warning(
+                f"number of Azure Disks deleted: {len(self.disks_names_to_delete)}"
+            )
+        else:
+            logging.warning(
+                f"List of Azure Disks which will be deleted: {self.disks_names_to_delete}"
+            )

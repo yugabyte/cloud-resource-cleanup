@@ -11,14 +11,18 @@ class IP(Service):
     Class for managing public IP addresses in Azure.
     """
 
-    def __init__(self, filter_tags: dict, exception_tags: dict) -> None:
+    def __init__(self, monitor: bool, filter_tags: dict, exception_tags: dict) -> None:
         """
         Initialize the IP class with filter and exception tags.
+        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
+        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        but will not perform any operations on them.
         :param filter_tags: dict containing key-value pairs to filter IP addresses by
         :param exception_tags: dict containing key-value pairs to exclude IP addresses by
         """
         super().__init__()
         self.deleted_ips = []
+        self.monitor = monitor
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
 
@@ -56,10 +60,16 @@ class IP(Service):
                 and not exception_tags_match
                 and ip.ip_configuration is None
             ):
-                network_client.public_ip_addresses.begin_delete(
-                    resource_group_name=resourceGroup,
-                    public_ip_address_name=ip.name,
-                )
-                logging.info(f"Deleted IP address: {ip.name}")
+                if not self.monitor:
+                    network_client.public_ip_addresses.begin_delete(
+                        resource_group_name=resourceGroup,
+                        public_ip_address_name=ip.name,
+                    )
+                    logging.info(f"Deleted IP address: {ip.name}")
                 self.deleted_ips.append(ip.name)
-        logging.info(f"number of Azure IPs deleted: {len(self.deleted_ips)}")
+        if not self.monitor:
+            logging.warning(f"number of Azure IPs deleted: {len(self.deleted_ips)}")
+        else:
+            logging.warning(
+                f"List of Azure IPs which will be deleted: {self.deleted_ips}"
+            )

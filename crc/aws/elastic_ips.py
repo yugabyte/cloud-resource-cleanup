@@ -35,14 +35,18 @@ class ElasticIPs(Service):
     The default_region_name variable specifies the default region to be used when interacting with the AWS service.
     """
 
-    def __init__(self, filter_tags: dict, exception_tags: dict) -> None:
+    def __init__(self, monitor: bool, filter_tags: dict, exception_tags: dict) -> None:
         """
         Initialize the ElasticIPs class.
+        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
+        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        but will not perform any operations on them.
         :param filter_tags: A dictionary of tags that should be filtered when searching for Elastic IPs to delete.
         :param exception_tags: A dictionary of tags that should be excluded when searching for Elastic IPs to delete.
         """
         super().__init__()
         self.deleted_ips = []
+        self.monitor = monitor
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
 
@@ -87,10 +91,20 @@ class ElasticIPs(Service):
                             and tag["Value"] in self.filter_tags[key]
                         ):
                             eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
-            for ip in eips_to_delete:
-                client.release_address(AllocationId=eips_to_delete[ip])
-                logging.info(f"Deleted IP: {ip}")
+
+            if not self.monitor:
+                for ip in eips_to_delete:
+                    client.release_address(AllocationId=eips_to_delete[ip])
+                    logging.info(f"Deleted IP: {ip}")
+
             # Add deleted IPs to deleted_ips list
             self.deleted_ips.extend(list(eips_to_delete.keys()))
 
-        logging.info(f"number of AWS Elastic IPs deleted: {len(self.deleted_ips)}")
+        if not self.monitor:
+            logging.warning(
+                f"number of AWS Elastic IPs deleted: {len(self.deleted_ips)}"
+            )
+        else:
+            logging.warning(
+                f"List of AWS Elastic IPs which will be deleted: {self.deleted_ips}"
+            )

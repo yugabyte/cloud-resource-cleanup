@@ -22,6 +22,7 @@ class IP(Service):
 
     def __init__(
         self,
+        monitor: bool,
         project_id: str,
         filter_regex: List[str],
         exception_regex: List[str],
@@ -38,6 +39,7 @@ class IP(Service):
         """
         super().__init__()
         self.deleted_ips = []
+        self.monitor = monitor
         self.project_id = project_id
         self.filter_regex = filter_regex
         self.exception_regex = exception_regex
@@ -79,14 +81,20 @@ class IP(Service):
                 ):
                     ips_to_delete.append(name)
 
-            for ip in ips_to_delete:
-                # Delete IP addresses
-                compute_v1.AddressesClient().delete(
-                    project=self.project_id,
-                    region=region,
-                    address=ip,
-                )
-                logging.info(f"Deleting IP address: {ip}")
+            if not self.monitor:
+                for ip in ips_to_delete:
+                    # Delete IP addresses
+                    compute_v1.AddressesClient().delete(
+                        project=self.project_id,
+                        region=region,
+                        address=ip,
+                    )
+                    logging.info(f"Deleting IP address: {ip}")
             self.deleted_ips.extend(ips_to_delete)
 
-        logging.info(f"number of GCP IPs deleted: {len(self.deleted_ips)}")
+        if not self.monitor:
+            logging.warning(f"number of GCP IPs deleted: {len(self.deleted_ips)}")
+        else:
+            logging.warning(
+                f"List of GCP IPs which will be deleted: {self.deleted_ips}"
+            )

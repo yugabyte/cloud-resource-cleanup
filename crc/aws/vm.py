@@ -36,6 +36,7 @@ class VM(Service):
 
     def __init__(
         self,
+        monitor: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
@@ -43,6 +44,9 @@ class VM(Service):
         """
         Initializes the object with filter and exception tags to be used when searching for instances, as well as an age threshold for instances.
 
+        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
+        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        but will not perform any operations on them.
         :param filter_tags: dictionary containing key-value pairs as filter tags
         :type filter_tags: Dict[str, List[str]]
         :param exception_tags: dictionary containing key-value pairs as exception tags
@@ -53,6 +57,7 @@ class VM(Service):
         super().__init__()
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
+        self.monitor = monitor
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
@@ -158,7 +163,6 @@ class VM(Service):
         """
         for tag in tags:
             key = tag["Key"]
-            tag["Value"]
             if key in self.exception_tags and tag["Value"] in self.exception_tags[key]:
                 return True
         return False
@@ -207,20 +211,24 @@ class VM(Service):
                 if instances_to_operate:
                     try:
                         if operation_type == "delete":
-                            client.terminate_instances(InstanceIds=instances_to_operate)
-                            for i in range(len(instances_to_operate)):
-                                logging.info(
-                                    f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
+                            if not self.monitor:
+                                client.terminate_instances(
+                                    InstanceIds=instances_to_operate
                                 )
+                                for i in range(len(instances_to_operate)):
+                                    logging.info(
+                                        f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
+                                    )
                             self.instance_names_to_delete.extend(
                                 instance_names_to_operate
                             )
                         elif operation_type == "stop":
-                            client.stop_instances(InstanceIds=instances_to_operate)
-                            for i in range(len(instances_to_operate)):
-                                logging.info(
-                                    f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
-                                )
+                            if not self.monitor:
+                                client.stop_instances(InstanceIds=instances_to_operate)
+                                for i in range(len(instances_to_operate)):
+                                    logging.info(
+                                        f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
+                                    )
                             self.instance_names_to_stop.extend(
                                 instance_names_to_operate
                             )
@@ -231,17 +239,27 @@ class VM(Service):
 
         # Using more descriptive if conditions
         if not self.instance_names_to_delete and not self.instance_names_to_stop:
-            logging.info(f"No AWS instances to {operation_type}.")
+            logging.warning(f"No AWS instances to {operation_type}.")
 
         if operation_type == "delete":
-            logging.info(
-                f"number of AWS instances deleted: {len(self.instance_names_to_delete)}"
-            )
+            if not self.monitor:
+                logging.warning(
+                    f"number of AWS instances deleted: {len(self.instance_names_to_delete)}"
+                )
+            else:
+                logging.warning(
+                    f"List of AWS instances which will be deleted: {self.instance_names_to_delete}"
+                )
 
         if operation_type == "stop":
-            logging.info(
-                f"number of AWS instances stopped: {len(self.instance_names_to_stop)}"
-            )
+            if not self.monitor:
+                logging.warning(
+                    f"number of AWS instances stopped: {len(self.instance_names_to_stop)}"
+                )
+            else:
+                logging.warning(
+                    f"List of AWS instances which will be stopped: {self.instance_names_to_stop}"
+                )
 
     def delete(
         self,

@@ -22,6 +22,7 @@ class VM(Service):
 
     def __init__(
         self,
+        monitor: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
@@ -29,6 +30,9 @@ class VM(Service):
         """
         Initializes the object with filter and exception tags to be used when searching for instances, as well as an age threshold for instances.
 
+        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
+        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        but will not perform any operations on them.
         :param filter_tags: dictionary containing key-value pairs as filter tags
         :type filter_tags: Dict[str, List[str]]
         :param exception_tags: dictionary containing key-value pairs as exception tags
@@ -40,6 +44,7 @@ class VM(Service):
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
         self.nics_names_to_delete = []
+        self.monitor = monitor
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
@@ -106,20 +111,33 @@ class VM(Service):
 
         # Using more descriptive if conditions
         if not self.instance_names_to_delete and not self.instance_names_to_stop:
-            logging.info(f"No Azure instances to {operation_type}.")
+            logging.warning(f"No Azure instances to {operation_type}.")
 
         if operation_type == "delete":
-            logging.info(
-                f"number of Azure instances deleted: {len(self.instance_names_to_delete)}"
-            )
-            logging.info(
-                f"number of Azure nics deleted: {len(self.nics_names_to_delete)}"
-            )
+            if not self.monitor:
+                logging.warning(
+                    f"number of Azure instances deleted: {len(self.instance_names_to_delete)}"
+                )
+                logging.warning(
+                    f"number of Azure nics deleted: {len(self.nics_names_to_delete)}"
+                )
+            else:
+                logging.warning(
+                    f"List of Azure instances which will be deleted: {self.instance_names_to_delete}"
+                )
+                logging.warning(
+                    f"List of Azure nics which will be deleted: {self.nics_names_to_delete}"
+                )
 
         if operation_type == "stop":
-            logging.info(
-                f"number of Azure instances stopped: {len(self.instance_names_to_stop)}"
-            )
+            if not self.monitor:
+                logging.warning(
+                    f"number of Azure instances stopped: {len(self.instance_names_to_stop)}"
+                )
+            else:
+                logging.warning(
+                    f"List of Azure instances which will be stopped: {self.instance_names_to_stop}"
+                )
 
     def _should_perform_operation_on_vm(self, vm) -> bool:
         """
@@ -174,8 +192,9 @@ class VM(Service):
         :param vm_name: The name of the virtual machine to delete
         :type vm_name: str
         """
-        compute_client.virtual_machines.begin_delete(resourceGroup, vm_name)
-        logging.info("Deleting virtual machine: %s", vm_name)
+        if not self.monitor:
+            compute_client.virtual_machines.begin_delete(resourceGroup, vm_name)
+            logging.info("Deleting virtual machine: %s", vm_name)
         self.instance_names_to_delete.append(vm_name)
         self._delete_nic(vm_name)
 
@@ -186,8 +205,10 @@ class VM(Service):
         :param vm_name: The name of the virtual machine to stop
         :type vm_name: str
         """
-        compute_client.virtual_machines.begin_power_off(resourceGroup, vm_name)
-        logging.info("Stopping virtual machine: %s", vm_name)
+        if not self.monitor:
+            compute_client.virtual_machines.begin_power_off(resourceGroup, vm_name)
+            logging.info("Stopping virtual machine: %s", vm_name)
+        self.instance_names_to_stop.append(vm_name)
 
     def delete(
         self,
@@ -224,9 +245,12 @@ class VM(Service):
         while not deleted_nic and failure_count:
             try:
                 time.sleep(60)
-                network_client.network_interfaces.begin_delete(resourceGroup, nic_name)
+                if not self.monitor:
+                    network_client.network_interfaces.begin_delete(
+                        resourceGroup, nic_name
+                    )
+                    logging.info(f"Deleted the NIC - {nic_name}")
                 deleted_nic = True
-                logging.info(f"Deleted the NIC - {nic_name}")
                 self.nics_names_to_delete.append(nic_name)
             except Exception as e:
                 failure_count -= 1

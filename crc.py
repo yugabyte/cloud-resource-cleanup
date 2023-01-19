@@ -24,9 +24,9 @@ class CRC:
     Class for cleaning up resources across different clouds.
     """
 
-    def __init__(self, cloud: str, project_id=None) -> None:
+    def __init__(self, cloud: str, monitor: bool, project_id=None) -> None:
         """
-        Initialize the class with the cloud and project_id (if applicable).
+        Initialize the class with the cloud, monitor only mode and project_id (if applicable).
 
         :param cloud: The cloud to interact with (e.g. "aws", "azu", "gcp").
         :param project_id: The project_id for GCP (mandatory for GCP).
@@ -34,6 +34,7 @@ class CRC:
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
             raise TypeError("project_id is mandatory Parameter for GCP")
+        self.monitor = monitor
         self.project_id = project_id
 
     def _delete_vm(self, vm, instance_state: List[str]):
@@ -63,11 +64,12 @@ class CRC:
         :return: VM object
         """
         if self.cloud == "aws":
-            return AWS_VM(filter_tags, exception_tags, age)
+            return AWS_VM(self.monitor, filter_tags, exception_tags, age)
         if self.cloud == "azu":
-            return AZU_VM(filter_tags, exception_tags, age)
+            return AZU_VM(self.monitor, filter_tags, exception_tags, age)
         if self.cloud == "gcp":
             return GCP_VM(
+                self.monitor,
                 self.project_id,
                 filter_tags,
                 exception_tags,
@@ -92,11 +94,12 @@ class CRC:
         :return: IP object
         """
         if self.cloud == "aws":
-            return ElasticIPs(filter_tags, exception_tags)
+            return ElasticIPs(self.monitor, filter_tags, exception_tags)
         elif self.cloud == "azu":
-            return AZU_IP(filter_tags, exception_tags)
+            return AZU_IP(self.monitor, filter_tags, exception_tags)
         elif self.cloud == "gcp":
             return GCP_IP(
+                self.monitor,
                 self.project_id,
                 name_regex,
                 exception_regex,
@@ -177,7 +180,7 @@ class CRC:
             raise TypeError(
                 "Incorrect Cloud Provided. Keypairs operation is supported only on AWS"
             )
-        KeyPairs(name_regex, exception_regex, age).delete()
+        KeyPairs(self.monitor, name_regex, exception_regex, age).delete()
 
     def delete_disks(
         self,
@@ -289,6 +292,14 @@ def get_argparser():
         help="Age Threshold for resources. Age is not respected for IPs. Format: --age {'days': 3, 'hours': 12}",
     )
 
+    # Add Argument for Monitor Mode
+    parser.add_argument(
+        "-m",
+        "--monitor",
+        action="store_true",
+        help="Enable monitor only mode",
+    )
+
     return vars(parser.parse_args())
 
 
@@ -346,8 +357,9 @@ def main():
     name_regex = args.get("name_regex")
     exception_regex = args.get("exception_regex")
     age = args.get("age")
+    monitor = args.get("monitor")
 
-    if not age and resource != "ip":
+    if not age and resources != "ip":
         raise TypeError("Age is mandatory argument for resources other than IP")
 
     # Process Cloud
@@ -379,7 +391,7 @@ def main():
 
     # Perform operations
     for cloud in clouds:
-        crc = CRC(cloud, project_id)
+        crc = CRC(cloud, monitor, project_id)
         for resource in resources:
             if resource == "disk":
                 crc.delete_disks(filter_tags, exception_regex, age)

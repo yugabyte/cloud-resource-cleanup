@@ -42,6 +42,7 @@ class KeyPairs(Service):
 
     def __init__(
         self,
+        monitor: bool,
         name_regex: List[str],
         exception_regex: List[str],
         age: Dict[str, int],
@@ -50,12 +51,16 @@ class KeyPairs(Service):
         Initialize the KeyPairs class
 
         Parameters:
+            :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
+            In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+            but will not perform any operations on them.
             name_regex (list): List of regular expressions that match the keypair names to be deleted
             exception_regex (list): List of regular expressions that match the keypair names to be ignored
             age (Dict): A dictionary containing the time unit (hours, days, weeks) and the corresponding time value. For example: {'days': 30}
         """
         super().__init__()
         self.deleted_keypairs = []
+        self.monitor = monitor
         self.name_regex = name_regex
         self.exception_regex = exception_regex
         self.age = age
@@ -116,9 +121,18 @@ class KeyPairs(Service):
                             )
 
                 for keypair_to_delete in keypairs_to_delete:
-                    response = client.delete_key_pair(KeyName=keypair_to_delete)
-                    logging.info(
-                        f"Deleted keypair: {keypair_to_delete} with response: {response}"
-                    )
+                    if not self.monitor:
+                        response = client.delete_key_pair(KeyName=keypair_to_delete)
+                        logging.info(
+                            f"Deleted keypair: {keypair_to_delete} with response: {response}"
+                        )
                     self.deleted_keypairs.append(keypair_to_delete)
-        logging.info(f"number of AWS keypairs deleted: {len(self.deleted_keypairs)}")
+
+        if not self.monitor:
+            logging.warning(
+                f"number of AWS keypairs deleted: {len(self.deleted_keypairs)}"
+            )
+        else:
+            logging.warning(
+                f"List of AWS keypairs which will be deleted: {self.deleted_keypairs}"
+            )

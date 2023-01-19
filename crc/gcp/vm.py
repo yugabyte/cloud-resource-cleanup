@@ -39,6 +39,7 @@ class VM(Service):
 
     def __init__(
         self,
+        monitor: bool,
         project_id: str,
         filter_labels: Dict[str, List[str]],
         exception_labels: Dict[str, List[str]],
@@ -59,6 +60,7 @@ class VM(Service):
         super().__init__()
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
+        self.monitor = monitor
         self.project_id = project_id
         self.filter_labels = filter_labels
         self.exception_labels = exception_labels
@@ -117,20 +119,22 @@ class VM(Service):
                 if self._is_old_instance(instance):
                     try:
                         if operation_type == "delete":
-                            service.instances().delete(
-                                project=self.project_id,
-                                zone=zone,
-                                instance=instance.name,
-                            ).execute()
-                            logging.info(f"Deleting instance {instance.name}")
+                            if not self.monitor:
+                                service.instances().delete(
+                                    project=self.project_id,
+                                    zone=zone,
+                                    instance=instance.name,
+                                ).execute()
+                                logging.info(f"Deleting instance {instance.name}")
                             self.instance_names_to_delete.append(instance.name)
                         elif operation_type == "stop":
-                            service.instances().stop(
-                                project=self.project_id,
-                                zone=zone,
-                                instance=instance.name,
-                            ).execute()
-                            logging.info(f"Stopping instance {instance.name}")
+                            if not self.monitor:
+                                service.instances().stop(
+                                    project=self.project_id,
+                                    zone=zone,
+                                    instance=instance.name,
+                                ).execute()
+                                logging.info(f"Stopping instance {instance.name}")
                             self.instance_names_to_stop.append(instance.name)
                     except Exception as e:
                         # log the error message if an exception occurs
@@ -140,17 +144,27 @@ class VM(Service):
 
         # Using more descriptive if conditions
         if not self.instance_names_to_delete and not self.instance_names_to_stop:
-            logging.info(f"No GCP instances to {operation_type}.")
+            logging.warning(f"No GCP instances to {operation_type}.")
 
         if operation_type == "delete":
-            logging.info(
-                f"number of GCP instances deleted: {len(self.instance_names_to_delete)}"
-            )
+            if not self.monitor:
+                logging.info(
+                    f"number of GCP instances deleted: {len(self.instance_names_to_delete)}"
+                )
+            else:
+                logging.warning(
+                    f"List of GCP instances which will be deleted: {self.instance_names_to_delete}"
+                )
 
         if operation_type == "stop":
-            logging.info(
-                f"number of GCP instances stopped: {len(self.instance_names_to_stop)}"
-            )
+            if not self.monitor:
+                logging.info(
+                    f"number of GCP instances stopped: {len(self.instance_names_to_stop)}"
+                )
+            else:
+                logging.warning(
+                    f"List of GCP instances which will be stopped: {self.instance_names_to_stop}"
+                )
 
     def _has_exception_label(self, instance):
         """

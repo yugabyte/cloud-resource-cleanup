@@ -1,3 +1,6 @@
+paramiko
+requests
+beautifulsoup4
 boto3
 msrestazure
 azure.mgmt.compute

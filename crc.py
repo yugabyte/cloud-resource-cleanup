@@ -24,9 +24,9 @@ class CRC:
     Class for cleaning up resources across different clouds.
     """
 
-    def __init__(self, cloud: str, monitor: bool, project_id=None) -> None:
+    def __init__(self, cloud: str, dry_run: bool, project_id=None) -> None:
         """
-        Initialize the class with the cloud, monitor only mode and project_id (if applicable).
+        Initialize the class with the cloud, dry_run only mode and project_id (if applicable).
 
         :param cloud: The cloud to interact with (e.g. "aws", "azu", "gcp").
         :param project_id: The project_id for GCP (mandatory for GCP).
@@ -34,7 +34,7 @@ class CRC:
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
             raise TypeError("project_id is mandatory Parameter for GCP")
-        self.monitor = monitor
+        self.dry_run = dry_run
         self.project_id = project_id
 
     def _delete_vm(self, vm, instance_state: List[str]):
@@ -64,12 +64,12 @@ class CRC:
         :return: VM object
         """
         if self.cloud == "aws":
-            return AWS_VM(self.monitor, filter_tags, exception_tags, age)
+            return AWS_VM(self.dry_run, filter_tags, exception_tags, age)
         if self.cloud == "azu":
-            return AZU_VM(self.monitor, filter_tags, exception_tags, age)
+            return AZU_VM(self.dry_run, filter_tags, exception_tags, age)
         if self.cloud == "gcp":
             return GCP_VM(
-                self.monitor,
+                self.dry_run,
                 self.project_id,
                 filter_tags,
                 exception_tags,
@@ -94,12 +94,12 @@ class CRC:
         :return: IP object
         """
         if self.cloud == "aws":
-            return ElasticIPs(self.monitor, filter_tags, exception_tags)
+            return ElasticIPs(self.dry_run, filter_tags, exception_tags)
         elif self.cloud == "azu":
-            return AZU_IP(self.monitor, filter_tags, exception_tags)
+            return AZU_IP(self.dry_run, filter_tags, exception_tags)
         elif self.cloud == "gcp":
             return GCP_IP(
-                self.monitor,
+                self.dry_run,
                 self.project_id,
                 name_regex,
                 exception_regex,
@@ -180,7 +180,7 @@ class CRC:
             raise TypeError(
                 "Incorrect Cloud Provided. Keypairs operation is supported only on AWS"
             )
-        KeyPairs(self.monitor, name_regex, exception_regex, age).delete()
+        KeyPairs(self.dry_run, name_regex, exception_regex, age).delete()
 
     def delete_disks(
         self,
@@ -199,7 +199,7 @@ class CRC:
             raise TypeError(
                 "Incorrect Cloud Provided. Disks operation is supported only on AZU. AWS, GCP clean the NICs, Disks along with VM"
             )
-        Disk(self.monitor, filter_tags, exception_tags, age).delete()
+        Disk(self.dry_run, filter_tags, exception_tags, age).delete()
 
 
 def get_argparser():
@@ -215,33 +215,40 @@ def get_argparser():
 
     # Add Argument for Cloud
     parser.add_argument(
+        "-c",
         "--cloud",
         choices=["aws", "azu", "gcp", "all"],
         required=True,
-        help="The cloud to operate on. Valid options are: 'aws', 'azu', 'gcp', 'all'. Example: --cloud all",
+        metavar="CLOUD",
+        help="The cloud to operate on. Valid options are: 'aws', 'azu', 'gcp', 'all'. Example: -c or --cloud all",
     )
 
     # Add Argument for Resource Type
     parser.add_argument(
+        "-r",
         "--resource",
         default="all",
         choices=["disk", "ip", "keypair", "vm", "all"],
-        help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: --resource vm",
+        metavar="RESOURCE",
+        help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
     )
 
     # Add Argument for Project ID (GCP only)
     parser.add_argument(
         "-p",
         "--project_id",
+        metavar="PROJECT_ID",
         help="Project ID for GCP. Required only for GCP. Example: --project_id testing",
     )
 
     # Add Argument for Operation Type
     parser.add_argument(
+        "-o",
         "--operation_type",
         default="delete",
         choices=["delete", "stop"],
-        help="Type of operation to perform on resource. Valid options are: 'delete', 'stop'. Default: 'delete'. Example: --operation_type stop",
+        metavar="OPERATION",
+        help="Type of operation to perform on resource. Valid options are: 'delete', 'stop'. Default: 'delete'. Example: -o or --operation_type stop",
     )
 
     # Add argument for resource states
@@ -249,7 +256,8 @@ def get_argparser():
         "-s",
         "--resource_states",
         type=ast.literal_eval,
-        help="State of the resource to filter. Format: --resource_states ['RUNNING', 'STOPPED']",
+        metavar="['state1', 'state2']",
+        help="State of the resource to filter. Example: --resource_states ['RUNNING', 'STOPPED']",
     )
 
     # Add argument for filter tags
@@ -257,7 +265,8 @@ def get_argparser():
         "-f",
         "--filter_tags",
         type=ast.literal_eval,
-        help="Tags to use for filtering resources. Format: --filter_tags {'test_task': ['test', 'stress-test']}",
+        metavar="{key1: [value1, value2], key2: [value3, value4]}",
+        help="Tags to use for filtering resources. Example: --filter_tags {'test_task': ['test', 'stress-test']}",
     )
 
     # Add argument for exception tags
@@ -265,39 +274,49 @@ def get_argparser():
         "-e",
         "--exception_tags",
         type=ast.literal_eval,
-        help="Exception tags to use for filtering resources. Format: --exception_tags {'test_task': ['test-keep-resources', 'stress-test-keep-resources']}",
+        metavar="{key1: [value1, value2], key2: [value3, value4]}",
+        help="Exception tags to use for filtering resources. Example: --exception_tags {'test_task': ['test-keep-resources', 'stress-test-keep-resources']}",
     )
 
     # Add Argument for Name Regex
     parser.add_argument(
         "-n",
         "--name_regex",
-        type=ast.literal_eval,
-        help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Format: --name_regex perftest_",
+        metavar="REGEX",
+        help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Example: -n or --name_regex perftest_",
     )
 
     # Add Argument for Exception Regex
     parser.add_argument(
         "-x",
         "--exception_regex",
-        type=ast.literal_eval,
-        help="Exception Regex to filter out resources. Format: --exception_regex perftest_keep_resources",
+        metavar="REGEX",
+        help="Exception Regex to filter out resources. Example: -x or --exception_regex perftest_keep_resources",
     )
 
     # Add Argument for Age Threshold
     parser.add_argument(
         "-a",
         "--age",
-        type=ast.literal_eval,
-        help="Age Threshold for resources. Age is not respected for IPs. Format: --age {'days': 3, 'hours': 12}",
+        metavar="{'days': 3, 'hours': 12}",
+        help="Age Threshold for resources. Age is not respected for IPs. Example: -a or --age {'days': 3, 'hours': 12}",
     )
 
-    # Add Argument for Monitor Mode
+    # Add Argument for Dry Run Mode
     parser.add_argument(
-        "-m",
-        "--monitor",
+        "-d",
+        "--dry_run",
         action="store_true",
-        help="Enable monitor only mode",
+        help="Enable dry_run only mode",
+    )
+
+    # Add Argument for Tag not present
+    parser.add_argument(
+        "-t",
+        "--notags",
+        type=ast.literal_eval,
+        help="Filter by Tags not Present. Leave value of Key empty to indicate 'any' value. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}",
+        metavar="{key1: [value1, value2], key2: [value3, value4]}",
     )
 
     return vars(parser.parse_args())
@@ -357,7 +376,8 @@ def main():
     name_regex = args.get("name_regex")
     exception_regex = args.get("exception_regex")
     age = args.get("age")
-    monitor = args.get("monitor")
+    dry_run = args.get("dry_run")
+    notags = args.get("notags")
 
     if operation_type == "delete" and not age and resources != "ip":
         raise TypeError("Age is mandatory argument for resources other than IP")
@@ -397,7 +417,7 @@ def main():
 
     # Perform operations
     for cloud in clouds:
-        crc = CRC(cloud, monitor, project_id)
+        crc = CRC(cloud, dry_run, project_id)
         for resource in resources:
             if resource == "disk":
                 crc.delete_disks(filter_tags, exception_regex, age)

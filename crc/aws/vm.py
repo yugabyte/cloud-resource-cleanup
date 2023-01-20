@@ -36,16 +36,17 @@ class VM(Service):
 
     def __init__(
         self,
-        monitor: bool,
+        dry_run: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        notags: Dict[str, List[str]],
     ) -> None:
         """
         Initializes the object with filter and exception tags to be used when searching for instances, as well as an age threshold for instances.
 
-        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
-        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        :param dry_run: A boolean variable that indicates whether the class should operate in dry_run mode or not.
+        In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
         but will not perform any operations on them.
         :param filter_tags: dictionary containing key-value pairs as filter tags
         :type filter_tags: Dict[str, List[str]]
@@ -53,14 +54,17 @@ class VM(Service):
         :type exception_tags: Dict[str, List[str]]
         :param age: dictionary containing key-value pairs as age threshold, the key is either "days" or "hours" or both and value is the number of days or hours.
         :type age: Dict[str, int]
+        :param notags: dictionary containing key-value pairs as filter tags to exclude instances which do not have these tags
+        :type notags: Dict[str, List[str]]
         """
         super().__init__()
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
-        self.monitor = monitor
+        self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
+        self.notags = notags
 
     @property
     def delete_count(self):
@@ -108,7 +112,8 @@ class VM(Service):
         self, ec2: boto3.client, instance_details: dict
     ) -> Tuple[List[str], List[str]]:
         """
-        Retrieves a list of instances that match the filter and age threshold, and also checks for exception tags.
+        Retrieves a list of instances that match the filter and age threshold,
+        checks for exception tags, and also checks for instances that do not have the specified notags.
         """
         instance_ids = []
         instance_names = []
@@ -156,19 +161,32 @@ class VM(Service):
 
     def _should_skip_instance(self, tags: List[Dict[str, str]]) -> bool:
         """
-        Check if the instance should be skipped based on the exception tags.
+        Check if the instance should be skipped based on the exception tags and instances that do not have the specified notags.
         :param tags: List of tags associated with the instance
         :type tags: List[Dict[str,str]]
         :return: True if the instance should be skipped, False otherwise
         :rtype: bool
         """
-        if not self.exception_tags:
+        if not self.exception_tags and not self.notags:
             return False
+        in_exception_tags = False
+        in_no_tags = False
         for tag in tags:
             key = tag["Key"]
-            if key in self.exception_tags and tag["Value"] in self.exception_tags[key]:
-                return True
-        return False
+            if self.exception_tags:
+                in_exception_tags = key in self.exception_tags and (
+                    not self.exception_tags[key]
+                    or tag["Value"] in self.exception_tags[key]
+                )
+                if in_exception_tags:
+                    return True
+            if self.notags:
+                in_no_tags = all(
+                    in_no_tags
+                    and key in self.notags
+                    and (not self.notags[key] or tag["Value"] in self.notags[key])
+                )
+        return in_no_tags
 
     def _get_instance_name(self, tags: List[Dict[str, str]]) -> str:
         """
@@ -189,7 +207,7 @@ class VM(Service):
         instance_state: List[str] = default_instance_state,
     ) -> None:
         """
-        Perform the specified operation (delete or stop) on instances that match the specified filter labels and are older than the specified age.
+        Perform the specified operation (delete or stop) on instances that match the specified filter labels and do not match exception and notags labels, and are older than the specified age.
         It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
 
         :param operation_type: The type of operation to perform (delete or stop)
@@ -214,7 +232,7 @@ class VM(Service):
             if instances_to_operate:
                 try:
                     if operation_type == "delete":
-                        if not self.monitor:
+                        if not self.dry_run:
                             client.terminate_instances(InstanceIds=instances_to_operate)
                             for i in range(len(instances_to_operate)):
                                 logging.info(
@@ -222,7 +240,7 @@ class VM(Service):
                                 )
                         self.instance_names_to_delete.extend(instance_names_to_operate)
                     elif operation_type == "stop":
-                        if not self.monitor:
+                        if not self.dry_run:
                             client.stop_instances(InstanceIds=instances_to_operate)
                             for i in range(len(instances_to_operate)):
                                 logging.info(
@@ -239,7 +257,7 @@ class VM(Service):
             logging.warning(f"No AWS instances to {operation_type}.")
 
         if operation_type == "delete":
-            if not self.monitor:
+            if not self.dry_run:
                 logging.warning(
                     f"number of AWS instances deleted: {len(self.instance_names_to_delete)}"
                 )
@@ -249,7 +267,7 @@ class VM(Service):
                 )
 
         if operation_type == "stop":
-            if not self.monitor:
+            if not self.dry_run:
                 logging.warning(
                     f"number of AWS instances stopped: {len(self.instance_names_to_stop)}"
                 )
@@ -264,7 +282,10 @@ class VM(Service):
     ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception tags.
-        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        It checks if the filter_tags and notags attribute of the class is empty,
+        if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        The method will list the instances that match the specified filter and exception tags but will not perform
+        any operations on them if dry_run mode is enabled.
 
         :param instance_state: list of strings representing the state of instances.
         :type instance_state: List[str]
@@ -273,7 +294,10 @@ class VM(Service):
 
     def stop(self):
         """
-        Stop VMs that match the specified filter labels and are older than the specified age.
-        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        Stop VMs that match the specified filter labels and are older than the specified age, and also checks for notags.
+        It checks if the filter_tags and notags attribute of the class is empty,
+        if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        The method will list the instances that match the specified filter and notags
+        but will not perform any operations on them if dry_run mode is enabled.
         """
         self._perform_operation("stop", self.default_instance_state)

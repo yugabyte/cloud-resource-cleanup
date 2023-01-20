@@ -22,7 +22,7 @@ class IP(Service):
 
     def __init__(
         self,
-        monitor: bool,
+        dry_run: bool,
         project_id: str,
         filter_regex: List[str],
         exception_regex: List[str],
@@ -39,7 +39,7 @@ class IP(Service):
         """
         super().__init__()
         self.deleted_ips = []
-        self.monitor = monitor
+        self.dry_run = dry_run
         self.project_id = project_id
         self.filter_regex = filter_regex
         self.exception_regex = exception_regex
@@ -82,7 +82,7 @@ class IP(Service):
                 ):
                     ips_to_delete.append(name)
 
-            if not self.monitor:
+            if not self.dry_run:
                 for ip in ips_to_delete:
                     # Delete IP addresses
                     compute_v1.AddressesClient().delete(
@@ -93,7 +93,7 @@ class IP(Service):
                     logging.info(f"Deleting IP address: {ip}")
             self.deleted_ips.extend(ips_to_delete)
 
-        if not self.monitor:
+        if not self.dry_run:
             logging.warning(f"number of GCP IPs deleted: {len(self.deleted_ips)}")
         else:
             logging.warning(

@@ -16,7 +16,13 @@ class Base:
         """
         Initialize the class with environment variables for Azure credentials.
         """
-        # Environment variables for Azure credentials
+        self.compute_client = (
+            {}
+        )  # Dictionary to store the ComputeManagementClient object, used to implement the singleton pattern
+        self.network_client = (
+            {}
+        )  # Dictionary to store the NetworkManagementClient object, used to implement the singleton pattern
+
         # Environment variables for Azure credentials
         self.subscription_id = os.environ.get(
             "AZURE_CREDENTIALS_SUBSCRIPTION_ID"

@@ -39,11 +39,12 @@ class VM(Service):
 
     def __init__(
         self,
-        monitor: bool,
+        dry_run: bool,
         project_id: str,
         filter_labels: Dict[str, List[str]],
         exception_labels: Dict[str, List[str]],
         age: int,
+        notags: Dict[str, List[str]],
     ) -> None:
         """
         Initialize an instance of the VM class.
@@ -60,11 +61,12 @@ class VM(Service):
         super().__init__()
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
-        self.monitor = monitor
+        self.dry_run = dry_run
         self.project_id = project_id
         self.filter_labels = filter_labels
         self.exception_labels = exception_labels
         self.age = age
+        self.notags = notags
 
     @property
     def delete_count(self) -> int:
@@ -112,14 +114,14 @@ class VM(Service):
             for instance in instance_client.list(project=self.project_id, zone=zone):
                 if instance.status not in instance_state:
                     continue
-                if self._has_exception_label(instance):
+                if self._should_skip_instance(instance):
                     continue
                 if not self._has_matching_filter_label(instance):
                     continue
                 if self._is_old_instance(instance):
                     try:
                         if operation_type == "delete":
-                            if not self.monitor:
+                            if not self.dry_run:
                                 service.instances().delete(
                                     project=self.project_id,
                                     zone=zone,
@@ -128,7 +130,7 @@ class VM(Service):
                                 logging.info(f"Deleting instance {instance.name}")
                             self.instance_names_to_delete.append(instance.name)
                         elif operation_type == "stop":
-                            if not self.monitor:
+                            if not self.dry_run:
                                 service.instances().stop(
                                     project=self.project_id,
                                     zone=zone,
@@ -147,7 +149,7 @@ class VM(Service):
             logging.warning(f"No GCP instances to {operation_type}.")
 
         if operation_type == "delete":
-            if not self.monitor:
+            if not self.dry_run:
                 logging.info(
                     f"number of GCP instances deleted: {len(self.instance_names_to_delete)}"
                 )
@@ -157,7 +159,7 @@ class VM(Service):
                 )
 
         if operation_type == "stop":
-            if not self.monitor:
+            if not self.dry_run:
                 logging.info(
                     f"number of GCP instances stopped: {len(self.instance_names_to_stop)}"
                 )
@@ -166,7 +168,7 @@ class VM(Service):
                     f"List of GCP instances which will be stopped: {self.instance_names_to_stop}"
                 )
 
-    def _has_exception_label(self, instance):
+    def _should_skip_instance(self, instance):
         """
         Check if the instance has any labels that are in the exception list
 
@@ -175,10 +177,19 @@ class VM(Service):
         :return: True if the instance has a label that is in the exception list, False otherwise
         :rtype: bool
         """
-        return self.exception_labels and any(
-            key in instance.labels and instance.labels[key] in value
-            for key, value in self.exception_labels.items()
-        )
+        in_exception_tags = False
+        in_no_tags = False
+        if self.exception_labels:
+            in_exception_tags = any(
+                key in instance.labels and (not value or instance.labels[key] in value)
+                for key, value in self.exception_labels.items()
+            )
+        if self.notags:
+            in_no_tags = any(
+                key in instance.labels and (not value or instance.labels[key] in value)
+                for key, value in self.notags.items()
+            )
+        return in_exception_tags or in_no_tags
 
     def _has_matching_filter_label(self, instance):
         """
@@ -193,7 +204,7 @@ class VM(Service):
         if not self.filter_labels:
             return True
         return any(
-            key in instance.labels and instance.labels[key] in value
+            key in instance.labels and (value or instance.labels[key] in value)
             for key, value in self.filter_labels.items()
         )
 

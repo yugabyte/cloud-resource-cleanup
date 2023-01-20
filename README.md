@@ -7,7 +7,7 @@ Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that all
 * Delete Orphan IPs, VMs (including attached resources such as disks and NICs) from GCP
 * Stop VMs from AWS, Azure, and GCP
 
-In addition to these features, `cloud-resource-cleanup` also includes a Monitor only mode which allows you to view resources that match certain criteria without performing any operations on them. This is useful for identifying resources that you may want to delete or stop later. The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
+In addition to these features, `cloud-resource-cleanup` also includes a "Dry Run" only mode which allows you to view resources that match certain criteria without performing any operations on them. This is useful for identifying resources that you may want to delete or stop later. The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
 ## Prerequisites
 * Python 3.x
@@ -73,7 +73,7 @@ python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resourc
 * `project_id`: Required for gcp
 * `resource`: Specify the resource name (vm, disk, ip, keypair or all). Default : 'all'
 * `operation_type`: Type of operation to perform on resource (delete or stop). Default: 'delete'
-* `monitor`: Enable monitor-only mode. This will only list resources that match the criteria, but will not perform any operations on them. Use -m or --monitor. If not specified, the script will perform the operation specified by `operation_type`
+* `dry_run`: Enable Dry Run only mode. This will only list resources that match the criteria, but will not perform any operations on them. Use -d or --dry_run. If not specified, the script will perform the operation specified by `operation_type`
 * `resource_states`: Resource State to consider for Delete. It is applicable only for VMs (['RUNNING', 'STOPPED']). Default: ['RUNNING']
 * `filter_tags`: Specify the tags to filter the resources. If not specified all available resources will be picked. Doesn't apply to AWS keypairs and GCP IPs (e.g. {'test_task': ['test', 'stress-test']})
 * `exception_tags`: Specify the tags to exclude the resources. Doesn't apply if `filter_tags` is empty. (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
@@ -98,7 +98,7 @@ The script will log all deleted resources to a file called crc.log in the same d
 
 ## Note
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
-* Try using Monitor mode feature to avoid unfortunate circumstances
+* Try using dry_run mode feature to avoid unfortunate circumstances
 * If filters are not specified the tool will consider every Resource for cleanup
 * Use filter_tags and exception_tags in json format (Dict[str, List[str]])
 * Use resource_states, name_regex and exception_regex in list format (List[str])

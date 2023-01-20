@@ -22,16 +22,17 @@ class VM(Service):
 
     def __init__(
         self,
-        monitor: bool,
+        dry_run: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        notags: Dict[str, List[str]],
     ) -> None:
         """
         Initializes the object with filter and exception tags to be used when searching for instances, as well as an age threshold for instances.
 
-        :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
-        In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+        :param dry_run: A boolean variable that indicates whether the class should operate in dry_run mode or not.
+        In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
         but will not perform any operations on them.
         :param filter_tags: dictionary containing key-value pairs as filter tags
         :type filter_tags: Dict[str, List[str]]
@@ -45,10 +46,11 @@ class VM(Service):
         self.instance_names_to_stop = []
         self.nics_names_to_delete = []
         self.base = Base()
-        self.monitor = monitor
+        self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
+        self.notags = notags
 
     @property
     def delete_count(self):
@@ -115,7 +117,7 @@ class VM(Service):
             logging.warning(f"No Azure instances to {operation_type}.")
 
         if operation_type == "delete":
-            if not self.monitor:
+            if not self.dry_run:
                 logging.warning(
                     f"number of Azure instances deleted: {len(self.instance_names_to_delete)}"
                 )
@@ -131,7 +133,7 @@ class VM(Service):
                 )
 
         if operation_type == "stop":
-            if not self.monitor:
+            if not self.dry_run:
                 logging.warning(
                     f"number of Azure instances stopped: {len(self.instance_names_to_stop)}"
                 )
@@ -160,16 +162,28 @@ class VM(Service):
             return True
 
         if any(
-            key in vm.tags and vm.tags[key] in value
+            key in vm.tags and (value or vm.tags[key] in value)
             for key, value in self.filter_tags.items()
         ):
-            if self.exception_tags and any(
-                key in vm.tags and vm.tags[key] in value
-                for key, value in self.exception_tags.items()
-            ):
+            if self._should_skip_instance(vm):
                 return False
             return True
         return False
+
+    def _should_skip_instance(self, vm):
+        in_exception_tags = False
+        in_no_tags = False
+        if self.exception_tags:
+            in_exception_tags = any(
+                key in vm.tags and (value or vm.tags[key] in value)
+                for key, value in self.exception_tags.items()
+            )
+        if self.notags:
+            in_no_tags = any(
+                key in vm.tags and (value or vm.tags[key] in value)
+                for key, value in self.notags.items()
+            )
+        return in_exception_tags or in_no_tags
 
     def _get_vm_status(self, vm_name: str) -> str:
         """
@@ -194,7 +208,7 @@ class VM(Service):
         :param vm_name: The name of the virtual machine to delete
         :type vm_name: str
         """
-        if not self.monitor:
+        if not self.dry_run:
             self.base.get_compute_client().virtual_machines.begin_delete(
                 self.base.resource_group, vm_name
             )
@@ -209,7 +223,7 @@ class VM(Service):
         :param vm_name: The name of the virtual machine to stop
         :type vm_name: str
         """
-        if not self.monitor:
+        if not self.dry_run:
             self.base.get_compute_client().virtual_machines.begin_power_off(
                 self.base.resource_group, vm_name
             )
@@ -251,7 +265,7 @@ class VM(Service):
         while not deleted_nic and failure_count:
             try:
                 time.sleep(60)
-                if not self.monitor:
+                if not self.dry_run:
                     self.base.get_network_client().network_interfaces.begin_delete(
                         self.base.resource_group, nic_name
                     )

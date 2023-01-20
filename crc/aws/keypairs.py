@@ -24,6 +24,8 @@ class KeyPairs(Service):
         name_regex (List[str]): A list of regular expressions that match the keypair names to be deleted.
         exception_regex (List[str]): A list of regular expressions that match the keypair names to be ignored.
         age (Dict[str, int]): A dictionary containing the time unit (hours, days, weeks) and the corresponding time value. For example: {'days': 30}
+        dry_run (bool): A boolean variable that indicates whether the class should operate in dry_run mode or not.
+        In dry_run mode, the class will only list the Resources that match the specified filter and exception tags, but will not perform any operations on them.
 
     Methods:
         count: Returns the number of keypairs that have been deleted.
@@ -42,7 +44,7 @@ class KeyPairs(Service):
 
     def __init__(
         self,
-        monitor: bool,
+        dry_run: bool,
         name_regex: List[str],
         exception_regex: List[str],
         age: Dict[str, int],
@@ -51,8 +53,8 @@ class KeyPairs(Service):
         Initialize the KeyPairs class
 
         Parameters:
-            :param monitor: A boolean variable that indicates whether the class should operate in monitor mode or not.
-            In monitor mode, the class will only list the Resources that match the specified filter and exception tags,
+            :param dry_run: A boolean variable that indicates whether the class should operate in dry_run mode or not.
+            In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
             but will not perform any operations on them.
             name_regex (list): List of regular expressions that match the keypair names to be deleted
             exception_regex (list): List of regular expressions that match the keypair names to be ignored
@@ -60,7 +62,7 @@ class KeyPairs(Service):
         """
         super().__init__()
         self.deleted_keypairs = []
-        self.monitor = monitor
+        self.dry_run = dry_run
         self.name_regex = name_regex
         self.exception_regex = exception_regex
         self.age = age
@@ -78,6 +80,8 @@ class KeyPairs(Service):
     def delete(self):
         """
         Delete all keypairs that match the specified name regex and are older than the specified age.
+        In dry_run mode, this method will only list the keypairs that match the specified filter and exception tags,
+        but will not perform any operations on them.
         """
         if self.exception_regex:
             exception_regex = set(self.exception_regex)
@@ -120,14 +124,14 @@ class KeyPairs(Service):
                         )
 
             for keypair_to_delete in keypairs_to_delete:
-                if not self.monitor:
+                if not self.dry_run:
                     response = client.delete_key_pair(KeyName=keypair_to_delete)
                     logging.info(
                         f"Deleted keypair: {keypair_to_delete} with response: {response}"
                     )
                 self.deleted_keypairs.append(keypair_to_delete)
 
-        if not self.monitor:
+        if not self.dry_run:
             logging.warning(
                 f"number of AWS keypairs deleted: {len(self.deleted_keypairs)}"
             )

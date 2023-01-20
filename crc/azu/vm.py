@@ -164,7 +164,7 @@ class VM(Service):
             return True
 
         if any(
-            key in vm.tags and (value or vm.tags[key] in value)
+            key in vm.tags and (not value or vm.tags[key] in value)
             for key, value in self.filter_tags.items()
         ):
             if self._should_skip_instance(vm):
@@ -182,14 +182,14 @@ class VM(Service):
         in_no_tags = False
         if self.exception_tags:
             in_exception_tags = any(
-                key in vm.tags and (value or vm.tags[key] in value)
+                key in vm.tags and (not value or vm.tags[key] in value)
                 for key, value in self.exception_tags.items()
             )
             if in_exception_tags:
                 return True
         if self.notags:
             in_no_tags = all(
-                key in vm.tags and (value or vm.tags[key] in value)
+                key in vm.tags and (not value or vm.tags[key] in value)
                 for key, value in self.notags.items()
             )
         return in_no_tags

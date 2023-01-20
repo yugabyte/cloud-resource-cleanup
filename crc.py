@@ -281,22 +281,25 @@ def get_argparser():
     parser.add_argument(
         "-n",
         "--name_regex",
+        type=ast.literal_eval,
         metavar="REGEX",
-        help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Example: -n or --name_regex perftest_",
+        help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Example: -n or --name_regex ['perftest_','qa_']",
     )
 
     # Add Argument for Exception Regex
     parser.add_argument(
         "-x",
         "--exception_regex",
+        type=ast.literal_eval,
         metavar="REGEX",
-        help="Exception Regex to filter out resources. Example: -x or --exception_regex perftest_keep_resources",
+        help="Exception Regex to filter out resources. Example: -x or --exception_regex ['perftest_keep_resources', 'test_keep_resources']",
     )
 
     # Add Argument for Age Threshold
     parser.add_argument(
         "-a",
         "--age",
+        type=ast.literal_eval,
         metavar="{'days': 3, 'hours': 12}",
         help="Age Threshold for resources. Age is not respected for IPs. Example: -a or --age {'days': 3, 'hours': 12}",
     )

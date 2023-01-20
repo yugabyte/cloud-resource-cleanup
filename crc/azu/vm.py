@@ -109,7 +109,7 @@ class VM(Service):
                     try:
                         status = self._get_vm_status(vm.name)
 
-                        if any(status in state for state in instance_state):
+                        if any(state in status for state in instance_state):
                             if operation_type == "delete":
                                 self._delete_vm(vm.name)
                             elif operation_type == "stop":
@@ -165,15 +165,13 @@ class VM(Service):
         if not vm.tags:
             return False
 
-        if not self.filter_tags:
-            return True
+        if self._should_skip_instance(vm):
+            return False
 
-        if any(
+        if self.filter_tags or any(
             key in vm.tags and (not value or vm.tags[key] in value)
             for key, value in self.filter_tags.items()
         ):
-            if self._should_skip_instance(vm):
-                return False
             return True
         return False
 

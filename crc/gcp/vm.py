@@ -49,6 +49,9 @@ class VM(Service):
         """
         Initialize an instance of the VM class.
 
+        :param dry_run: A boolean variable that indicates whether the class should operate in dry_run mode or not.
+        In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
+        and also filters Elastic IPs based on absence of certain tags, but will not perform any operations on them.
         :param project_id: ID of the Google Cloud project.
         :type project_id: str
         :param filter_labels: Dictionary of labels and their values used to filter VMs for deletion.
@@ -57,6 +60,8 @@ class VM(Service):
         :type exception_labels: Dict[str, List[str]]
         :param age: Age in days of VMs that will be deleted.
         :type age: int
+        :param notags: dictionary containing key-value pairs as filter tags to exclude instances which do not have these tags
+        :type notags: Dict[str, List[str]]
         """
         super().__init__()
         self.instance_names_to_delete = []
@@ -94,8 +99,8 @@ class VM(Service):
         instance_state: List[str] = default_instance_state,
     ) -> None:
         """
-        Perform the specified operation (delete or stop) on VMs that match the specified filter labels and are older than the specified age.
-        It checks if the filter_labels attribute of the class is empty, if so, it returns True because there are no labels set to filter the VMs, so any vm should be considered.
+        Perform the specified operation (delete or stop) on instances that match the specified filter labels and do not match exception and notags labels, and are older than the specified age.
+        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
 
         :param operation_type: The type of operation to perform (delete or stop)
         :type operation_type: str
@@ -170,11 +175,8 @@ class VM(Service):
 
     def _should_skip_instance(self, instance):
         """
-        Check if the instance has any labels that are in the exception list
-
-        :param instance: The instance to check for exception labels
-        :type instance: dict
-        :return: True if the instance has a label that is in the exception list, False otherwise
+        Check if the instance should be skipped based on the exception tags and instances that do not have the specified notags.
+        :return: True if the instance should be skipped, False otherwise
         :rtype: bool
         """
         in_exception_tags = False
@@ -184,12 +186,14 @@ class VM(Service):
                 key in instance.labels and (not value or instance.labels[key] in value)
                 for key, value in self.exception_labels.items()
             )
+            if in_exception_tags:
+                return True
         if self.notags:
-            in_no_tags = any(
+            in_no_tags = all(
                 key in instance.labels and (not value or instance.labels[key] in value)
                 for key, value in self.notags.items()
             )
-        return in_exception_tags or in_no_tags
+        return in_no_tags
 
     def _has_matching_filter_label(self, instance):
         """
@@ -228,8 +232,9 @@ class VM(Service):
         instance_state: List[str] = default_instance_state,
     ) -> None:
         """
-        Deletes instances that match the filter and age threshold, and also checks for exception labels.
-        It checks if the filter_labels attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        Delete instances that match the specified filter_tags and do not match the specified exception_tags and notags filter.
+        In dry_run mode, this method will only list the instances that match the specified filter and exception tags and notags filter,
+        but will not perform any operations on them.
 
         :param instance_state: List of valid statuses of instances to delete.
         :type instance_state: List[str]
@@ -238,7 +243,10 @@ class VM(Service):
 
     def stop(self) -> None:
         """
-        Stop VMs that match the specified filter labels and are older than the specified age.
-        It checks if the filter_labels attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        Stop VMs that match the specified filter labels and are older than the specified age, and also checks for notags.
+        It checks if the filter_tags and notags attribute of the class is empty,
+        if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        The method will list the instances that match the specified filter and notags
+        but will not perform any operations on them if dry_run mode is enabled.
         """
         self._perform_operation("stop", self.default_instance_state)

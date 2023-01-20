@@ -167,22 +167,26 @@ class VM(Service):
         :return: True if the instance should be skipped, False otherwise
         :rtype: bool
         """
+        if not self.exception_tags and not self.notags:
+            return False
+        in_exception_tags = False
+        in_no_tags = False
         for tag in tags:
             key = tag["Key"]
-            in_exception_tags = False
-            in_no_tags = False
             if self.exception_tags:
                 in_exception_tags = key in self.exception_tags and (
                     not self.exception_tags[key]
                     or tag["Value"] in self.exception_tags[key]
                 )
+                if in_exception_tags:
+                    return True
             if self.notags:
-                in_no_tags = key in self.notags and (
-                    not self.notags[key] or tag["Value"] in self.notags[key]
+                in_no_tags = all(
+                    in_no_tags
+                    and key in self.notags
+                    and (not self.notags[key] or tag["Value"] in self.notags[key])
                 )
-            if in_exception_tags or in_no_tags:
-                return True
-        return False
+        return in_no_tags
 
     def _get_instance_name(self, tags: List[Dict[str, str]]) -> str:
         """
@@ -203,8 +207,8 @@ class VM(Service):
         instance_state: List[str] = default_instance_state,
     ) -> None:
         """
-        Perform the specified operation (delete or stop) on instances that match the specified filter labels, notags, and are older than the specified age.
-        It checks if the filter_tags and notags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        Perform the specified operation (delete or stop) on instances that match the specified filter labels and do not match exception and notags labels, and are older than the specified age.
+        It checks if the filter_tags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
 
         :param operation_type: The type of operation to perform (delete or stop)
         :type operation_type: str
@@ -278,7 +282,10 @@ class VM(Service):
     ) -> None:
         """
         Deletes instances that match the filter and age threshold, and also checks for exception tags.
-        It checks if the filter_tags and notags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered. The method will list the instances that match the specified filter and exception tags but will not perform any operations on them if dry_run mode is enabled.
+        It checks if the filter_tags and notags attribute of the class is empty,
+        if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        The method will list the instances that match the specified filter and exception tags but will not perform
+        any operations on them if dry_run mode is enabled.
 
         :param instance_state: list of strings representing the state of instances.
         :type instance_state: List[str]
@@ -288,6 +295,9 @@ class VM(Service):
     def stop(self):
         """
         Stop VMs that match the specified filter labels and are older than the specified age, and also checks for notags.
-        It checks if the filter_tags and notags attribute of the class is empty, if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered. The method will list the instances that match the specified filter and notags but will not perform any operations on them if dry_run mode is enabled.
+        It checks if the filter_tags and notags attribute of the class is empty,
+        if so, it returns True because there are no tags set to filter the VMs, so any vm should be considered.
+        The method will list the instances that match the specified filter and notags
+        but will not perform any operations on them if dry_run mode is enabled.
         """
         self._perform_operation("stop", self.default_instance_state)

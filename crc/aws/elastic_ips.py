@@ -79,22 +79,25 @@ class ElasticIPs(Service):
         """
         if not self.exception_tags and not self.notags:
             return False
+        in_exception_tags = False
+        in_no_tags = False
         for tag in tags:
             key = tag["Key"]
-            in_exception_tags = False
-            in_no_tags = False
             if self.exception_tags:
                 in_exception_tags = key in self.exception_tags and (
                     not self.exception_tags[key]
                     or tag["Value"] in self.exception_tags[key]
                 )
-            if self.exception_tags:
-                in_no_tags = key in self.notags and (
-                    not self.notags[key] or tag["Value"] in self.notags[key]
+                if in_exception_tags:
+                    return True
+            if self.notags:
+                in_no_tags = all(
+                    in_no_tags
+                    and key in self.notags
+                    and (not self.notags[key] or tag["Value"] in self.notags[key]),
                 )
-            if in_exception_tags or in_no_tags:
-                return True
-        return False
+
+        return in_no_tags
 
     def delete(self):
         """

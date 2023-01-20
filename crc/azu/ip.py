@@ -60,7 +60,7 @@ class IP(Service):
                 for key, value in self.exception_tags.items()
             )
 
-            no_tags_match = self.notags and any(
+            no_tags_match = self.notags and all(
                 key in ip.tags and (not value or ip.tags[key] in value)
                 for key, value in self.notags.items()
             )

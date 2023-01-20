@@ -83,7 +83,7 @@ class Disk(Service):
             )
 
             # Check if the disk has the specified notags tags
-            no_tags_match = self.notags and any(
+            no_tags_match = self.notags and all(
                 key in disk.tags and (not value or disk.tags[key] in value)
                 for key, value in self.notags.items()
             )

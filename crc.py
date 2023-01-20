@@ -24,7 +24,9 @@ class CRC:
     Class for cleaning up resources across different clouds.
     """
 
-    def __init__(self, cloud: str, dry_run: bool, project_id=None) -> None:
+    def __init__(
+        self, cloud: str, dry_run: bool, notags: dict, project_id=None
+    ) -> None:
         """
         Initialize the class with the cloud, dry_run only mode and project_id (if applicable).
 
@@ -36,6 +38,7 @@ class CRC:
             raise TypeError("project_id is mandatory Parameter for GCP")
         self.dry_run = dry_run
         self.project_id = project_id
+        self.notags = notags
 
     def _delete_vm(self, vm, instance_state: List[str]):
         """
@@ -64,9 +67,9 @@ class CRC:
         :return: VM object
         """
         if self.cloud == "aws":
-            return AWS_VM(self.dry_run, filter_tags, exception_tags, age)
+            return AWS_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "azu":
-            return AZU_VM(self.dry_run, filter_tags, exception_tags, age)
+            return AZU_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "gcp":
             return GCP_VM(
                 self.dry_run,
@@ -74,6 +77,7 @@ class CRC:
                 filter_tags,
                 exception_tags,
                 age,
+                self.notags,
             )
         raise TypeError("Incorrect Cloud Provided")
 
@@ -94,16 +98,11 @@ class CRC:
         :return: IP object
         """
         if self.cloud == "aws":
-            return ElasticIPs(self.dry_run, filter_tags, exception_tags)
+            return ElasticIPs(self.dry_run, filter_tags, exception_tags, self.notags)
         elif self.cloud == "azu":
-            return AZU_IP(self.dry_run, filter_tags, exception_tags)
+            return AZU_IP(self.dry_run, filter_tags, exception_tags, self.notags)
         elif self.cloud == "gcp":
-            return GCP_IP(
-                self.dry_run,
-                self.project_id,
-                name_regex,
-                exception_regex,
-            )
+            return GCP_IP(self.dry_run, self.project_id, name_regex, exception_regex)
         raise TypeError("Incorrect Cloud Provided")
 
     def delete_vm(
@@ -417,7 +416,7 @@ def main():
 
     # Perform operations
     for cloud in clouds:
-        crc = CRC(cloud, dry_run, project_id)
+        crc = CRC(cloud, dry_run, notags, project_id)
         for resource in resources:
             if resource == "disk":
                 crc.delete_disks(filter_tags, exception_regex, age)

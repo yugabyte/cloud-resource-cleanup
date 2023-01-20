@@ -24,21 +24,22 @@ class Base:
         )  # Dictionary to store the NetworkManagementClient object, used to implement the singleton pattern
 
         # Environment variables for Azure credentials
-        self.subscription_id = os.environ.get(
+        self.subscription_id = os.environ[
             "AZURE_CREDENTIALS_SUBSCRIPTION_ID"
-        )  # The subscription ID for the Azure subscription you want to manage resources in.
-        self.tenant_id = os.environ.get(
+        ]  # The subscription ID for the Azure subscription you want to manage resources in.
+        self.tenant_id = os.environ[
             "AZURE_CREDENTIALS_TENANT_ID"
-        )  # The tenant ID for the Azure Active Directory associated with your subscription.
-        self.client_id = os.environ.get(
+        ]  # The tenant ID for the Azure Active Directory associated with your subscription.
+        self.client_id = os.environ[
             "AZURE_CREDENTIALS_CLIENT_ID"
-        )  # The client ID for the Azure application that will authenticate to Azure.
-        self.secret = os.environ.get(
+        ]  # The client ID for the Azure application that will authenticate to Azure.
+        self.secret = os.environ[
             "AZURE_CREDENTIALS_CLIENT_SECRET"
-        )  # The client secret for the Azure application that will authenticate to Azure.
-        self.resource_group = os.environ.get(
+        ]  # The client secret for the Azure application that will authenticate to Azure.
+        self.resource_group = os.environ[
             "AZURE_RESOURCE_GROUP"
-        )  # The name of the resource group you want to manage resources in.
+        ]  # The name of the resource group you want to manage resources in.
+
         self.credential = ClientSecretCredential(
             tenant_id=self.tenant_id,  # The tenant ID associated with the Azure subscription
             client_id=self.client_id,  # The client ID for the Azure application that will authenticate to Azure

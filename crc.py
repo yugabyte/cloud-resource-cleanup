@@ -315,7 +315,7 @@ def get_argparser():
         "-t",
         "--notags",
         type=ast.literal_eval,
-        help="Filter by Tags not Present. Leave value empty of Key to indicate 'any' value. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}",
+        help="Filter by Tags not Present. Leave value of Key empty to indicate 'any' value. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}",
         metavar="{key1: [value1, value2], key2: [value3, value4]}",
     )
 

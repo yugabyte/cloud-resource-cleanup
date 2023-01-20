@@ -2,7 +2,7 @@
 
 import logging
 
-from crc.azu._base import network_client, resourceGroup
+from crc.azu._base import Base
 from crc.service import Service
 
 
@@ -39,7 +39,8 @@ class IP(Service):
         """
         Delete public IP addresses that match the filter and exception tags.
         """
-        ips = network_client().public_ip_addresses.list_all()
+        base = Base()
+        ips = base.get_network_client().public_ip_addresses.list_all()
 
         for ip in ips:
             filter_tags_match = not self.filter_tags or (
@@ -61,8 +62,8 @@ class IP(Service):
                 and ip.ip_configuration is None
             ):
                 if not self.monitor:
-                    network_client().public_ip_addresses.begin_delete(
-                        resource_group_name=resourceGroup,
+                    base.get_network_client().public_ip_addresses.begin_delete(
+                        resource_group_name=base.resource_group,
                         public_ip_address_name=ip.name,
                     )
                     logging.info(f"Deleted IP address: {ip.name}")

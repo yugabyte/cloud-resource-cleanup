@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Dict, List
 
-from crc.azu._base import compute_client, network_client, resourceGroup
+from crc.azu._base import Base
 from crc.service import Service
 
 
@@ -44,6 +44,7 @@ class VM(Service):
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
         self.nics_names_to_delete = []
+        self.base = Base()
         self.monitor = monitor
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
@@ -94,7 +95,7 @@ class VM(Service):
         :type instance_state: List[str]
         """
 
-        vms = compute_client().virtual_machines.list_all()
+        vms = self.base.get_compute_client().virtual_machines.list_all()
 
         for vm in vms:
             if self._should_perform_operation_on_vm(vm):
@@ -180,8 +181,8 @@ class VM(Service):
         :rtype: str
         """
         return (
-            compute_client()
-            .virtual_machines.instance_view(resourceGroup, vm_name)
+            self.base.get_compute_client()
+            .virtual_machines.instance_view(self.base.resource_group, vm_name)
             .statuses[1]
             .display_status
         )
@@ -194,7 +195,9 @@ class VM(Service):
         :type vm_name: str
         """
         if not self.monitor:
-            compute_client().virtual_machines.begin_delete(resourceGroup, vm_name)
+            self.base.get_compute_client().virtual_machines.begin_delete(
+                self.base.resource_group, vm_name
+            )
             logging.info("Deleting virtual machine: %s", vm_name)
         self.instance_names_to_delete.append(vm_name)
         self._delete_nic(vm_name)
@@ -207,7 +210,9 @@ class VM(Service):
         :type vm_name: str
         """
         if not self.monitor:
-            compute_client().virtual_machines.begin_power_off(resourceGroup, vm_name)
+            self.base.get_compute_client().virtual_machines.begin_power_off(
+                self.base.resource_group, vm_name
+            )
             logging.info("Stopping virtual machine: %s", vm_name)
         self.instance_names_to_stop.append(vm_name)
 
@@ -247,8 +252,8 @@ class VM(Service):
             try:
                 time.sleep(60)
                 if not self.monitor:
-                    network_client().network_interfaces.begin_delete(
-                        resourceGroup, nic_name
+                    self.base.get_network_client().network_interfaces.begin_delete(
+                        self.base.resource_group, nic_name
                     )
                     logging.info(f"Deleted the NIC - {nic_name}")
                 deleted_nic = True

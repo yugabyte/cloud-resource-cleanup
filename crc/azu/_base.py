@@ -6,44 +6,62 @@ from azure.identity import ClientSecretCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 
-"""
-This module contains functions to authenticate and connect to Azure, and clients to manage Azure resources
-"""
 
-# Environment variables for Azure credentials
-Subscription_Id = os.environ.get("AZURE_CREDENTIALS_SUBSCRIPTION_ID")
-Tenant_Id = os.environ.get("AZURE_CREDENTIALS_TENANT_ID")
-Client_Id = os.environ.get("AZURE_CREDENTIALS_CLIENT_ID")
-Secret = os.environ.get("AZURE_CREDENTIALS_CLIENT_SECRET")
-resourceGroup = os.environ.get("AZURE_RESOURCE_GROUP")
-
-
-# Property to return the credential object
-def credential():
+class Base:
     """
-    Return the credential object for connecting to Azure
+    This module contains functions to authenticate and connect to Azure, and clients to manage Azure resources
     """
-    return ClientSecretCredential(
-        tenant_id=Tenant_Id,
-        client_id=Client_Id,
-        client_secret=Secret,
-    )
 
+    def __init__(self) -> None:
+        """
+        Initialize the class with environment variables for Azure credentials.
+        """
+        # Environment variables for Azure credentials
+        # Environment variables for Azure credentials
+        self.subscription_id = os.environ.get(
+            "AZURE_CREDENTIALS_SUBSCRIPTION_ID"
+        )  # The subscription ID for the Azure subscription you want to manage resources in.
+        self.tenant_id = os.environ.get(
+            "AZURE_CREDENTIALS_TENANT_ID"
+        )  # The tenant ID for the Azure Active Directory associated with your subscription.
+        self.client_id = os.environ.get(
+            "AZURE_CREDENTIALS_CLIENT_ID"
+        )  # The client ID for the Azure application that will authenticate to Azure.
+        self.secret = os.environ.get(
+            "AZURE_CREDENTIALS_CLIENT_SECRET"
+        )  # The client secret for the Azure application that will authenticate to Azure.
+        self.resource_group = os.environ.get(
+            "AZURE_RESOURCE_GROUP"
+        )  # The name of the resource group you want to manage resources in.
+        self.credential = ClientSecretCredential(
+            tenant_id=self.tenant_id,  # The tenant ID associated with the Azure subscription
+            client_id=self.client_id,  # The client ID for the Azure application that will authenticate to Azure
+            client_secret=self.secret,  # The client secret for the Azure application that will authenticate to Azure
+        )
 
-# Property to return the ComputeManagementClient object
-def compute_client():
-    """
-    Return the ComputeManagementClient object for managing Azure compute resources
-    """
-    return ComputeManagementClient(
-        credential=credential(),
-        subscription_id=Subscription_Id,
-    )
+    def get_compute_client(self):
+        """
+        Return the ComputeManagementClient object for managing Azure compute resources.
+        This method uses the singleton pattern to ensure that only one instance of the client is created,
+        and that the same instance is returned every time this method is called.
+        """
+        if self.compute_client:
+            return self.compute_client
+        self.compute_client = ComputeManagementClient(
+            credential=self.credential,
+            subscription_id=self.subscription_id,
+        )
+        return self.compute_client
 
-
-# Property to return the NetworkManagementClient object
-def network_client():
-    """
-    Return the NetworkManagementClient object for managing Azure network resources
-    """
-    return NetworkManagementClient(credential(), Subscription_Id)
+    def get_network_client(self):
+        """
+        Return the NetworkManagementClient object for managing Azure network resources.
+        This method uses the singleton pattern to ensure that only one instance of the client is created,
+        and that the same instance is returned every time this method is called.
+        """
+        if self.network_client:
+            return self.network_client
+        self.network_client = NetworkManagementClient(
+            self.credential, self.subscription_id
+        )
+        return self.network_client

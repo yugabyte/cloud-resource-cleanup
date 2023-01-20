@@ -4,7 +4,7 @@ import datetime
 import logging
 from typing import Dict, List
 
-from crc.azu._base import compute_client, resourceGroup
+from crc.azu._base import Base
 from crc.service import Service
 
 
@@ -56,8 +56,10 @@ class Disk(Service):
         """
         Deletes disks that match the specified filter tags and exception tags, and are older than the specified age.
         """
+        base = Base()
+
         # Get a list of all disks
-        disks = compute_client().disks.list()
+        disks = base.get_compute_client().disks.list()
 
         # Iterate through each disk
         for disk in disks:
@@ -87,8 +89,8 @@ class Disk(Service):
                     ):
                         if not self.monitor:
                             # Delete the disk
-                            compute_client().disks.begin_delete(
-                                resourceGroup, disk.name
+                            base.get_compute_client().disks.begin_delete(
+                                base.resource_group, disk.name
                             )
                             # Log that the disk was deleted
                             logging.info("Deleted disk: " + disk.name)

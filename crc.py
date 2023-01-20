@@ -198,7 +198,7 @@ class CRC:
             raise TypeError(
                 "Incorrect Cloud Provided. Disks operation is supported only on AZU. AWS, GCP clean the NICs, Disks along with VM"
             )
-        Disk(self.dry_run, filter_tags, exception_tags, age).delete()
+        Disk(self.dry_run, filter_tags, exception_tags, age, self.notags).delete()
 
 
 def get_argparser():

@@ -99,6 +99,7 @@ The script will log all deleted resources to a file called crc.log in the same d
 ## Note
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
 * Try using Monitor mode feature to avoid unfortunate circumstances
+* If filters are not specified the tool will consider every Resource for cleanup
 * Use filter_tags and exception_tags in json format (Dict[str, List[str]])
 * Use resource_states, name_regex and exception_regex in list format (List[str])
 * Use age in json format. Example : {"days":60} (Dict[str, int])

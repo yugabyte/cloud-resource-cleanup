@@ -169,23 +169,26 @@ class VM(Service):
         :rtype: bool
         """
         if not self.exception_tags and not self.notags:
-            logging.warning("Exception Tags and notags")
+            logging.warning("Tags and notags not present")
             return False
 
-        in_exception_tags = False
         in_no_tags = False
+        all_tags = {}
 
-        if self.exception_tags:
-            in_exception_tags = any(
-                key in tags and (not value or tags[key] in value)
-                for key, value in self.exception_tags.items()
-            )
-            if in_exception_tags:
+        for tag in tags:
+            k = tag["Key"]
+            v = tag["Value"]
+
+            if k in self.exception_tags.keys() and (
+                not self.exception_tags[k] or v in self.exception_tags[k]
+            ):
                 return True
+
+            all_tags[k] = v
 
         if self.notags:
             in_no_tags = all(
-                key in tags and (not value or tags[key] in value)
+                key in all_tags and (not value or all_tags[key] in value)
                 for key, value in self.notags.items()
             )
 

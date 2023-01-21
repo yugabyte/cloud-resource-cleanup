@@ -276,12 +276,15 @@ class VM(Service):
             vm_name (str): The name of the virtual machine
         """
         deleted_nic = False
-        failure_count = 10
+        failure_count = 3
         nic_name = f"{vm_name}-NIC"
         while not deleted_nic and failure_count:
             try:
-                time.sleep(60)
                 if not self.dry_run:
+                    logging.info(
+                        f"Sleeping for {60*failure_count} seconds before deleting NIC"
+                    )
+                    time.sleep(60 * failure_count)  # Sleeping for 180 seconds
                     self.base.get_network_client().network_interfaces.begin_delete(
                         self.base.resource_group, nic_name
                     )

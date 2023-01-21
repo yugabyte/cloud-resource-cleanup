@@ -48,6 +48,7 @@ class Service:
         bool : True if the resource is older than the specified age threshold and False otherwise.
         """
         if not age:
+            logging.warning("Age is not specified. Ignoring age threshold check")
             return True
         age_delta = current_time - creation_time
         age_in_days = age_delta.days

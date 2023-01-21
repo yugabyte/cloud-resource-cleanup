@@ -381,9 +381,6 @@ def main():
     dry_run = args.get("dry_run")
     notags = args.get("notags")
 
-    if operation_type == "delete" and not age and resources != "ip":
-        raise TypeError("Age is mandatory argument for resources other than IP")
-
     # Process Cloud
     if clouds == "all":
         clouds = CLOUDS

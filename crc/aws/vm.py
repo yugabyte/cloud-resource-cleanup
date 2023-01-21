@@ -179,10 +179,11 @@ class VM(Service):
             k = tag["Key"]
             v = tag["Value"]
 
-            if k in self.exception_tags.keys() and (
-                not self.exception_tags[k] or v in self.exception_tags[k]
-            ):
-                return True
+            if self.exception_tags:
+                if k in self.exception_tags.keys() and (
+                    not self.exception_tags[k] or v in self.exception_tags[k]
+                ):
+                    return True
 
             all_tags[k] = v
 

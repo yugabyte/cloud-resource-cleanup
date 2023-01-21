@@ -123,9 +123,10 @@ class VM(Service):
                     instance_name = None
                     if "Tags" not in i:
                         continue
-                    if self._should_skip_instance(i["Tags"]):
+                    tags = i["Tags"]
+                    if self._should_skip_instance(tags):
                         continue
-                    instance_name = self._get_instance_name(i["Tags"])
+                    instance_name = self._get_instance_name(tags)
                     if not instance_name:
                         logging.error(
                             f"{instance_name} instance doesn't have Name Tag. Skipping it"
@@ -170,7 +171,7 @@ class VM(Service):
         if not self.exception_tags and not self.notags:
             return False
         in_exception_tags = False
-        in_no_tags = False
+        in_no_tags = True
         for tag in tags:
             key = tag["Key"]
             if self.exception_tags:
@@ -181,7 +182,9 @@ class VM(Service):
                 if in_exception_tags:
                     return True
             if self.notags:
-                in_no_tags = all(
+                if not in_no_tags:
+                    continue
+                in_no_tags = (
                     in_no_tags
                     and key in self.notags
                     and (not self.notags[key] or tag["Value"] in self.notags[key])

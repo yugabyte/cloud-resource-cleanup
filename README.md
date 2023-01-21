@@ -75,12 +75,12 @@ python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resourc
 * `operation_type`: Type of operation to perform on resource (delete or stop). Default: 'delete'
 * `dry_run`: Enable Dry Run only mode. This will only list resources that match the criteria, but will not perform any operations on them. Use -d or --dry_run. If not specified, the script will perform the operation specified by `operation_type`
 * `resource_states`: Resource State to consider for Delete. It is applicable only for VMs (['RUNNING', 'STOPPED']). Default: ['RUNNING']
-* `filter_tags`: Specify the tags to filter the resources. Leave value of Key empty to indicate 'any' value. If not specified all available resources will be picked. Doesn't apply to AWS keypairs and GCP IPs. Resource is included if any of the key-value pair matches. Doesn't apply to AWS keypairs and GCP IPs. (e.g. {'test_task': ['test', 'stress-test']})
-* `exception_tags`: Specify the tags to exclude the resources. Doesn't apply if `filter_tags` is empty. Leave value of Key empty to indicate 'any' value. Resource is excluded if any of the key-value pair matches. Doesn't apply to AWS keypairs and GCP IPs. (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
-* `name_regex`: Name Regex used to filter resources. If not specified all available resources will be picked. Only applies to AWS keypairs and GCP IPs (e.g. ['perftest_', 'feature_'])
-* `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
-* `age`: Age Threshold for resources is mandatory argument while deleting resources other than IPs (e.g. {'days': 3, 'hours': 12})
-* `notags`: Filter by "Tags not Present". Leave value of Key empty to indicate 'any' value. Resource is excluded if all of the key-value pair matches. Can be used independently of filter_tags. Doesn't apply to AWS keypairs and GCP IPs. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
+* `filter_tags`: Specify the tags to filter the resources. Leave value of Key empty to indicate `any` value. If not specified all available resources will be picked. **Doesn't apply to AWS keypairs and GCP IPs**. Resource is included if `any` of the key with `any` value pair matches. Doesn't apply to AWS keypairs and GCP IPs. (e.g. {'test_task': ['test', 'stress-test']})
+* `exception_tags`: Specify the tags to exclude the resources. **Doesn't apply if `filter_tags` is empty**. Leave value of Key empty to indicate `any` value. Resource is excluded if `any` of the key with `any` value pair matches. **Doesn't apply to AWS keypairs and GCP IPs** (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
+* `name_regex`: Name Regex used to filter resources. If not specified all available resources will be picked. **Only applies to AWS keypairs and GCP IPs** Resource is included if `any` of the value matches. (e.g. ['perftest_', 'feature_'])
+* `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty. Resource is excluded if `any` of the value matches. **Only applies to AWS keypairs and GCP IPs** (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
+* `age`: Age Threshold for resources is mandatory argument while deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12})
+* `notags`: Filter by "Tags not Present". Leave value of Key empty to indicate `any` value. Resource is excluded if `all` of the key-value pair matches. Can be used independently of filter_tags. **Doesn't apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 
 
 ## Examples

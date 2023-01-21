@@ -169,26 +169,26 @@ class VM(Service):
         :rtype: bool
         """
         if not self.exception_tags and not self.notags:
+            logging.warning("Exception Tags and notags")
             return False
+
         in_exception_tags = False
-        in_no_tags = True
-        for tag in tags:
-            key = tag["Key"]
-            if self.exception_tags:
-                in_exception_tags = key in self.exception_tags and (
-                    not self.exception_tags[key]
-                    or tag["Value"] in self.exception_tags[key]
-                )
-                if in_exception_tags:
-                    return True
-            if self.notags:
-                if not in_no_tags:
-                    continue
-                in_no_tags = (
-                    in_no_tags
-                    and key in self.notags
-                    and (not self.notags[key] or tag["Value"] in self.notags[key])
-                )
+        in_no_tags = False
+
+        if self.exception_tags:
+            in_exception_tags = any(
+                key in tags and (not value or tags[key] in value)
+                for key, value in self.exception_tags.items()
+            )
+            if in_exception_tags:
+                return True
+
+        if self.notags:
+            in_no_tags = all(
+                key in tags and (not value or tags[key] in value)
+                for key, value in self.notags.items()
+            )
+
         return in_no_tags
 
     def _get_instance_name(self, tags: List[Dict[str, str]]) -> str:

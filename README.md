@@ -81,8 +81,6 @@ You can also add these commands to your shell profile file, such as `~/.bash_pro
 Make sure to replace the placeholders with the appropriate values for your environment.
 
 ## Usage
-To use `crc`, you will need to provide your AWS, Azure, and/or GCP credentials. You can do this by setting the appropriate environment variables.
-
 To run the script, use the following command:
 ```
 python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age>

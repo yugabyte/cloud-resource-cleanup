@@ -77,13 +77,13 @@ class Disk(Service):
             )
 
             # Check if the disk has the specified exception tags
-            exception_tags_match = self.exception_tags and any(
+            exception_tags_match = self.exception_tags and disk.tags and any(
                 key in disk.tags and (not value or disk.tags[key] in value)
                 for key, value in self.exception_tags.items()
             )
 
             # Check if the disk has the specified notags tags
-            no_tags_match = self.notags and all(
+            no_tags_match = self.notags and disk.tags and all(
                 key in disk.tags and (not value or disk.tags[key] in value)
                 for key, value in self.notags.items()
             )

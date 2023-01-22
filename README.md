@@ -14,7 +14,7 @@ Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that all
   * Stop VMs
 * GCP
   * Delete Orphan IPs
-  * Delete VMs (including attached resources such as disks and NICs)
+  * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
 
 In addition to these features, `cloud-resource-cleanup` also includes the following features:

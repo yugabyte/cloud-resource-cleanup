@@ -25,7 +25,7 @@ In addition to these features, `cloud-resource-cleanup` also includes the follow
 * Delete resources that do not have certain tags and tag values (--notags option)
 * Keep resources that have certain tags and tag values (--exception_tags option)
 
-Get started with cloud-resource-cleanup today and see the difference it can make for your cloud infrastructure management.
+Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
 ## Prerequisites
 * Python 3.x

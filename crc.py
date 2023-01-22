@@ -35,7 +35,7 @@ class CRC:
         """
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
-            raise TypeError("project_id is mandatory Parameter for GCP")
+            raise ValueError("project_id is mandatory Parameter for GCP")
         self.dry_run = dry_run
         self.project_id = project_id
         self.notags = notags
@@ -68,9 +68,9 @@ class CRC:
         """
         if self.cloud == "aws":
             return AWS_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
-        if self.cloud == "azu":
+        elif self.cloud == "azu":
             return AZU_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
-        if self.cloud == "gcp":
+        elif self.cloud == "gcp":
             return GCP_VM(
                 self.dry_run,
                 self.project_id,
@@ -79,7 +79,10 @@ class CRC:
                 age,
                 self.notags,
             )
-        raise TypeError("Incorrect Cloud Provided")
+        else:
+            raise ValueError(
+                f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
+            )
 
     def _get_ip(
         self,
@@ -103,7 +106,10 @@ class CRC:
             return AZU_IP(self.dry_run, filter_tags, exception_tags, self.notags)
         elif self.cloud == "gcp":
             return GCP_IP(self.dry_run, self.project_id, name_regex, exception_regex)
-        raise TypeError("Incorrect Cloud Provided")
+        else:
+            raise ValueError(
+                f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
+            )
 
     def delete_vm(
         self,
@@ -176,9 +182,7 @@ class CRC:
         :param age: Dictionary of age conditions to filter the keypairs.
         """
         if self.cloud != "aws":
-            raise TypeError(
-                "Incorrect Cloud Provided. Keypairs operation is supported only on AWS"
-            )
+            raise ValueError("Keypair operation is only supported on AWS.")
         KeyPairs(self.dry_run, name_regex, exception_regex, age).delete()
 
     def delete_disks(
@@ -195,7 +199,7 @@ class CRC:
         :param age: Dictionary of age conditions to filter the disks.
         """
         if self.cloud != "azu":
-            raise TypeError(
+            raise ValueError(
                 "Incorrect Cloud Provided. Disks operation is supported only on AZU. AWS, GCP clean the NICs, Disks along with VM"
             )
         Disk(self.dry_run, filter_tags, exception_tags, age, self.notags).delete()
@@ -324,41 +328,49 @@ def get_argparser():
     return vars(parser.parse_args())
 
 
-def is_valid_list(name, value):
+def is_valid_type(name: str, value, expected_type):
     """
-    Check if the given value is a list and raises a TypeError if it is not.
+    Check if the given value is of the expected type, raises a ValueError if it is not.
     :param name: name of the variable being checked
     :param value: the value of the variable being checked
-    :return: True if value is a list, raises TypeError otherwise
+    :param expected_type: the expected type of the variable
     """
-    if type(value) is not list:
-        raise TypeError(f"{name} should be a list, but got {type(value)}")
-    return True
+    if not isinstance(value, expected_type):
+        raise ValueError(
+            f"{name} should be of type {expected_type}, but got {type(value)}"
+        )
 
 
-def is_valid_dict(name, value):
+def is_valid_list(name: str, value):
     """
-    Check if the given value is a dict and raises a TypeError if it is not.
+    Check if the given value is a list and raises a ValueError if it is not.
     :param name: name of the variable being checked
     :param value: the value of the variable being checked
-    :return: True if value is a dict, raises TypeError otherwise
     """
-    if type(value) is not dict:
-        raise TypeError(f"{name} should be a dict, but got {type(value)}")
-    return True
+    if value is not None:
+        is_valid_type(name, value, list)
 
 
-def are_values_of_dict_lists(name, value):
+def is_valid_dict(name: str, value):
     """
-    Check if the values of the given dict are lists and raises a TypeError if any of them is not.
+    Check if the given value is a dict and raises a ValueError if it is not.
     :param name: name of the variable being checked
     :param value: the value of the variable being checked
-    :return: True if all values of the dict are lists, raises TypeError otherwise
     """
-    is_valid_dict(name, value)
-    for key, val in value.items():
-        is_valid_list(f"Value of {name} with key {key}", val)
-    return True
+    if value is not None:
+        is_valid_type(name, value, dict)
+
+
+def are_values_of_dict_lists(name: str, value):
+    """
+    Check if the values of the given dict are lists and raises a ValueError if any of them is not.
+    :param name: name of the variable being checked
+    :param value: the value of the variable being checked
+    """
+    if value is not None:
+        is_valid_dict(name, value)
+        for key, val in value.items():
+            is_valid_list(f"Value of {name} with key {key}", val)
 
 
 def main():
@@ -381,45 +393,36 @@ def main():
     dry_run = args.get("dry_run")
     notags = args.get("notags")
 
-    # Process Cloud
-    if clouds == "all":
-        clouds = CLOUDS
-    else:
-        clouds = [clouds]
-
     # Validate operation_type and resources
     if operation_type == "stop" and resources != "vm":
-        raise TypeError("Stop is supported only for vm resource")
+        raise ValueError("Stop is supported only for vm resource")
 
-    if resources == "all":
-        if clouds != CLOUDS:
-            raise TypeError(
-                "All Resources cleanup is supported only with all Clouds. Format: --cloud all --resources all"
-            )
-        resources = RESOURCES
-    else:
-        resources = [resources]
+    # Validate resources and clouds
+    if resources == "all" and clouds != "all":
+        raise ValueError(
+            "All Resources cleanup is supported only with all Clouds. Format: --cloud all --resources all"
+        )
+
+    # Process Cloud
+    clouds = CLOUDS if clouds == "all" else [clouds]
+
+    # Process Resources
+    resources = RESOURCES if resources == "all" else [resources]
 
     # Validate Input Values
-    if resource_states != None:
-        is_valid_list("resource_states", resource_states)
-    if filter_tags != None:
-        are_values_of_dict_lists("filter_tags", filter_tags)
-    if exception_tags != None:
-        are_values_of_dict_lists("exception_tags", exception_tags)
-    if name_regex != None:
-        is_valid_list("name_regex", name_regex)
-    if exception_regex != None:
-        is_valid_list("exception_regex", exception_regex)
-    if age != None:
-        is_valid_dict("age", age)
+    is_valid_list("resource_states", resource_states)
+    are_values_of_dict_lists("filter_tags", filter_tags)
+    are_values_of_dict_lists("exception_tags", exception_tags)
+    is_valid_list("name_regex", name_regex)
+    is_valid_list("exception_regex", exception_regex)
+    is_valid_dict("age", age)
 
     # Perform operations
     for cloud in clouds:
         crc = CRC(cloud, dry_run, notags, project_id)
         for resource in resources:
             if resource == "disk":
-                crc.delete_disks(filter_tags, exception_regex, age)
+                crc.delete_disks(filter_tags, exception_tags, age)
             elif resource == "ip":
                 crc.delete_ip(
                     filter_tags,

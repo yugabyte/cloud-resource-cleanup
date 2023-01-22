@@ -9,8 +9,7 @@ Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that all
   * Stop VMs
 * Azure
   * Delete Orphan disks
-  * Delete Orphan VMs
-  * Delete Orphan NICs
+  * Delete VMs (and attached NICs)
   * Delete Orphan public IPs
   * Stop VMs
 * GCP

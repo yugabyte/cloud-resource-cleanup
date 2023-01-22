@@ -1,13 +1,32 @@
 # cloud-resource-cleanup
 
-Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds. Whether you're working with **AWS**, **Azure**, or **GCP**, this tool has got you covered. With `cloud-resource-cleanup`, you can:
+Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds. The tool supports the following cloud providers:
 
-* Delete Orphan Elastic IPs, Orphan keypairs, and VMs (including attached resources such as disks and NICs) from AWS
-* Delete Orphan disks, VMs, NICs and Orphan public IPs from Azure
-* Delete Orphan IPs, VMs (including attached resources such as disks and NICs) from GCP
-* Stop VMs from AWS, Azure, and GCP
+* AWS
+  * Delete Orphan Elastic IPs
+  * Delete Orphan keypairs
+  * Delete VMs (including attached resources such as Disks and NICs)
+  * Stop VMs
+* Azure
+  * Delete Orphan disks
+  * Delete Orphan VMs
+  * Delete Orphan NICs
+  * Delete Orphan public IPs
+  * Stop VMs
+* GCP
+  * Delete Orphan IPs
+  * Delete VMs (including attached resources such as disks and NICs)
+  * Stop VMs
 
-In addition to these features, `cloud-resource-cleanup` also includes a "Dry Run" only mode which allows you to view resources that match certain criteria without performing any operations on them. This is useful for identifying resources that you may want to delete or stop later. The tool also includes a feature that allows you to filter resources based on the age of the resources. This makes it easy for you to identify and delete resources that are no longer needed, saving you time and money. Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
+In addition to these features, `cloud-resource-cleanup` also includes the following features:
+
+* "Dry Run" mode to view resources that match certain criteria without performing any operations on them.
+* Filter resources based on the age of the resources.
+* Filter resources based on tags and tag values, so that the resources with specific tags can be excluded or included while cleaning up (--exception_tags option)
+* Delete resources that do not have certain tags and tag values (--notags option)
+* Keep resources that have certain tags and tag values (--exception_tags option)
+
+Get started with cloud-resource-cleanup today and see the difference it can make for your cloud infrastructure management.
 
 ## Prerequisites
 * Python 3.x
@@ -67,43 +86,58 @@ To use `crc`, you will need to provide your AWS, Azure, and/or GCP credentials. 
 
 To run the script, use the following command:
 ```
-python crc.py --cloud <cloud_name> --project_id <project_id> --resource <resource_name> --filter_tags <tags> --exception_tags <tags>
+python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age>
 ```
 * `cloud`: Specify the cloud name (aws, azu, gcp or all). Required.
 * `project_id`: Required for gcp
-* `resource`: Specify the resource name (vm, disk, ip, keypair or all). Default : 'all'
-* `operation_type`: Type of operation to perform on resource (delete or stop). Default: 'delete'
-* `dry_run`: Enable Dry Run only mode. This will only list resources that match the criteria, but will not perform any operations on them. Use -d or --dry_run. If not specified, the script will perform the operation specified by `operation_type`
-* `resource_states`: Resource State to consider for Delete. It is applicable only for VMs (['RUNNING', 'STOPPED']). Default: ['RUNNING']
-* `filter_tags`: Specify the tags to filter the resources. Leave value of Key empty to indicate `any` value. If not specified all available resources will be picked. **Doesn't apply to AWS keypairs and GCP IPs**. Resource is included if `any` of the key with `any` value pair matches. Doesn't apply to AWS keypairs and GCP IPs. (e.g. {'test_task': ['test', 'stress-test']})
-* `exception_tags`: Specify the tags to exclude the resources. **Doesn't apply if `filter_tags` is empty**. Leave value of Key empty to indicate `any` value. Resource is excluded if `any` of the key with `any` value pair matches. **Doesn't apply to AWS keypairs and GCP IPs** (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']})
-* `name_regex`: Name Regex used to filter resources. If not specified all available resources will be picked. **Only applies to AWS keypairs and GCP IPs** Resource is included if `any` of the value matches. (e.g. ['perftest_', 'feature_'])
-* `exception_regex`: Exception Regex to exclude resources. Doesn't apply if `name_regex` is empty. Resource is excluded if `any` of the value matches. **Only applies to AWS keypairs and GCP IPs** (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
-* `age`: Age Threshold for resources is mandatory argument while deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12})
-* `notags`: Filter by "Tags not Present". Leave value of Key empty to indicate `any` value. Resource is excluded if `all` of the key-value pair matches. Can be used independently of filter_tags. **Doesn't apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
+* `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair) or specify "all" to target all types of resources. Default: 'all'
+* `operation_type`: Specify the type of operation to perform on the resource (delete or stop). Default: 'delete'
+* `dry_run`: Enabling this option will only list resources that match the specified criteria without performing any operations on them. Use the -d or --dry_run flag to enable this feature. If this option is not specified, the script will perform the operation specified by the `operation_type` argument.
+* `resource_states`: Specify the state of the resource you want to delete. Only applicable for virtual machines (VMs) and can be either 'RUNNING' or 'STOPPED'. Default: ['RUNNING']. This means that by default, only running VMs will be considered for deletion.
+* `filter_tags`: Use this option to filter resources based on their tags. Leave value of Key empty to indicate `any` value. If not specified all available resources will be picked. **This option does not apply to AWS keypairs and GCP IPs**. esources will be included if `any` of the key with `any` value pair matches. (e.g. {'test_task': ['test', 'stress-test']}).
+* `exception_tags`: Use this option to exclude resources based on their tags. **Does not apply if `filter_tags` is not set**. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `any` of the key with `any` value pair matches. **This option does not apply to AWS keypairs and GCP IPs** (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']}).
+* `name_regex`: Use this option to filter resources based on regular expressions applied to their names. If not specified, all available resources will be picked. **This option only applies to AWS keypairs and GCP IPs**. Resources will be included if `any` of the specified regular expressions match their names. (e.g. ['perftest_', 'feature_']).
+* `exception_regex`: Use this option to exclude resources based on regular expressions applied to their names. **This option does not apply if `name_regex` is not set**. Resources will be excluded if `any` of the specified regular expressions match their names. **This option only applies to AWS keypairs and GCP IPs** (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
+* `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
+* `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 
 
 ## Examples
-Delete all the VMs in AWS which are tagged with 'task:qa', exclude 'type:prod' and are older than 10 days
+1. To delete all running AWS VMs that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
 ```
-python crc.py --cloud aws --resource vm --filter_tags '{"task":["qa"]}' --exception_tags '{"type":["prod"]}' --age '{"days":10}'
+python crc.py --cloud aws --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 3, 'hours': 12}
 ```
 
-Delete all the ips in GCP which have regex ["test_", "qa_"] and don't have ["prod", "dont_delete"] in the name and are older than 2 days and 6 hours
+2. To stop all Azure VMs that are older than 2 days and have the tag `test_task` with the value `stress-test`:
 ```
-python crc.py --cloud gcp --project_id <project_id> --resource ip --name_regex '["test_", "qa_"]' --exception_regex '["prod", "dont_delete"]' --age '{"days":2, "hours":6}'
+python crc.py --cloud azu --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 2} --operation_type stop
+```
+
+3. To delete all GCP disks that are older than 2 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':
+```
+python crc.py --cloud gcp --project_id test_project --resource disk --filter_tags {'test_task': ['stress-test']} --age {'days': 2}
+```
+
+4. To stop all VMs across all clouds that have the tag `test_task` with the value `stress-test` and `perf-test` and do not have the tag `test_owner`:
+```
+python crc.py --cloud all --resource vm --filter_tags {'test_task': ['stress-test', 'perf-test']} --notags {'test_owner': []} --operation_type stop
+```
+
+5. To perform a dry run of the script and list all VMs across all clouds that have been created in the last 2 days and do not have the tag `test_task`:
+```
+python crc.py --cloud all --resource vm --age {'days': 2} --notags {'test_task': []} --dry_run
 ```
 
 ## Logging
-The script will log all deleted resources to a file called crc.log in the same directory as the script. The log file will contain the resource type, name, and the date and time it was deleted.
+The script will log all deleted resources to a file called `crc.log` in the same directory as the script. The log file will contain the resource type, name, and the date and time it was deleted.
 
 ## Note
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
-* Try using dry_run mode feature to avoid unfortunate circumstances
-* If filters are not specified the tool will consider every Resource for cleanup
-* Use filter_tags and exception_tags in json format (Dict[str, List[str]])
-* Use resource_states, name_regex and exception_regex in list format (List[str])
-* Use age in json format. Example : {"days":60} (Dict[str, int])
+* Try using the dry run mode feature to avoid unfortunate circumstances.
+* If filters are not specified, the tool will consider every resource for cleanup.
+* Use the `filter_tags`, `exception_tags` and `notags` options in JSON format (`Dict[str, List[str]]`)
+* Use the `resource_states`, `name_regex`, and `exception_regex` options in list format (`List[str]`)
+* Use the `age` option in JSON format. Example: `{"days": 60}` (`Dict[str, int]`)
 
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.

@@ -158,9 +158,12 @@ class VM(Service):
                 logging.info(
                     f"number of GCP instances deleted: {len(self.instance_names_to_delete)}"
                 )
+                logging.warning(
+                    f"List of GCP instances deleted: {self.instance_names_to_delete}"
+                )
             else:
                 logging.warning(
-                    f"List of GCP instances which will be deleted: {self.instance_names_to_delete}"
+                    f"List of GCP instances (Total: {len(self.instance_names_to_delete)}) which will be deleted: {self.instance_names_to_delete}"
                 )
 
         if operation_type == "stop":
@@ -168,9 +171,12 @@ class VM(Service):
                 logging.info(
                     f"number of GCP instances stopped: {len(self.instance_names_to_stop)}"
                 )
+                logging.warning(
+                    f"List of GCP instances stopped: {self.instance_names_to_stop}"
+                )
             else:
                 logging.warning(
-                    f"List of GCP instances which will be stopped: {self.instance_names_to_stop}"
+                    f"List of GCP instances (Total: {len(self.instance_names_to_stop)}) which will be stopped: {self.instance_names_to_stop}"
                 )
 
     def _should_skip_instance(self, instance):

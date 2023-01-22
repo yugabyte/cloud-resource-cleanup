@@ -129,14 +129,20 @@ class VM(Service):
                     f"number of Azure instances deleted: {len(self.instance_names_to_delete)}"
                 )
                 logging.warning(
+                    f"List of Azure instances deleted: {self.instance_names_to_delete}"
+                )
+                logging.warning(
                     f"number of Azure nics deleted: {len(self.nics_names_to_delete)}"
+                )
+                logging.warning(
+                    f"List of Azure nics deleted: {self.nics_names_to_delete}"
                 )
             else:
                 logging.warning(
-                    f"List of Azure instances which will be deleted: {self.instance_names_to_delete}"
+                    f"List of Azure instances (Total: {len(self.instance_names_to_delete)}) which will be deleted: {self.instance_names_to_delete}"
                 )
                 logging.warning(
-                    f"List of Azure nics which will be deleted: {self.nics_names_to_delete}"
+                    f"List of Azure nics (Total: {len(self.nics_names_to_delete)}) which will be deleted: {self.nics_names_to_delete}"
                 )
 
         if operation_type == "stop":
@@ -144,9 +150,12 @@ class VM(Service):
                 logging.warning(
                     f"number of Azure instances stopped: {len(self.instance_names_to_stop)}"
                 )
+                logging.warning(
+                    f"List of Azure instances stopped: {self.instance_names_to_stop}"
+                )
             else:
                 logging.warning(
-                    f"List of Azure instances which will be stopped: {self.instance_names_to_stop}"
+                    f"List of Azure instances (Total: {len(self.instance_names_to_stop)}) which will be stopped: {self.instance_names_to_stop}"
                 )
 
     def _should_perform_operation_on_vm(self, vm) -> bool:

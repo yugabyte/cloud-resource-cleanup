@@ -109,7 +109,10 @@ class Disk(Service):
             logging.warning(
                 f"number of Azure Disks deleted: {len(self.disks_names_to_delete)}"
             )
+            logging.warning(
+                f"List of Azure Disks deleted: {self.disks_names_to_delete}"
+            )
         else:
             logging.warning(
-                f"List of Azure Disks which will be deleted: {self.disks_names_to_delete}"
+                f"List of Azure Disks (Total: {len(self.disks_names_to_delete)}) which will be deleted: {self.disks_names_to_delete}"
             )

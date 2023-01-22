@@ -140,7 +140,8 @@ class ElasticIPs(Service):
             logging.warning(
                 f"number of AWS Elastic IPs deleted: {len(self.deleted_ips)}"
             )
+            logging.warning(f"List of AWS Elastic IPs deleted: {self.deleted_ips}")
         else:
             logging.warning(
-                f"List of AWS Elastic IPs which will be deleted: {self.deleted_ips}"
+                f"List of AWS Elastic IPs (Total: {len(self.deleted_ips)}) which will be deleted: {self.deleted_ips}"
             )

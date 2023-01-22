@@ -135,7 +135,8 @@ class KeyPairs(Service):
             logging.warning(
                 f"number of AWS keypairs deleted: {len(self.deleted_keypairs)}"
             )
+            logging.warning(f"List of AWS keypairs deleted: {self.deleted_keypairs}")
         else:
             logging.warning(
-                f"List of AWS keypairs which will be deleted: {self.deleted_keypairs}"
+                f"List of AWS keypairs (Total: {len(self.deleted_keypairs)}) which will be deleted: {self.deleted_keypairs}"
             )

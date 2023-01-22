@@ -80,7 +80,8 @@ class IP(Service):
                 self.deleted_ips.append(ip.name)
         if not self.dry_run:
             logging.warning(f"number of Azure IPs deleted: {len(self.deleted_ips)}")
+            logging.warning(f"List of Azure IPs deleted: {self.deleted_ips}")
         else:
             logging.warning(
-                f"List of Azure IPs which will be deleted: {self.deleted_ips}"
+                f"List of Azure IPs (Total: {len(self.deleted_ips)}) which will be deleted: {self.deleted_ips}"
             )

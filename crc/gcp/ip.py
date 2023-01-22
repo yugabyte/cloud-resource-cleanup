@@ -95,7 +95,8 @@ class IP(Service):
 
         if not self.dry_run:
             logging.warning(f"number of GCP IPs deleted: {len(self.deleted_ips)}")
+            logging.warning(f"List of GCP IPs deleted: {self.deleted_ips}")
         else:
             logging.warning(
-                f"List of GCP IPs which will be deleted: {self.deleted_ips}"
+                f"List of GCP IPs (Total: {len(self.deleted_ips)}) which will be deleted: {self.deleted_ips}"
             )

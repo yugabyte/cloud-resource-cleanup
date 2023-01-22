@@ -268,9 +268,12 @@ class VM(Service):
                 logging.warning(
                     f"number of AWS instances deleted: {len(self.instance_names_to_delete)}"
                 )
+                logging.warning(
+                    f"List of AWS instances deleted: {self.instance_names_to_delete}"
+                )
             else:
                 logging.warning(
-                    f"List of AWS instances which will be deleted: {self.instance_names_to_delete}"
+                    f"List of AWS instances (Total: {len(self.instance_names_to_delete)}) which will be deleted: {self.instance_names_to_delete}"
                 )
 
         if operation_type == "stop":
@@ -278,9 +281,12 @@ class VM(Service):
                 logging.warning(
                     f"number of AWS instances stopped: {len(self.instance_names_to_stop)}"
                 )
+                logging.warning(
+                    f"List of AWS instances stopped: {self.instance_names_to_stop}"
+                )
             else:
                 logging.warning(
-                    f"List of AWS instances which will be stopped: {self.instance_names_to_stop}"
+                    f"List of AWS instances (Total: {len(self.instance_names_to_stop)}) which will be stopped: {self.instance_names_to_stop}"
                 )
 
     def delete(

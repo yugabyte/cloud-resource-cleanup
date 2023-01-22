@@ -286,7 +286,7 @@ def get_argparser():
         "-n",
         "--name_regex",
         type=ast.literal_eval,
-        metavar="REGEX",
+        metavar="['REGEX1','REGEX2']",
         help="Name Regex used to filter resources. Only applies to AWS keypairs and GCP IPs. Example: -n or --name_regex ['perftest_','qa_']",
     )
 
@@ -295,7 +295,7 @@ def get_argparser():
         "-x",
         "--exception_regex",
         type=ast.literal_eval,
-        metavar="REGEX",
+        metavar="['REGEX1','REGEX2']",
         help="Exception Regex to filter out resources. Example: -x or --exception_regex ['perftest_keep_resources', 'test_keep_resources']",
     )
 

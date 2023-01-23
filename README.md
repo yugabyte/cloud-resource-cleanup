@@ -19,11 +19,11 @@ Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that all
 
 In addition to these features, `cloud-resource-cleanup` also includes the following features:
 
-* "Dry Run" mode to view resources that match certain criteria without performing any operations on them.
-* Filter resources based on the age of the resources.
-* Filter resources based on tags and tag values, so that the resources with specific tags can be excluded or included while cleaning up (--filter_tags option)
-* Delete resources that do not have certain tags and tag values (--notags option)
-* Keep resources that have certain tags and tag values (--exception_tags option)
+* `Dry Run` mode to view resources that match certain criteria without performing any operations on them.
+* Filter resources based on the `age` of the resources.
+* Filter resources based on tags and tag values, so that the resources with specific tags can be excluded or included while cleaning up (`--filter_tags` option)
+* Delete resources that do not have certain tags and tag values (`--notags` option)
+* Keep resources that have certain tags and tag values (`--exception_tags` option)
 
 Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 

@@ -10,8 +10,20 @@
 
 # cloud-resource-cleanup
 
-Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds. The tool supports the following cloud providers:
+Introducing `cloud-resource-cleanup` (`crc` for short), a powerful tool that allows you to easily **delete** and **stop** resources across different clouds.
 
+* [Core Features](#core-features)
+* [Get Started](#get-started)
+* [Usage](#usage)
+* [Examples](#examples)
+* [Notes](#notes)
+* [Need Help?](#need-help)
+* [Contribute](#contribute)
+* [License](#license)
+* [Read More](#read-more)
+
+# Core Features
+We support below Cloud Providers:
 * AWS
   * Delete Orphan Elastic IPs
   * Delete Orphan keypairs
@@ -37,6 +49,7 @@ In addition to these features, `cloud-resource-cleanup` also includes the follow
 
 Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
+# Get Started
 ## Prerequisites
 * Python 3.x
 * Required python packages
@@ -90,7 +103,10 @@ You can also add these commands to your shell profile file, such as `~/.bash_pro
 
 Make sure to replace the placeholders with the appropriate values for your environment.
 
-## Usage
+## Logging
+The script will log all deleted resources to a file called `crc.log` in the same directory as the script. The log file will contain the resource type, name, and the date and time it was deleted.
+
+# Usage
 To run the script, use the following command:
 ```
 python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age>
@@ -108,8 +124,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 
-
-## Examples
+# Examples
 1. To delete all running AWS VMs that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
 ```
 python crc.py --cloud aws --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 3, 'hours': 12}
@@ -134,11 +149,7 @@ python crc.py --cloud all --resource vm --filter_tags {'test_task': ['stress-tes
 ```
 python crc.py --cloud all --resource vm --age {'days': 2} --notags {'test_task': []} --dry_run
 ```
-
-## Logging
-The script will log all deleted resources to a file called `crc.log` in the same directory as the script. The log file will contain the resource type, name, and the date and time it was deleted.
-
-## Note
+# Notes
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
 * Try using the dry run mode feature to avoid unfortunate circumstances.
 * If filters are not specified, the tool will consider every resource for cleanup.
@@ -146,5 +157,23 @@ The script will log all deleted resources to a file called `crc.log` in the same
 * Use the `resource_states`, `name_regex`, and `exception_regex` options in list format (`List[str]`)
 * Use the `age` option in JSON format. Example: `{"days": 60}` (`Dict[str, int]`)
 
-## Contributing
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+# Need Help?
+
+* You can ask questions, find answers, and help others on our Community [Slack](https://communityinviter.com/apps/yugabyte-db/register), [Forum](https://forum.yugabyte.com), [Stack Overflow](https://stackoverflow.com/questions/tagged/yugabyte-db), as well as Twitter [@Yugabyte](https://twitter.com/yugabyte)
+
+* Please use [GitHub issues](https://github.com/yugabyte/cloud-resource-cleanup/issues) to report issues or request new features.
+
+# Contribute
+
+As an an open-source project with a strong focus on the user community, we welcome contributions as GitHub pull requests. See our [Contributor Guides](https://docs.yugabyte.com/preview/contribute/) to get going. Discussions and RFCs for features happen on the design discussions section of our [Forum](https://forum.yugabyte.com).
+
+# License
+
+Source code in this repository is licensed under the Apache License 2.0. A copy of license can be found in the [LICENSE.md](LICENSE.md) file.
+
+# Read More
+
+* To see our updates, go to [The Distributed SQL Blog](https://blog.yugabyte.com/).
+* For an in-depth design and the YugabyteDB architecture, see our [design specs](https://github.com/yugabyte/yugabyte-db/tree/master/architecture/design).
+* Tech Talks and [Videos](https://www.youtube.com/c/YugaByte).
+* See how YugabyteDB [compares with other databases](https://docs.yugabyte.com/preview/faq/comparisons/).

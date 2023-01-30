@@ -75,11 +75,15 @@ class IP(Service):
                     continue
 
                 # Check if address name matches filter regex and does not match exception regex
-                if not self.filter_regex or (
-                    any(regex in name for regex in self.filter_regex)
-                    and self.exception_regex
-                    and not any(regex in name for regex in self.exception_regex)
-                ):
+                has_matching_filter_regex = not self.filter_regex or any(
+                    regex in name for regex in self.filter_regex
+                )
+
+                has_matching_exception_regex = self.exception_regex and not any(
+                    regex in name for regex in self.exception_regex
+                )
+
+                if has_matching_filter_regex and not has_matching_exception_regex:
                     ips_to_delete.append(name)
 
             if not self.dry_run:

@@ -123,8 +123,11 @@ class ElasticIPs(Service):
                         key = tag["Key"]
                         # check for filter_tags match
                         if key in self.filter_tags and (
-                            self.filter_tags[key]
-                            or tag["Value"] in self.filter_tags[key]
+                            not self.filter_tags[key]
+                            or (
+                                self.filter_tags[key]
+                                and tag["Value"] in self.filter_tags[key]
+                            )
                         ):
                             eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
 

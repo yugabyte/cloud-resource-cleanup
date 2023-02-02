@@ -82,6 +82,8 @@ The script requires certain environment variables to be set in order to interact
 * `AZURE_CREDENTIALS_CLIENT_SECRET`: The client secret for your Azure application.
 * `AZURE_CREDENTIALS_CLIENT_ID`: The client ID for your Azure application.
 * `AZURE_RESOURCE_GROUP`: The name of the resource group in Azure to use.
+### Slack (Optional)
+* `SLACK_BOT_TOKEN`: The API token for the Slack bot you want to use to receive notifications.
 
 It's important to note that you only need to set the environment variables for the cloud providers you are interacting with. For example, if you are only using the script to delete resources on AWS, you would only need to set the `AWS_SECRET_ACCESS_KEY` and `AWS_ACCESS_KEY_ID` environment variables.
 
@@ -98,6 +100,7 @@ export AZURE_CREDENTIALS_SUBSCRIPTION_ID="your_subscription_id"
 export AZURE_CREDENTIALS_CLIENT_SECRET="your_client_secret"
 export AZURE_CREDENTIALS_CLIENT_ID="your_client_id"
 export AZURE_RESOURCE_GROUP="your_resource_group"
+export SLACK_BOT_TOKEN="your_slack_bot_token"
 ```
 You can also add these commands to your shell profile file, such as `~/.bash_profile` or `~/.bashrc`, to ensure that these environment variables are set every time you start a new shell session.
 

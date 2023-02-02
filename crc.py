@@ -24,11 +24,11 @@ RESOURCES = ["disk", "ip", "keypair", "vm"]
 DELETED = "Deleted"
 STOPPED = "Stopped"
 
-NICS = "NICs"
-DISKS = "Disks"
-VMS = "VMs"
-IPS = "IPs"
-KEYPAIRS = "Keypairs"
+NICS = "NIC"
+DISKS = "Disk"
+VMS = "VM"
+IPS = "IP"
+KEYPAIRS = "Keypair"
 
 
 class CRC:
@@ -150,12 +150,12 @@ class CRC:
         :return: Message to be sent to the Slack channel
         :rtype: str
         """
-        if self.dry_run:
-            return f"Dry Run: {operation_type} the following {self.cloud} {resource}: {operated_list}"
+        operated_list_length = len(operated_list)
 
-        return (
-            f"{operation_type} the following {self.cloud} {resource}: {operated_list}"
-        )
+        if self.dry_run:
+            return f"Dry Run: {operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+
+        return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 
     def notify_deleted_nic_via_slack(self, nic: object):
         """
@@ -164,9 +164,6 @@ class CRC:
         :param nic: Network interface object
         :type nic: object
         """
-        if not nic.get_deleted_nic:
-            return
-
         msg = self.get_msg(NICS, DELETED, nic.get_deleted_nic)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
@@ -177,9 +174,6 @@ class CRC:
         :param vm: Virtual machine object
         :type vm: object
         """
-        if not vm.get_deleted:
-            return
-
         msg = self.get_msg(VMS, DELETED, vm.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
@@ -193,9 +187,6 @@ class CRC:
         :param vm: Virtual machine object
         :type vm: object
         """
-        if not vm.get_stopped:
-            return
-
         msg = self.get_msg(VMS, STOPPED, vm.get_stopped)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
@@ -206,9 +197,6 @@ class CRC:
         Parameters:
         ip (object): the deleted IP instance
         """
-        if not ip.get_deleted:
-            return
-
         msg = self.get_msg(IPS, DELETED, ip.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
@@ -219,9 +207,6 @@ class CRC:
         :param keypair: Key Pair object
         :type vm: object
         """
-        if not keypair.get_deleted:
-            return
-
         msg = self.get_msg(KEYPAIRS, DELETED, keypair.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
@@ -232,9 +217,6 @@ class CRC:
         :param disk: Disk object
         :type vm: object
         """
-        if not disk.get_deleted:
-            return
-
         msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
@@ -548,9 +530,9 @@ def main():
     dry_run = args.get("dry_run")
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
-    
+
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-    
+
     slack_client = None
 
     if slack_channel and not SLACK_BOT_TOKEN:

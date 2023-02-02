@@ -548,7 +548,9 @@ def main():
     dry_run = args.get("dry_run")
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
+    
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+    
     slack_client = None
 
     if slack_channel and not SLACK_BOT_TOKEN:

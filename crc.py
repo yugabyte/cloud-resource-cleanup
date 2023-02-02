@@ -18,7 +18,7 @@ from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
 
 # List of supported clouds and resources
-CLOUDS = ["aws", "azu", "gcp"]
+CLOUDS = ["aws", "azure", "gcp"]
 RESOURCES = ["disk", "ip", "keypair", "vm"]
 
 DELETED = "Deleted"
@@ -50,7 +50,7 @@ class CRC:
         Initializes the object with required properties.
 
         Parameters:
-        cloud (str): the name of the cloud platform ('gcp' or 'azu')
+        cloud (str): the name of the cloud platform ('aws', 'gcp' or 'azure')
         dry_run (bool): flag to indicate whether the operation is a dry run or not
         notags (dict): a dictionary containing a list of resources that don't have any tags
         slack_client (object): the Slack client instance used to send messages
@@ -94,7 +94,7 @@ class CRC:
         """
         if self.cloud == "aws":
             return AWS_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
-        if self.cloud == "azu":
+        if self.cloud == "azure":
             return AZU_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "gcp":
             return GCP_VM(
@@ -127,7 +127,7 @@ class CRC:
         """
         if self.cloud == "aws":
             return ElasticIPs(self.dry_run, filter_tags, exception_tags, self.notags)
-        if self.cloud == "azu":
+        if self.cloud == "azure":
             return AZU_IP(self.dry_run, filter_tags, exception_tags, self.notags)
         if self.cloud == "gcp":
             return GCP_IP(self.dry_run, self.project_id, name_regex, exception_regex)
@@ -183,7 +183,7 @@ class CRC:
         msg = self.get_msg(VMS, DELETED, vm.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
-        if self.cloud == "azu":
+        if self.cloud == "azure":
             self.notify_deleted_nic_via_slack(vm)
 
     def notify_stopped_vm_via_slack(self, vm: object):
@@ -335,15 +335,15 @@ class CRC:
     ):
         """
         Delete Disks that match the specified criteria.
-        This method is only supported on AZU.
+        This method is only supported on AZURE.
 
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
         :param age: Dictionary of age conditions to filter the disks.
         """
-        if self.cloud != "azu":
+        if self.cloud != "azure":
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZU. AWS, GCP clean the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported only on AZURE. AWS, GCP clean the NICs, Disks along with VM"
             )
 
         disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
@@ -367,10 +367,10 @@ def get_argparser():
     parser.add_argument(
         "-c",
         "--cloud",
-        choices=["aws", "azu", "gcp", "all"],
+        choices=["aws", "azure", "gcp", "all"],
         required=True,
         metavar="CLOUD",
-        help="The cloud to operate on. Valid options are: 'aws', 'azu', 'gcp', 'all'. Example: -c or --cloud all",
+        help="The cloud to operate on. Valid options are: 'aws', 'azure', 'gcp', 'all'. Example: -c or --cloud all",
     )
 
     # Add Argument for Resource Type

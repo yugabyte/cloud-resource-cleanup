@@ -21,14 +21,14 @@ from crc.gcp.vm import VM as GCP_VM
 CLOUDS = ["aws", "azu", "gcp"]
 RESOURCES = ["disk", "ip", "keypair", "vm"]
 
-deleted = "Deleted"
-stopped = "Stopped"
+DELETED = "Deleted"
+STOPPED = "Stopped"
 
-nics = "NICs"
-disks = "Disks"
-vms = "VMs"
-ips = "IPs"
-keypairs = "Keypairs"
+NICS = "NICs"
+DISKS = "Disks"
+VMS = "VMs"
+IPS = "IPs"
+KEYPAIRS = "Keypairs"
 
 
 class CRC:
@@ -94,9 +94,9 @@ class CRC:
         """
         if self.cloud == "aws":
             return AWS_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
-        elif self.cloud == "azu":
+        if self.cloud == "azu":
             return AZU_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
-        elif self.cloud == "gcp":
+        if self.cloud == "gcp":
             return GCP_VM(
                 self.dry_run,
                 self.project_id,
@@ -105,10 +105,9 @@ class CRC:
                 age,
                 self.notags,
             )
-        else:
-            raise ValueError(
-                f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
-            )
+        raise ValueError(
+            f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
+        )
 
     def _get_ip(
         self,
@@ -128,14 +127,13 @@ class CRC:
         """
         if self.cloud == "aws":
             return ElasticIPs(self.dry_run, filter_tags, exception_tags, self.notags)
-        elif self.cloud == "azu":
+        if self.cloud == "azu":
             return AZU_IP(self.dry_run, filter_tags, exception_tags, self.notags)
-        elif self.cloud == "gcp":
+        if self.cloud == "gcp":
             return GCP_IP(self.dry_run, self.project_id, name_regex, exception_regex)
-        else:
-            raise ValueError(
-                f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
-            )
+        raise ValueError(
+            f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
+        )
 
     def get_msg(
         self, resource: str, operation_type: str, operated_list: List[str]
@@ -154,8 +152,10 @@ class CRC:
         """
         if self.dry_run:
             return f"Dry Run: {operation_type} the following {self.cloud} {resource}: {operated_list}"
-        else:
-            return f"{operation_type} the following {self.cloud} {resource}: {operated_list}"
+
+        return (
+            f"{operation_type} the following {self.cloud} {resource}: {operated_list}"
+        )
 
     def notify_deleted_nic_via_slack(self, nic: object):
         """
@@ -167,7 +167,7 @@ class CRC:
         if not nic.get_deleted_nic:
             return
 
-        msg = self.get_msg(nics, deleted, nic.get_deleted_nic)
+        msg = self.get_msg(NICS, DELETED, nic.get_deleted_nic)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
     def notify_deleted_vm_via_slack(self, vm: object):
@@ -180,7 +180,7 @@ class CRC:
         if not vm.get_deleted:
             return
 
-        msg = self.get_msg(vms, deleted, vm.get_deleted)
+        msg = self.get_msg(VMS, DELETED, vm.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
         if self.cloud == "azu":
@@ -196,7 +196,7 @@ class CRC:
         if not vm.get_stopped:
             return
 
-        msg = self.get_msg(vms, stopped, vm.get_stopped)
+        msg = self.get_msg(VMS, STOPPED, vm.get_stopped)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
     def notify_deleted_ip_via_slack(self, ip: object):
@@ -209,7 +209,7 @@ class CRC:
         if not ip.get_deleted:
             return
 
-        msg = self.get_msg(ips, deleted, ip.get_deleted)
+        msg = self.get_msg(IPS, DELETED, ip.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
     def notify_deleted_keypair_via_slack(self, keypair: object):
@@ -222,7 +222,7 @@ class CRC:
         if not keypair.get_deleted:
             return
 
-        msg = self.get_msg(keypairs, deleted, keypair.get_deleted)
+        msg = self.get_msg(KEYPAIRS, DELETED, keypair.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
     def notify_deleted_disk_via_slack(self, disk: object):
@@ -235,7 +235,7 @@ class CRC:
         if not disk.get_deleted:
             return
 
-        msg = self.get_msg(disks, deleted, disk.get_deleted)
+        msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
     def delete_vm(

@@ -42,6 +42,7 @@ We support below Cloud Providers:
 In addition to these features, `cloud-resource-cleanup` also includes the following features:
 
 * `Dry Run` mode to view resources that match certain criteria without performing any operations on them.
+* `Slack` notifications support
 * Filter resources based on the `age` of the resources.
 * Filter resources based on tags and tag values, so that the resources with specific tags can be excluded or included while cleaning up (`--filter_tags` option)
 * Delete resources that do not have certain tags and tag values (`--notags` option)

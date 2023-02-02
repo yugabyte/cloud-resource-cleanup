@@ -112,7 +112,7 @@ The script will log all deleted resources to a file called `crc.log` in the same
 # Usage
 To run the script, use the following command:
 ```
-python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age>
+python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age> --slack_channel <slack_channel>
 ```
 * `cloud`: Specify the cloud name (aws, azu, gcp or all). Required.
 * `project_id`: Required for gcp
@@ -126,6 +126,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `exception_regex`: Use this option to exclude resources based on regular expressions applied to their names. **This option does not apply if `name_regex` is not set**. Resources will be excluded if `any` of the specified regular expressions match their names. **This option only applies to AWS keypairs and GCP IPs** (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
 * `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
+* `slack_channel`: Use this option to specify a Slack channel to receive notifications about the execution of the script. Only works if specified.
 
 # Examples
 1. To delete all running AWS VMs that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:

@@ -477,7 +477,7 @@ def get_argparser():
         "-m",
         "--slack_channel",
         metavar="SLACK_CHANNEL",
-        help="Slack channel. Example: --slack_channel testing",
+        help="The Slack channel to send the notifications to. Example: --slack_channel testing",
     )
 
     return vars(parser.parse_args())

@@ -2,7 +2,10 @@
 
 import argparse
 import ast
+import os
 from typing import Dict, List
+
+from slack_sdk import WebClient
 
 # Import classes for interacting with different resources across different clouds
 from crc.aws.elastic_ips import ElasticIPs
@@ -18,20 +21,41 @@ from crc.gcp.vm import VM as GCP_VM
 CLOUDS = ["aws", "azu", "gcp"]
 RESOURCES = ["disk", "ip", "keypair", "vm"]
 
+deleted = "Deleted"
+stopped = "Stopped"
+
+nics = "NICs"
+disks = "Disks"
+vms = "VMs"
+ips = "IPs"
+keypairs = "Keypairs"
+
 
 class CRC:
     """
     Class for cleaning up resources across different clouds.
+    This also supports sending notification to Slack Channels
     """
 
     def __init__(
-        self, cloud: str, dry_run: bool, notags: dict, project_id=None
+        self,
+        cloud: str,
+        dry_run: bool,
+        notags: dict,
+        slack_client: object,
+        project_id: str = None,
+        slack_channel: str = None,
     ) -> None:
         """
-        Initialize the class with the cloud, dry_run only mode and project_id (if applicable).
+        Initializes the object with required properties.
 
-        :param cloud: The cloud to interact with (e.g. "aws", "azu", "gcp").
-        :param project_id: The project_id for GCP (mandatory for GCP).
+        Parameters:
+        cloud (str): the name of the cloud platform ('gcp' or 'azu')
+        dry_run (bool): flag to indicate whether the operation is a dry run or not
+        notags (dict): a dictionary containing a list of resources that don't have any tags
+        slack_client (object): the Slack client instance used to send messages
+        project_id (str, optional): the ID of the project (mandatory for GCP)
+        slack_channel (str, optional): the name of the Slack channel to send messages to
         """
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
@@ -39,6 +63,8 @@ class CRC:
         self.dry_run = dry_run
         self.project_id = project_id
         self.notags = notags
+        self.slack_client = slack_client
+        self.slack_channel = slack_channel
 
     def _delete_vm(self, vm, instance_state: List[str]):
         """
@@ -111,6 +137,107 @@ class CRC:
                 f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
             )
 
+    def get_msg(
+        self, resource: str, operation_type: str, operated_list: List[str]
+    ) -> str:
+        """
+        Returns a message to be sent to the Slack channel
+
+        :param resource: Cloud resource type (e.g. "nics", "vms", "ips", "keypairs", "disks")
+        :type resource: str
+        :param operation_type: Operation type (e.g. "Deleted", "Stopped")
+        :type operation_type: str
+        :param operated_list: List of operated resources
+        :type operated_list: list
+        :return: Message to be sent to the Slack channel
+        :rtype: str
+        """
+        if self.dry_run:
+            return f"Dry Run: {operation_type} the following {self.cloud} {resource}: {operated_list}"
+        else:
+            return f"{operation_type} the following {self.cloud} {resource}: {operated_list}"
+
+    def notify_deleted_nic_via_slack(self, nic: object):
+        """
+        Sends a notification message to the Slack channel about deleted network interfaces
+
+        :param nic: Network interface object
+        :type nic: object
+        """
+        if not nic.get_deleted_nic:
+            return
+
+        msg = self.get_msg(nics, deleted, nic.get_deleted_nic)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
+    def notify_deleted_vm_via_slack(self, vm: object):
+        """
+        Sends a notification message to the Slack channel about deleted virtual machines
+
+        :param vm: Virtual machine object
+        :type vm: object
+        """
+        if not vm.get_deleted:
+            return
+
+        msg = self.get_msg(vms, deleted, vm.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
+        if self.cloud == "azu":
+            self.notify_deleted_nic_via_slack(vm)
+
+    def notify_stopped_vm_via_slack(self, vm: object):
+        """
+        Sends a notification message to the Slack channel about stopped virtual machines
+
+        :param vm: Virtual machine object
+        :type vm: object
+        """
+        if not vm.get_stopped:
+            return
+
+        msg = self.get_msg(vms, stopped, vm.get_stopped)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
+    def notify_deleted_ip_via_slack(self, ip: object):
+        """
+        Sends a message to a Slack channel about deleted IP instances.
+
+        Parameters:
+        ip (object): the deleted IP instance
+        """
+        if not ip.get_deleted:
+            return
+
+        msg = self.get_msg(ips, deleted, ip.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
+    def notify_deleted_keypair_via_slack(self, keypair: object):
+        """
+        Sends a notification message to the Slack channel about deleted Key Pairs
+
+        :param keypair: Key Pair object
+        :type vm: object
+        """
+        if not keypair.get_deleted:
+            return
+
+        msg = self.get_msg(keypairs, deleted, keypair.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
+    def notify_deleted_disk_via_slack(self, disk: object):
+        """
+        Sends a notification message to the Slack channel about deleted Disks
+
+        :param disk: Disk object
+        :type vm: object
+        """
+        if not disk.get_deleted:
+            return
+
+        msg = self.get_msg(disks, deleted, disk.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
     def delete_vm(
         self,
         filter_tags: Dict[str, List[str]],
@@ -119,7 +246,7 @@ class CRC:
         instance_state: List[str],
     ):
         """
-        Delete the specified VM.
+        Delete virtual machines that match the specified criteria.
 
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
@@ -129,6 +256,9 @@ class CRC:
         vm = self._get_vm(filter_tags, exception_tags, age)
         self._delete_vm(vm, instance_state)
 
+        if self.slack_client:
+            self.notify_deleted_vm_via_slack(vm)
+
     def stop_vm(
         self,
         filter_tags: Dict[str, List[str]],
@@ -136,7 +266,7 @@ class CRC:
         age: Dict[str, int],
     ):
         """
-        Stop the specified VM.
+        Stop virtual machines that match the specified criteria.
 
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
@@ -144,6 +274,9 @@ class CRC:
         """
         vm = self._get_vm(filter_tags, exception_tags, age)
         vm.stop()
+
+        if self.slack_client:
+            self.notify_stopped_vm_via_slack(vm)
 
     def delete_ip(
         self,
@@ -153,7 +286,7 @@ class CRC:
         exception_regex: List[str],
     ):
         """
-        Delete the specified IP.
+        Delete IPs that match the specified criteria.
 
         :param filter_tags: Dictionary of tags to filter the IP.
         :param exception_tags: Dictionary of tags to exclude the IP.
@@ -168,6 +301,9 @@ class CRC:
         )
         ip.delete()
 
+        if self.slack_client:
+            self.notify_deleted_ip_via_slack(ip)
+
     def delete_keypairs(
         self,
         name_regex: List[str],
@@ -175,7 +311,8 @@ class CRC:
         age: Dict[str, int],
     ):
         """
-        Delete the specified keypairs. This method is only supported on AWS.
+        Delete KeyPairs that match the specified criteria.
+        This method is only supported on AWS.
 
         :param name_regex: List of regex patterns to filter the keypairs.
         :param exception_regex: List of regex patterns to exclude the keypairs.
@@ -183,7 +320,12 @@ class CRC:
         """
         if self.cloud != "aws":
             raise ValueError("Keypair operation is only supported on AWS.")
-        KeyPairs(self.dry_run, name_regex, exception_regex, age).delete()
+
+        keypair = KeyPairs(self.dry_run, name_regex, exception_regex, age)
+        keypair.delete()
+
+        if self.slack_client:
+            self.notify_deleted_keypair_via_slack(keypair)
 
     def delete_disks(
         self,
@@ -192,7 +334,8 @@ class CRC:
         age: Dict[str, int],
     ):
         """
-        Delete the specified disks. This method is only supported on AZU.
+        Delete Disks that match the specified criteria.
+        This method is only supported on AZU.
 
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
@@ -202,7 +345,11 @@ class CRC:
             raise ValueError(
                 "Incorrect Cloud Provided. Disks operation is supported only on AZU. AWS, GCP clean the NICs, Disks along with VM"
             )
-        Disk(self.dry_run, filter_tags, exception_tags, age, self.notags).delete()
+
+        disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
+        disk.delete()
+        if self.slack_client:
+            self.notify_deleted_disk_via_slack(disk)
 
 
 def get_argparser():
@@ -325,6 +472,14 @@ def get_argparser():
         metavar="{key1: [value1, value2], key2: [value3, value4]}",
     )
 
+    # Add Argument for Slack Channel
+    parser.add_argument(
+        "-m",
+        "--slack_channel",
+        metavar="SLACK_CHANNEL",
+        help="Slack channel. Example: --slack_channel testing",
+    )
+
     return vars(parser.parse_args())
 
 
@@ -392,6 +547,12 @@ def main():
     age = args.get("age")
     dry_run = args.get("dry_run")
     notags = args.get("notags")
+    slack_channel = args.get("slack_channel")
+    SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+    slack_client = None
+
+    if slack_channel and not SLACK_BOT_TOKEN:
+        raise EnvironmentError("SLACK_BOT_TOKEN is not set")
 
     # Validate operation_type and resources
     if operation_type == "stop" and resources != "vm":
@@ -417,9 +578,12 @@ def main():
     is_valid_list("exception_regex", exception_regex)
     is_valid_dict("age", age)
 
+    if slack_channel:
+        slack_client = WebClient(token=SLACK_BOT_TOKEN)
+
     # Perform operations
     for cloud in clouds:
-        crc = CRC(cloud, dry_run, notags, project_id)
+        crc = CRC(cloud, dry_run, notags, slack_client, project_id, slack_channel)
         for resource in resources:
             if resource == "disk":
                 crc.delete_disks(filter_tags, exception_tags, age)

@@ -60,6 +60,14 @@ class ElasticIPs(Service):
         self.notags = notags
 
     @property
+    def get_deleted(self) -> str:
+        """
+        Returns the list of Elastic IPs that have been deleted.
+        :return: The list of Elastic IPs that have been deleted.
+        """
+        return self.deleted_ips
+
+    @property
     def count(self) -> int:
         """
         Returns the number of Elastic IPs that have been deleted.

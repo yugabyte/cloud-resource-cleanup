@@ -68,6 +68,14 @@ class KeyPairs(Service):
         self.age = age
 
     @property
+    def get_deleted(self):
+        """
+        This is a property decorator that returns the list of items in the keypairs_to_delete list.
+        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
+        """
+        return self.deleted_keypairs
+
+    @property
     def count(self):
         """
         This is a property decorator that returns the count of items in the keypairs_to_delete list.

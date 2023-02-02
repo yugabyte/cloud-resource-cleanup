@@ -31,6 +31,13 @@ class IP(Service):
         self.notags = notags
 
     @property
+    def get_deleted(self):
+        """
+        Return the list of deleted IP addresses.
+        """
+        return self.deleted_ips
+
+    @property
     def count(self):
         """
         Return the count of deleted IP addresses.

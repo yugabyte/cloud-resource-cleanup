@@ -67,6 +67,14 @@ class VM(Service):
         self.notags = notags
 
     @property
+    def get_deleted(self):
+        """
+        This is a property decorator that returns the list of items in the instance_names_to_delete list.
+        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
+        """
+        return self.instance_names_to_delete
+
+    @property
     def delete_count(self):
         """
         This is a property decorator that returns the count of items in the instance_names_to_delete list.
@@ -75,6 +83,14 @@ class VM(Service):
         count = len(self.instance_names_to_delete)
         logging.info(f"count of items in instance_names_to_delete: {count}")
         return count
+
+    @property
+    def get_stopped(self):
+        """
+        This is a property decorator that returns the list of items in the instance_names_to_stop list.
+        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
+        """
+        return self.instance_names_to_stop
 
     @property
     def stopped_count(self):

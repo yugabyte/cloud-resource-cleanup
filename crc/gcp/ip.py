@@ -45,6 +45,14 @@ class IP(Service):
         self.exception_regex = exception_regex
 
     @property
+    def get_deleted(self) -> str:
+        """
+        Returns the list of IPs that have been deleted.
+        :return: The list of IPs that have been deleted.
+        """
+        return self.deleted_ips
+
+    @property
     def count(self) -> int:
         """
         Returns the number of IPs that have been deleted.

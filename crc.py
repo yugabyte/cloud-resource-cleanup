@@ -153,7 +153,7 @@ class CRC:
         operated_list_length = len(operated_list)
 
         if self.dry_run:
-            return f"Dry Run: {operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+            return f"`Dry Run`: {operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 
         return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 

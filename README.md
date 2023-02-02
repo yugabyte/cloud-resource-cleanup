@@ -114,7 +114,7 @@ To run the script, use the following command:
 ```
 python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age> --slack_channel <slack_channel>
 ```
-* `cloud`: Specify the cloud name (aws, azu, gcp or all). Required.
+* `cloud`: Specify the cloud name (aws, azure, gcp or all). Required.
 * `project_id`: Required for gcp
 * `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair) or specify "all" to target all types of resources. Default: 'all'
 * `operation_type`: Specify the type of operation to perform on the resource (delete or stop). Default: 'delete'
@@ -136,7 +136,7 @@ python crc.py --cloud aws --resource vm --filter_tags {'test_task': ['stress-tes
 
 2. To stop all Azure VMs that are older than 2 days and have the tag `test_task` with the value `stress-test`:
 ```
-python crc.py --cloud azu --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 2} --operation_type stop
+python crc.py --cloud azure --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 2} --operation_type stop
 ```
 
 3. To delete all GCP disks that are older than 2 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':

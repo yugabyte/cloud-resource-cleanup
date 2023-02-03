@@ -85,6 +85,7 @@ The script requires certain environment variables to be set in order to interact
 * `AZURE_RESOURCE_GROUP`: The name of the resource group in Azure to use.
 ### Slack (Optional)
 * `SLACK_BOT_TOKEN`: The API token for the Slack bot you want to use to receive notifications.
+* `INFLUXDB_TOKEN`: The API token for the InfluxDB you want to use to receive data.
 
 It's important to note that you only need to set the environment variables for the cloud providers you are interacting with. For example, if you are only using the script to delete resources on AWS, you would only need to set the `AWS_SECRET_ACCESS_KEY` and `AWS_ACCESS_KEY_ID` environment variables.
 
@@ -102,6 +103,7 @@ export AZURE_CREDENTIALS_CLIENT_SECRET="your_client_secret"
 export AZURE_CREDENTIALS_CLIENT_ID="your_client_id"
 export AZURE_RESOURCE_GROUP="your_resource_group"
 export SLACK_BOT_TOKEN="your_slack_bot_token"
+export INFLUXDB_TOKEN="your_influxdb_token"
 ```
 You can also add these commands to your shell profile file, such as `~/.bash_profile` or `~/.bashrc`, to ensure that these environment variables are set every time you start a new shell session.
 
@@ -128,6 +130,8 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 * `slack_channel`: Use this option to specify a Slack channel to receive notifications about the execution of the script. Only works if specified.
+* `influxdb`: Use this option to specify a InfluxDB Connection to receive data about the execution of the script. Only works if specified.
+
 
 # Examples
 1. To delete all running AWS VMs that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:

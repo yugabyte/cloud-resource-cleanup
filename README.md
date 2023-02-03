@@ -41,12 +41,13 @@ We support below Cloud Providers:
 
 In addition to these features, `cloud-resource-cleanup` also includes the following features:
 
-* `Dry Run` mode to view resources that match certain criteria without performing any operations on them.
-* `Slack` notifications support
-* Filter resources based on the `age` of the resources.
-* Filter resources based on tags and tag values, so that the resources with specific tags can be excluded or included while cleaning up (`--filter_tags` option)
-* Delete resources that do not have certain tags and tag values (`--notags` option)
-* Keep resources that have certain tags and tag values (`--exception_tags` option)
+* `Dry Run mode`: Preview resources that match your criteria without actually performing any operations on them
+* `Slack notifications`: Get notifications on your Slack channel.
+* `InfluxDB support`: Receive data on the execution of the script by specifying a connection to InfluxDB
+* `Age-based filtering`: Filter resources based on their `age`.
+* `Tag-based filtering`: Choose to include or exclude resources with specific tags. (`--filter_tags` option)
+* `Delete untagged resources`: Option to delete resources that don't have specified tags. (`--notags` option)
+* `Keep tagged resources`: Option to keep resources that have specific tags. (`--exception_tags` option)
 
 Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
@@ -85,6 +86,7 @@ The script requires certain environment variables to be set in order to interact
 * `AZURE_RESOURCE_GROUP`: The name of the resource group in Azure to use.
 ### Slack (Optional)
 * `SLACK_BOT_TOKEN`: The API token for the Slack bot you want to use to receive notifications.
+### InfluxDB (Optional)
 * `INFLUXDB_TOKEN`: The API token for the InfluxDB you want to use to receive data.
 
 It's important to note that you only need to set the environment variables for the cloud providers you are interacting with. For example, if you are only using the script to delete resources on AWS, you would only need to set the `AWS_SECRET_ACCESS_KEY` and `AWS_ACCESS_KEY_ID` environment variables.
@@ -130,7 +132,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 * `slack_channel`: Use this option to specify a Slack channel to receive notifications about the execution of the script. Only works if specified.
-* `influxdb`: Use this option to specify a InfluxDB Connection to receive data about the execution of the script. Only works if specified.
+* `influxdb`: Use this option to specify InfluxDB connection details. The argument takes a dictionary value, with keys 'url', 'org', 'bucket', and an optional key 'resource_suffix'. Example usage: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC', 'resource_suffix': 'test'}. Only works if specified.
 
 
 # Examples

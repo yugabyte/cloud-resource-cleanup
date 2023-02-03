@@ -5,6 +5,8 @@ import ast
 import os
 from typing import Dict, List
 
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
 from slack_sdk import WebClient
 
 # Import classes for interacting with different resources across different clouds
@@ -43,8 +45,10 @@ class CRC:
         dry_run: bool,
         notags: dict,
         slack_client: object,
+        influxdb_client: object,
         project_id: str = None,
         slack_channel: str = None,
+        influxdb_bucket: str = None,
     ) -> None:
         """
         Initializes the object with required properties.
@@ -54,8 +58,10 @@ class CRC:
         dry_run (bool): flag to indicate whether the operation is a dry run or not
         notags (dict): a dictionary containing a list of resources that don't have any tags
         slack_client (object): the Slack client instance used to send messages
+        influxdb_client (object): the InfluxDB client instance used to send data
         project_id (str, optional): the ID of the project (mandatory for GCP)
         slack_channel (str, optional): the name of the Slack channel to send messages to
+        influxdb_bucket (str, optional): the name of the Influx DB Bucket to send messages to
         """
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
@@ -64,7 +70,9 @@ class CRC:
         self.project_id = project_id
         self.notags = notags
         self.slack_client = slack_client
+        self.influxdb_client = influxdb_client
         self.slack_channel = slack_channel
+        self.influxdb_bucket = influxdb_bucket
 
     def _delete_vm(self, vm, instance_state: List[str]):
         """
@@ -220,6 +228,29 @@ class CRC:
         msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
+    def write_influxdb(self, resource_name: str, resources: List[str]) -> None:
+        """
+        Writes data to InfluxDB.
+
+        Args:
+            resource_name (str): The name of the resource being written to InfluxDB.
+            resources (List[str]): A list of resources to be written to InfluxDB.
+        """
+        # Get the write API object from the InfluxDB client, with synchronous write options
+        write_api = self.influxdb_client.write_api(write_options=SYNCHRONOUS)
+
+        # Create a Point object with the resource name, tags for the names of the resources,
+        # and a field for the count of resources
+        point = (
+            Point(self.cloud)
+            .tag("resource", resource_name)
+            .tag("names", str(resources))
+            .field("count", len(resources))
+        )
+
+        # Write the Point object to the InfluxDB bucket
+        write_api.write(bucket=self.influxdb_bucket, record=point)
+
     def delete_vm(
         self,
         filter_tags: Dict[str, List[str]],
@@ -241,6 +272,11 @@ class CRC:
         if self.slack_client:
             self.notify_deleted_vm_via_slack(vm)
 
+        if self.influxdb_client:
+            self.write_influxdb(VMS, vm.get_deleted)
+            if self.cloud == "azure":
+                self.write_influxdb(NICS, vm.get_deleted_nic)
+
     def stop_vm(
         self,
         filter_tags: Dict[str, List[str]],
@@ -259,6 +295,9 @@ class CRC:
 
         if self.slack_client:
             self.notify_stopped_vm_via_slack(vm)
+
+        if self.influxdb_client:
+            self.write_influxdb(VMS, vm.get_stopped)
 
     def delete_ip(
         self,
@@ -286,6 +325,9 @@ class CRC:
         if self.slack_client:
             self.notify_deleted_ip_via_slack(ip)
 
+        if self.influxdb_client:
+            self.write_influxdb(IPS, ip.get_deleted)
+
     def delete_keypairs(
         self,
         name_regex: List[str],
@@ -309,6 +351,9 @@ class CRC:
         if self.slack_client:
             self.notify_deleted_keypair_via_slack(keypair)
 
+        if self.influxdb_client:
+            self.write_influxdb(KEYPAIRS, keypair.get_deleted)
+
     def delete_disks(
         self,
         filter_tags: Dict[str, List[str]],
@@ -330,8 +375,12 @@ class CRC:
 
         disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
         disk.delete()
+
         if self.slack_client:
             self.notify_deleted_disk_via_slack(disk)
+
+        if self.influxdb_client:
+            self.write_influxdb(DISKS, disk.get_deleted)
 
 
 def get_argparser():
@@ -462,6 +511,15 @@ def get_argparser():
         help="The Slack channel to send the notifications to. Example: --slack_channel testing",
     )
 
+    # Add Argument for InfluxDB
+    parser.add_argument(
+        "-i",
+        "--influxdb",
+        type=ast.literal_eval,
+        metavar="{'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC'}",
+        help="InfluxDB connection details in the form of a dictionary. Example: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC'}",
+    )
+
     return vars(parser.parse_args())
 
 
@@ -510,6 +568,38 @@ def are_values_of_dict_lists(name: str, value):
             is_valid_list(f"Value of {name} with key {key}", val)
 
 
+def _validate_influxdb_input(influxdb: dict, field: str):
+    """
+    Validates a required field in the InfluxDB input.
+
+    Args:
+        influxdb (dict): The InfluxDB input to validate.
+        field (str): The field that is required in the InfluxDB input.
+
+    Raises:
+        ValueError: If the required field is not present in the InfluxDB input.
+    """
+    if field not in influxdb:
+        raise ValueError(
+            f"The field '{field}' is required in the InfluxDB input, but was not found."
+        )
+
+
+def validate_influxdb_inputs(influxdb: dict) -> None:
+    """
+    Validates the required fields in the InfluxDB input.
+
+    Args:
+        influxdb (dict): The InfluxDB input to validate.
+
+    Raises:
+        ValueError: If any of the required fields are not present in the InfluxDB input.
+    """
+    _validate_influxdb_input(influxdb, "host")
+    _validate_influxdb_input(influxdb, "org")
+    _validate_influxdb_input(influxdb, "bucket")
+
+
 def main():
     """
     Main function to perform resource cleanup operations on the specified cloud(s) and resource(s).
@@ -530,13 +620,19 @@ def main():
     dry_run = args.get("dry_run")
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
+    influxdb = args.get("influxdb")
 
+    INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 
     slack_client = None
+    influxdb_client = None
 
     if slack_channel and not SLACK_BOT_TOKEN:
         raise EnvironmentError("SLACK_BOT_TOKEN is not set")
+
+    if influxdb and not INFLUXDB_TOKEN:
+        raise EnvironmentError("INFLUXDB_TOKEN is not set")
 
     # Validate operation_type and resources
     if operation_type == "stop" and resources != "vm":
@@ -561,13 +657,31 @@ def main():
     is_valid_list("name_regex", name_regex)
     is_valid_list("exception_regex", exception_regex)
     is_valid_dict("age", age)
+    is_valid_dict("influxdb", influxdb)
 
     if slack_channel:
         slack_client = WebClient(token=SLACK_BOT_TOKEN)
 
+    if influxdb:
+        validate_influxdb_inputs(influxdb)
+        influxdb_client = InfluxDBClient(
+            url=influxdb["url"],
+            token=INFLUXDB_TOKEN,
+            org=influxdb["org"],
+        )
+
     # Perform operations
     for cloud in clouds:
-        crc = CRC(cloud, dry_run, notags, slack_client, project_id, slack_channel)
+        crc = CRC(
+            cloud,
+            dry_run,
+            notags,
+            slack_client,
+            influxdb_client,
+            project_id,
+            slack_channel,
+            influxdb["bucket"],
+        )
         for resource in resources:
             if resource == "disk":
                 crc.delete_disks(filter_tags, exception_tags, age)

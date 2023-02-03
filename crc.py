@@ -72,8 +72,9 @@ class CRC:
         self.slack_client = slack_client
         self.influxdb_client = influxdb_client
         self.slack_channel = slack_channel
-        self.influxdb_bucket = influxdb_conn.get("bucket")
-        self.resource_suffix = influxdb_conn.get("resource_suffix")
+        if influxdb_conn:
+            self.influxdb_bucket = influxdb_conn.get("bucket")
+            self.resource_suffix = influxdb_conn.get("resource_suffix")
 
     def _delete_vm(self, vm, instance_state: List[str]):
         """

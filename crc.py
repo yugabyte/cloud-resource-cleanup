@@ -48,7 +48,7 @@ class CRC:
         influxdb_client: object,
         project_id: str = None,
         slack_channel: str = None,
-        influxdb_bucket: str = None,
+        influxdb_conn: dict = None,
     ) -> None:
         """
         Initializes the object with required properties.
@@ -72,7 +72,8 @@ class CRC:
         self.slack_client = slack_client
         self.influxdb_client = influxdb_client
         self.slack_channel = slack_channel
-        self.influxdb_bucket = influxdb_bucket
+        self.influxdb_bucket = influxdb_conn.get("bucket")
+        self.resource_suffix = influxdb_conn.get("resource_suffix")
 
     def _delete_vm(self, vm, instance_state: List[str]):
         """
@@ -241,10 +242,14 @@ class CRC:
 
         # Create a Point object with the resource name, tags for the names of the resources,
         # and a field for the count of resources
+
+        if self.resource_suffix:
+            resource_name = resource_name + "_" + self.resource_suffix
+
         point = (
             Point(self.cloud)
             .tag("resource", resource_name)
-            .tag("names", str(resources))
+            .field("names", str(resources))
             .field("count", len(resources))
         )
 
@@ -517,7 +522,7 @@ def get_argparser():
         "--influxdb",
         type=ast.literal_eval,
         metavar="{'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC'}",
-        help="InfluxDB connection details in the form of a dictionary. Example: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC'}",
+        help="InfluxDB connection details in the form of a dictionary. Example: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC', 'resource_suffix': 'test'}",
     )
 
     return vars(parser.parse_args())
@@ -680,7 +685,7 @@ def main():
             influxdb_client,
             project_id,
             slack_channel,
-            influxdb["bucket"],
+            influxdb,
         )
         for resource in resources:
             if resource == "disk":

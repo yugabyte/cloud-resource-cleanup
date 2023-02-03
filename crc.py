@@ -61,7 +61,7 @@ class CRC:
         influxdb_client (object): the InfluxDB client instance used to send data
         project_id (str, optional): the ID of the project (mandatory for GCP)
         slack_channel (str, optional): the name of the Slack channel to send messages to
-        influxdb_bucket (str, optional): the name of the Influx DB Bucket to send messages to
+        influxdb_conn (dict, optional): the Influx DB Connection string
         """
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
@@ -240,12 +240,11 @@ class CRC:
         # Get the write API object from the InfluxDB client, with synchronous write options
         write_api = self.influxdb_client.write_api(write_options=SYNCHRONOUS)
 
-        # Create a Point object with the resource name, tags for the names of the resources,
-        # and a field for the count of resources
-
         if self.resource_suffix:
             resource_name = resource_name + "_" + self.resource_suffix
 
+        # Create a Point object with the resource name, tags for the names of the resources,
+        # and a field for the count of resources
         point = (
             Point(self.cloud)
             .tag("resource", resource_name)

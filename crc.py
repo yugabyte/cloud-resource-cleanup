@@ -599,7 +599,7 @@ def validate_influxdb_inputs(influxdb: dict) -> None:
     Raises:
         ValueError: If any of the required fields are not present in the InfluxDB input.
     """
-    _validate_influxdb_input(influxdb, "host")
+    _validate_influxdb_input(influxdb, "url")
     _validate_influxdb_input(influxdb, "org")
     _validate_influxdb_input(influxdb, "bucket")
 

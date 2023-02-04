@@ -117,7 +117,7 @@ The script will log all deleted resources to a file called `crc.log` in the same
 # Usage
 To run the script, use the following command:
 ```
-python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age> --slack_channel <slack_channel>
+python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource <resource_name> --filter_tags <tags> --exception_tags <tags> --notags <tags> --age <age> --slack_channel <slack_channel> --influxdb <influxdb_connection_details>
 ```
 * `cloud`: Specify the cloud name (aws, azure, gcp or all). Required.
 * `project_id`: Required for gcp

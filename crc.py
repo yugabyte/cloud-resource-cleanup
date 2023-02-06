@@ -18,6 +18,7 @@ from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
+from crc.gcp.disk import Disk as GCP_Disk
 
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
@@ -364,6 +365,9 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        detach_age: Dict[str, int],
+        name_regex: List[str],
+        exception_regex: List[str],
     ):
         """
         Delete Disks that match the specified criteria.
@@ -373,13 +377,26 @@ class CRC:
         :param exception_tags: Dictionary of tags to exclude the disks.
         :param age: Dictionary of age conditions to filter the disks.
         """
-        if self.cloud != "azure":
+        if self.cloud not in ["azure", "gcp"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE. AWS, GCP clean the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported only on AZURE, GCP. AWS, GCP clean the NICs, Disks along with VM"
             )
-
-        disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
-        disk.delete()
+        if self.cloud == "azure":
+            disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
+            disk.delete()
+        if self.cloud == "gcp":
+            disk = GCP_Disk(
+                self.dry_run,
+                self.project_id,
+                filter_tags,
+                exception_tags,
+                age,
+                detach_age,
+                self.notags,
+                name_regex,
+                exception_regex,
+            )
+            disk.delete()
 
         if self.slack_client:
             self.notify_deleted_disk_via_slack(disk)
@@ -489,6 +506,14 @@ def get_argparser():
         type=ast.literal_eval,
         metavar="{'days': 3, 'hours': 12}",
         help="Age Threshold for resources. Age is not respected for IPs. Example: -a or --age {'days': 3, 'hours': 12}",
+    )
+
+    # Add Argument for Age Threshold
+    parser.add_argument(
+        "--detach-age",
+        type=ast.literal_eval,
+        metavar="{'days': 3, 'hours': 12}",
+        help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach-age {'days': 3, 'hours': 12}",
     )
 
     # Add Argument for Dry Run Mode
@@ -622,6 +647,7 @@ def main():
     name_regex = args.get("name_regex")
     exception_regex = args.get("exception_regex")
     age = args.get("age")
+    detach_age = args.get("detach_age")
     dry_run = args.get("dry_run")
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
@@ -662,6 +688,7 @@ def main():
     is_valid_list("name_regex", name_regex)
     is_valid_list("exception_regex", exception_regex)
     is_valid_dict("age", age)
+    is_valid_dict("detach_age", detach_age)
     is_valid_dict("influxdb", influxdb)
 
     if slack_channel:
@@ -689,7 +716,14 @@ def main():
         )
         for resource in resources:
             if resource == "disk":
-                crc.delete_disks(filter_tags, exception_tags, age)
+                crc.delete_disks(
+                    filter_tags,
+                    exception_tags,
+                    age,
+                    detach_age,
+                    name_regex,
+                    exception_regex
+                )
             elif resource == "ip":
                 crc.delete_ip(
                     filter_tags,

@@ -167,7 +167,7 @@ python crc.py --cloud all --resource vm --age {'days': 2} --notags {'test_task':
 * Use the `filter_tags`, `exception_tags` and `notags` options in JSON format (`Dict[str, List[str]]`)
 * Use the `resource_states`, `name_regex`, and `exception_regex` options in list format (`List[str]`)
 * When giving a value to the `resource_states` parameter, be aware that different cloud libraries have different formats. (For eg. `running` state for AWS, AZU but `RUNNING` for GCP)
-* Use the `age` option in JSON format. Example: `{"days": 60}` (`Dict[str, int]`)
+* Use the `age` and `influxdb` option in JSON format. Example: `{"days": 60}` (`Dict[str, int]`)
 
 # Need Help?
 

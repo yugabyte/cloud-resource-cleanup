@@ -45,7 +45,7 @@ In addition to these features, `cloud-resource-cleanup` also includes the follow
 * `Slack notifications`: Get notifications on your Slack channel.
 * `InfluxDB support`: Receive data on the execution of the script by specifying a connection to InfluxDB
 * `Age-based filtering`: Filter resources based on their `age`.
-* `Tag-based filtering`: Choose to include or exclude resources with specific tags. (`--filter_tags` option)
+* `Tag-based filtering`: Choose to include resources with specific tags. (`--filter_tags` option)
 * `Delete untagged resources`: Option to delete resources that don't have specified tags. (`--notags` option)
 * `Keep tagged resources`: Option to keep resources that have specific tags. (`--exception_tags` option)
 

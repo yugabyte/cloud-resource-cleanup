@@ -112,9 +112,7 @@ class Disk(Service):
         :return: True if the disk is older than the specified age, False otherwise
         :rtype: bool
         """
-
         timestamp = disk.last_detach_timestamp
-        timestamp = timestamp[0:-3] + timestamp[-2:]
         detached_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().replace(tzinfo=detached_timestamp.tzinfo)
         return self.is_old(self.detach_age, dt, detached_timestamp)

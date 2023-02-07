@@ -244,7 +244,6 @@ class VM(Service):
         :rtype: bool
         """
         timestamp = instance.creation_timestamp
-        timestamp = timestamp[0:-3] + timestamp[-2:]
         created_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().replace(tzinfo=created_timestamp.tzinfo)
         return self.is_old(self.age, dt, created_timestamp)

@@ -160,9 +160,7 @@ class VM(Service):
                     ][0]["Attachment"]["AttachTime"]
                     if self.is_old(
                         self.age,
-                        datetime.datetime.now().replace(
-                            tzinfo=network_interface_attached_time.tzinfo
-                        ),
+                        datetime.datetime.now().astimezone(network_interface_attached_time.tzinfo),
                         network_interface_attached_time,
                     ):
                         instance_ids.append(instance_id)

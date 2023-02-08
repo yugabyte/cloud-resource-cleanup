@@ -107,7 +107,7 @@ class Disk(Service):
             # Check if the disk matches the specified filter tags and not exception tags
             if filter_tags_match and not exception_tags_match and not no_tags_match:
                 # Get the current time and compare it to the disk's time created
-                dt = datetime.datetime.now().replace(tzinfo=disk.time_created.tzinfo)
+                dt = datetime.datetime.now().astimezone(disk.time_created.tzinfo)
                 if self.is_old(self.age, dt, disk.time_created):
                     # Check if the disk is in a state that is allowed for deletion
                     if any(

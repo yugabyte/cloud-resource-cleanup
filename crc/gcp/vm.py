@@ -245,7 +245,7 @@ class VM(Service):
         """
         timestamp = instance.creation_timestamp
         created_timestamp = datetime.strptime(timestamp, self.time_format)
-        dt = datetime.now().replace(tzinfo=created_timestamp.tzinfo)
+        dt = datetime.now().astimezone(created_timestamp.tzinfo)
         return self.is_old(self.age, dt, created_timestamp)
 
     def delete(

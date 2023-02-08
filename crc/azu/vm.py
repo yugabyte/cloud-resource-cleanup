@@ -127,7 +127,7 @@ class VM(Service):
 
         for vm in vms:
             if self._should_perform_operation_on_vm(vm):
-                dt = datetime.datetime.now().replace(tzinfo=vm.time_created.tzinfo)
+                dt = datetime.datetime.now().astimezone(vm.time_created.tzinfo)
 
                 if self.is_old(self.age, dt, vm.time_created):
                     try:

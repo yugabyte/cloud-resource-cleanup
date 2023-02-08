@@ -104,7 +104,7 @@ class KeyPairs(Service):
                     continue
                 keypair_name = keypair["KeyName"]
                 keypair_create_time = keypair["CreateTime"]
-                dt = datetime.datetime.now().replace(tzinfo=keypair_create_time.tzinfo)
+                dt = datetime.datetime.now().astimezone(keypair_create_time.tzinfo)
 
                 # Check if keypair name matches specified regex
                 match_name_regex = not self.name_regex or any(

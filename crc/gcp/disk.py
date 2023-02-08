@@ -114,7 +114,7 @@ class Disk(Service):
         """
         timestamp = disk.last_detach_timestamp
         detached_timestamp = datetime.strptime(timestamp, self.time_format)
-        dt = datetime.now().replace(tzinfo=detached_timestamp.tzinfo)
+        dt = datetime.now().astimezone(detached_timestamp.tzinfo)
         return self.is_old(self.detach_age, dt, detached_timestamp)
 
     def _should_skip_disk(self, disk):

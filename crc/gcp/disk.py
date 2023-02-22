@@ -49,6 +49,7 @@ class Disk(Service):
         notags: Dict[str, List[str]],
         name_regex: List[str],
         exception_regex: List[str],
+        slack_notify_users: bool,
     ) -> None:
         """
         Initialize the Disk management class.
@@ -74,7 +75,6 @@ class Disk(Service):
         :type exception_regex: List[str]
         """
         super().__init__()
-        self.disk_names_to_delete = []
         self.dry_run = dry_run
         self.project_id = project_id
         self.filter_tags = filter_labels
@@ -84,6 +84,11 @@ class Disk(Service):
         self.notags = notags
         self.name_regex = name_regex
         self.exception_regex = exception_regex
+        self.slack_notify_users = slack_notify_users
+        if self.slack_notify_users:
+            self.disk_names_to_delete = {}
+        else:
+            self.disk_names_to_delete = []
 
     @property
     def get_deleted(self):
@@ -165,7 +170,6 @@ class Disk(Service):
                     if not disk.last_detach_timestamp:
                         continue
                     if self._is_old_disk_detach(disk):
-                        #print(disk.name)
                         try:
                             if not self.dry_run:
                                 service.disks().delete(
@@ -174,7 +178,20 @@ class Disk(Service):
                                     disk=disk.name,
                                 ).execute()
                                 logging.info(f"Deleting disk {disk.name}")
-                            self.disk_names_to_delete.append(disk.name)
+                            if self.slack_notify_users:
+                                if 'yb_owner' in disk.labels:
+                                    if disk.labels['yb_owner'] in self.disk_names_to_delete:
+                                        self.disk_names_to_delete[disk.labels['yb_owner']].append(disk.name)
+                                    else:
+                                        self.disk_names_to_delete[disk.labels['yb_owner']] = [disk.name]
+                                else:
+                                    if 'not_tagged' not in self.disk_names_to_delete:
+                                        self.disk_names_to_delete['not_tagged'] = [disk.name]
+                                    else:
+                                        self.disk_names_to_delete['not_tagged'].append(disk.name)
+                            else:
+                                self.disk_names_to_delete.append(disk.name)
+
                         except Exception as e:
                             # log the error message if an exception occurs
                             logging.error(

@@ -146,8 +146,13 @@ class CRC:
             f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
         )
 
+    def slack_lookup_user_by_email(self, email):
+
+        user_info = self.slack_client.users_lookupByEmail(email=email)
+        return user_info["user"]["id"]
+
     def get_msg(
-        self, resource: str, operation_type: str, operated_list: List[str]
+        self, resource: str, operation_type: str, operated_list: object
     ) -> str:
         """
         Returns a message to be sent to the Slack channel
@@ -161,12 +166,29 @@ class CRC:
         :return: Message to be sent to the Slack channel
         :rtype: str
         """
-        operated_list_length = len(operated_list)
+        if type(operated_list) == list:
+            operated_list_length = len(operated_list)
 
-        if self.dry_run:
-            return f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+            if self.dry_run:
+                return f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 
-        return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+            return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+
+        if type(operated_list) == dict:
+            operated_list_length = 0
+            msg = ""
+            for key in operated_list.keys():
+                operated_list_length += len(operated_list[key])
+            if self.dry_run:
+                msg = f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n"
+            else:
+                msg = f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n"
+
+            for key in operated_list.keys():
+                member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
+                msg += f" <@{member_id}> disks `{operated_list[key]}`"
+            print(msg)
+            return msg
 
     def notify_deleted_nic_via_slack(self, nic: object):
         """
@@ -229,7 +251,7 @@ class CRC:
         :type vm: object
         """
         msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg, link_names=True)
 
     def write_influxdb(self, resource_name: str, resources: List[str]) -> None:
         """
@@ -368,6 +390,7 @@ class CRC:
         detach_age: Dict[str, int],
         name_regex: List[str],
         exception_regex: List[str],
+        slack_notify_users,
     ):
         """
         Delete Disks that match the specified criteria.
@@ -395,6 +418,7 @@ class CRC:
                 self.notags,
                 name_regex,
                 exception_regex,
+                slack_notify_users,
             )
             disk.delete()
 
@@ -541,6 +565,13 @@ def get_argparser():
         help="The Slack channel to send the notifications to. Example: --slack_channel testing",
     )
 
+   # Add Argument for Slack Channel
+    parser.add_argument(
+        "--slack_notify_users",
+        action="store_true",
+        help="If true notify users in the slack channel, Currently only for GCP disk",
+    )
+
     # Add Argument for InfluxDB
     parser.add_argument(
         "-i",
@@ -651,6 +682,7 @@ def main():
     dry_run = args.get("dry_run")
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
+    slack_notify_users = args.get("slack_notify_users")
     influxdb = args.get("influxdb")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
@@ -722,7 +754,8 @@ def main():
                     age,
                     detach_age,
                     name_regex,
-                    exception_regex
+                    exception_regex,
+                    slack_notify_users,
                 )
             elif resource == "ip":
                 crc.delete_ip(

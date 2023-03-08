@@ -13,6 +13,7 @@ from slack_sdk import WebClient
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
 from crc.aws.vm import VM as AWS_VM
+from crc.aws.vpc import VPC
 from crc.azu.disk import Disk
 from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
@@ -387,6 +388,21 @@ class CRC:
         if self.influxdb_client:
             self.write_influxdb(DISKS, disk.get_deleted)
 
+    def delete_vpc(
+        self,
+        filter_tags: Dict[str, List[str]],
+        exception_tags: Dict[str, List[str]]
+    ):
+        """
+        Delete virtual machines that match the specified criteria.
+
+        :param filter_tags: Dictionary of tags to filter the VM.
+        :param exception_tags: Dictionary of tags to exclude the VM.
+        :param age: Dictionary of age conditions to filter the VM.
+        :param instance_state: List of instance states that should be deleted.
+        """
+        vpc = VPC(self.dry_run, filter_tags, exception_tags, self.notags)
+        vpc.delete()
 
 def get_argparser():
     """
@@ -414,7 +430,7 @@ def get_argparser():
         "-r",
         "--resource",
         default="all",
-        choices=["disk", "ip", "keypair", "vm", "all"],
+        choices=["disk", "ip", "keypair", "vm", "vpc", "all"],
         metavar="RESOURCE",
         help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
     )
@@ -709,6 +725,8 @@ def main():
                     )
                 elif operation_type == "stop":
                     crc.stop_vm(filter_tags, exception_tags, age)
+            elif resource == "vpc":
+                crc.delete_vpc(filter_tags, exception_tags)
 
 
 if __name__ == "__main__":

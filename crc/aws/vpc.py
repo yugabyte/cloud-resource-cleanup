@@ -212,7 +212,7 @@ class VPC(Service):
                 Filters=vpc_filter
             )
 
-        logging.info(describe_vpcs_response)
+        #logging.info(describe_vpcs_response)
         
         ec2 = boto3.resource('ec2')
         ec2client = ec2.meta.client

@@ -205,6 +205,17 @@ class VPC(Service):
         """
         # Renaming filter to vpc_filter for better understanding
         vpc_filter = self._get_filter()
+        client = boto3.client(self.service_name, region_name="eu-west-3")
+            
+            # Renaming vpc_details to describe_vpcs_response for better understanding
+        describe_vpcs_response = client.describe_vpcs(
+                Filters=vpc_filter
+            )
+
+        logging.info(describe_vpcs_response)
+
+        import sys
+        sys.exit(1)
         for region in get_all_regions(self.service_name, self.default_region_name):
             client = boto3.client(self.service_name, region_name=region)
             

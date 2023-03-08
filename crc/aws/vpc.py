@@ -213,6 +213,11 @@ class VPC(Service):
             )
 
         logging.info(describe_vpcs_response)
+        
+        ec2 = boto3.resource('ec2')
+        ec2client = ec2.meta.client
+        vpc = ec2.Vpc("vpc-009e199c03408bd40")
+        logging.info(vpc)
 
         import sys
         sys.exit(1)

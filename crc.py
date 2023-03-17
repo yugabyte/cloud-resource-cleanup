@@ -185,9 +185,8 @@ class CRC:
                 msg = f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n"
 
             for key in operated_list.keys():
-                member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
-                msg += f" <@{member_id}> disks `{operated_list[key]}`"
-            print(msg)
+                #member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
+                msg += f" <@{key}> disks `{operated_list[key]}`"
             return msg
 
     def notify_deleted_nic_via_slack(self, nic: object):

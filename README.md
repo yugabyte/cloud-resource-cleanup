@@ -160,6 +160,11 @@ python crc.py --cloud all --resource vm --filter_tags "{'test_task': ['stress-te
 ```
 python crc.py --cloud all --resource vm --age "{'days': 2}" --notags "{'test_task': []}" --dry_run
 ```
+
+6. To Delete AWS VPCs and all attached resources
+```
+python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test', 'perf-test']}" --notags "{'test_owner': []}"
+```
 # Notes
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
 * Try using the dry run mode feature to avoid unfortunate circumstances.
@@ -168,6 +173,7 @@ python crc.py --cloud all --resource vm --age "{'days': 2}" --notags "{'test_tas
 * Use the `resource_states`, `name_regex`, and `exception_regex` options in list format (`List[str]`)
 * When giving a value to the `resource_states` parameter, be aware that different cloud libraries have different formats. (For eg. `running` state for AWS, AZU but `RUNNING` for GCP)
 * Use the `age` and `influxdb` option in JSON format. Example: `{"days": 60}` (`Dict[str, int]`)
+* VPCs support only `Delete` operation and do not respect `age` threshold.
 
 # Need Help?
 

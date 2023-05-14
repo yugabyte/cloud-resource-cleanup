@@ -394,12 +394,10 @@ class CRC:
         exception_tags: Dict[str, List[str]]
     ):
         """
-        Delete virtual machines that match the specified criteria.
+        Delete VPCs that match the specified criteria.
 
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
-        :param age: Dictionary of age conditions to filter the VM.
-        :param instance_state: List of instance states that should be deleted.
         """
         vpc = VPC(self.dry_run, filter_tags, exception_tags, self.notags)
         vpc.delete()

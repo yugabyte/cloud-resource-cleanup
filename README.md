@@ -138,27 +138,32 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 # Examples
 1. To delete all running AWS VMs that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
 ```
-python crc.py --cloud aws --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 3, 'hours': 12}
+python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
 ```
 
 2. To stop all Azure VMs that are older than 2 days and have the tag `test_task` with the value `stress-test`:
 ```
-python crc.py --cloud azure --resource vm --filter_tags {'test_task': ['stress-test']} --age {'days': 2} --operation_type stop
+python crc.py --cloud azure --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 2}" --operation_type stop
 ```
 
 3. To delete all GCP disks that are older than 2 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':
 ```
-python crc.py --cloud gcp --project_id test_project --resource disk --filter_tags {'test_task': ['stress-test']} --age {'days': 2}
+python crc.py --cloud gcp --project_id test_project --resource disk --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 2}"
 ```
 
 4. To stop all VMs across all clouds that have the tag `test_task` with the value `stress-test` and `perf-test` and do not have the tag `test_owner`:
 ```
-python crc.py --cloud all --resource vm --filter_tags {'test_task': ['stress-test', 'perf-test']} --notags {'test_owner': []} --operation_type stop
+python crc.py --cloud all --resource vm --filter_tags "{'test_task': ['stress-test', 'perf-test']}" --notags "{'test_owner': []}" --operation_type stop
 ```
 
 5. To perform a dry run of the script and list all VMs across all clouds that have been created in the last 2 days and do not have the tag `test_task`:
 ```
-python crc.py --cloud all --resource vm --age {'days': 2} --notags {'test_task': []} --dry_run
+python crc.py --cloud all --resource vm --age "{'days': 2}" --notags "{'test_task': []}" --dry_run
+```
+
+6. To Delete AWS VPCs and all attached resources
+```
+python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test', 'perf-test']}" --notags "{'test_owner': []}"
 ```
 # Notes
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
@@ -168,6 +173,7 @@ python crc.py --cloud all --resource vm --age {'days': 2} --notags {'test_task':
 * Use the `resource_states`, `name_regex`, and `exception_regex` options in list format (`List[str]`)
 * When giving a value to the `resource_states` parameter, be aware that different cloud libraries have different formats. (For eg. `running` state for AWS, AZU but `RUNNING` for GCP)
 * Use the `age` and `influxdb` option in JSON format. Example: `{"days": 60}` (`Dict[str, int]`)
+* VPCs support only `Delete` operation and do not respect `age` threshold.
 
 # Need Help?
 

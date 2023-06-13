@@ -150,9 +150,19 @@ class CRC:
         )
 
     def slack_lookup_user_by_email(self, email):
-
-        user_info = self.slack_client.users_lookupByEmail(email=email)
-        return user_info["user"]["id"]
+        try: 
+            user_info = self.slack_client.users_lookupByEmail(email=email)
+            return user_info["user"]["id"]
+        except:
+            return "not_found"
+        
+    def get_user_groups_list(self):
+        try:
+            user_groups = self.slack_client.usergroups_list()
+            return user_groups["usergroups"]
+        except:
+            print("Something Went Wront! Could not get user_groups.")
+            return "not_found"
 
     def get_msg(
         self, resource: str, operation_type: str, operated_list: Union[list, dict]
@@ -180,6 +190,7 @@ class CRC:
         if type(operated_list) == dict:
             operated_list_length = 0
             msg = ""
+            user_groups = self.get_user_groups_list()
             for key in operated_list.keys():
                 operated_list_length += len(operated_list[key])
             if self.dry_run:
@@ -189,7 +200,18 @@ class CRC:
 
             for key in operated_list.keys():
                 member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
-                msg += f" <@{member_id}> disks `{operated_list[key]}`"
+                if member_id == "not_found":
+                    for user_group in user_groups:
+                        if user_group['handle'] == key:
+                            member_id = user_group['id']
+                            break
+                        
+                    if member_id == "not_found":
+                        msg += f"• *{key}* disks `{operated_list[key]}`\n\n"
+                    else:
+                        msg += f"• <!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
+                else:
+                    msg += f"• <@{member_id}> disks `{operated_list[key]}`\n\n"
             return msg
 
     def notify_deleted_nic_via_slack(self, nic: object):
@@ -591,10 +613,9 @@ def get_argparser():
 
     # Add Argument for label that need to be used for getting username
     parser.add_argument(
-        "-m",
         "--slack_user_label",
         metavar="SLACK_USER_LABEL",
-        help="The the gcp label that can be used to get username. Example: --slack_channel testing",
+        help="The the gcp label that can be used to get username. Example: --slack_user_label yb_owner",
     )
 
     # Add Argument for InfluxDB
@@ -731,6 +752,11 @@ def main():
     if resources == "all" and clouds != "all":
         raise ValueError(
             "All Resources cleanup is supported only with all Clouds. Format: --cloud all --resources all"
+        )
+    
+    if slack_notify_users and slack_user_label == None:
+        raise ValueError(
+            "--slack_user_label is mandatory when passing --slack_notify_user"
         )
 
     # Process Cloud

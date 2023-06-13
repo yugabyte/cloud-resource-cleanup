@@ -542,7 +542,7 @@ def get_argparser():
         "-a",
         "--age",
         type=ast.literal_eval,
-        metavar="{'days': 3, 'hours': 12}",
+        metavar="{'days': value1, 'hours': value2}",
         help="Age Threshold for resources. Age is not respected for IPs. Example: -a or --age {'days': 3, 'hours': 12}",
     )
 
@@ -550,7 +550,7 @@ def get_argparser():
     parser.add_argument(
         "--detach-age",
         type=ast.literal_eval,
-        metavar="{'days': 3, 'hours': 12}",
+        metavar="{'days': value1, 'hours': value2}",
         help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach-age {'days': 3, 'hours': 12}",
     )
 

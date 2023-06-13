@@ -58,21 +58,13 @@ class Disk(Service):
         In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
         and also filters Elastic IPs based on absence of certain tags, but will not perform any operations on them.
         :param project_id: ID of the Google Cloud project.
-        :type project_id: str
         :param filter_labels: Dictionary of labels and their values used to filter Disks for deletion.
-        :type filter_labels: Dict[str, List[str]]
         :param exception_labels: Dictionary of labels and their values used to exclude Disks from deletion.
-        :type exception_labels: Dict[str, List[str]]
         :param age: Age in days of Disks that will be deleted.
-        :type age: int
         :param detach_age: Age in days the Disks last got detached .
-        :type detach_age: int
         :param notags: dictionary containing key-value pairs as filter tags to exclude disks which do not have these tags
-        :type notags: Dict[str, List[str]]
         :param name_regex: A list of regular expressions for incuding disks.
-        :type name_regex: List[str]
         :param exception_regex: A list of regular expressions for excluding disks.
-        :type exception_regex: List[str]
         """
         super().__init__()
         self.dry_run = dry_run

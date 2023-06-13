@@ -21,6 +21,8 @@ from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
 from crc.gcp.disk import Disk as GCP_Disk
 
+from typing import Union
+
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
 RESOURCES = ["disk", "ip", "keypair", "vm"]
@@ -153,7 +155,7 @@ class CRC:
         return user_info["user"]["id"]
 
     def get_msg(
-        self, resource: str, operation_type: str, operated_list: object
+        self, resource: str, operation_type: str, operated_list: Union[list, dict]
     ) -> str:
         """
         Returns a message to be sent to the Slack channel
@@ -186,7 +188,6 @@ class CRC:
                 msg = f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n"
 
             for key in operated_list.keys():
-                #member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
                 msg += f" <@{key}> disks `{operated_list[key]}`"
             return msg
 
@@ -390,7 +391,7 @@ class CRC:
         detach_age: Dict[str, int],
         name_regex: List[str],
         exception_regex: List[str],
-        slack_notify_users,
+        slack_notify_users: bool,
     ):
         """
         Delete Disks that match the specified criteria.
@@ -402,23 +403,23 @@ class CRC:
         """
         if self.cloud not in ["azure", "gcp"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE, GCP. AWS, GCP clean the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported only on AZURE, and GCP. AWS clean the NICs, Disks along with VM"
             )
         if self.cloud == "azure":
             disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
             disk.delete()
         if self.cloud == "gcp":
             disk = GCP_Disk(
-                self.dry_run,
-                self.project_id,
-                filter_tags,
-                exception_tags,
-                age,
-                detach_age,
-                self.notags,
-                name_regex,
-                exception_regex,
-                slack_notify_users,
+                dry_run = self.dry_run,
+                project_id = self.project_id,
+                filter_labels = filter_tags,
+                exception_labels = exception_tags,
+                age = age,
+                detach_age = detach_age,
+                notags = self.notags,
+                name_regex = name_regex,
+                exception_regex = exception_regex,
+                slack_notify_users = slack_notify_users,
             )
             disk.delete()
 
@@ -582,7 +583,7 @@ def get_argparser():
     parser.add_argument(
         "--slack_notify_users",
         action="store_true",
-        help="If true notify users in the slack channel, Currently only for GCP disk",
+        help="If true notify users in the Slack channel, currently only for GCP disk",
     )
 
     # Add Argument for InfluxDB

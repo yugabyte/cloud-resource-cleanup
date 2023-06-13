@@ -7,6 +7,9 @@ LOG_FORMATTER = (
     "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
 )
 
+def create_directory(filename: str):
+    os.mkdir(os.path.dirname(os.path.abspath(filename)))
+
 
 def init_logging(filename: str, log_level: str = "debug"):
     """
@@ -25,8 +28,8 @@ def init_logging(filename: str, log_level: str = "debug"):
     formatter = logging.Formatter(LOG_FORMATTER)
 
     # Create log directory in script path if not found
-    if not os.path.exists(os.path.dirname(os.path.abspath(filename))):
-        os.mkdir(os.path.dirname(os.path.abspath(filename)))
+    if not create_directory(filename):
+        create_directory(filename)
 
     # Create file handler which logs debug messages to a log file.
     fh = logging.FileHandler(filename, mode="w")

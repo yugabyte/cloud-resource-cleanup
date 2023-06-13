@@ -164,8 +164,8 @@ class CRC:
         :type resource: str
         :param operation_type: Operation type (e.g. "Deleted", "Stopped")
         :type operation_type: str
-        :param operated_list: List of operated resources
-        :type operated_list: list
+        :param operated_list: List or Dict of operated resources
+        :type operated_list: Union[list, dict]
         :return: Message to be sent to the Slack channel
         :rtype: str
         """

@@ -50,6 +50,7 @@ class Disk(Service):
         name_regex: List[str],
         exception_regex: List[str],
         slack_notify_users: bool,
+        slack_user_label: str
     ) -> None:
         """
         Initialize the Disk management class.
@@ -77,6 +78,7 @@ class Disk(Service):
         self.name_regex = name_regex
         self.exception_regex = exception_regex
         self.slack_notify_users = slack_notify_users
+        self.slack_user_label = slack_user_label
         if self.slack_notify_users:
             self.disk_names_to_delete = {}
         else:
@@ -171,11 +173,11 @@ class Disk(Service):
                                 ).execute()
                                 logging.info(f"Deleting disk {disk.name}")
                             if self.slack_notify_users:
-                                if 'yb_owner' in disk.labels:
-                                    if disk.labels['yb_owner'] in self.disk_names_to_delete:
-                                        self.disk_names_to_delete[disk.labels['yb_owner']].append(disk.name)
+                                if self.slack_user_label in disk.labels:
+                                    if disk.labels[self.slack_user_label] in self.disk_names_to_delete:
+                                        self.disk_names_to_delete[disk.labels[self.slack_user_label]].append(disk.name)
                                     else:
-                                        self.disk_names_to_delete[disk.labels['yb_owner']] = [disk.name]
+                                        self.disk_names_to_delete[disk.labels[self.slack_user_label]] = [disk.name]
                                 else:
                                     if 'not_tagged' not in self.disk_names_to_delete:
                                         self.disk_names_to_delete['not_tagged'] = [disk.name]

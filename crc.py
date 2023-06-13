@@ -392,6 +392,7 @@ class CRC:
         name_regex: List[str],
         exception_regex: List[str],
         slack_notify_users: bool,
+        slack_user_label: str
     ):
         """
         Delete Disks that match the specified criteria.
@@ -420,6 +421,7 @@ class CRC:
                 name_regex = name_regex,
                 exception_regex = exception_regex,
                 slack_notify_users = slack_notify_users,
+                slack_user_label = slack_user_label
             )
             disk.delete()
 
@@ -586,6 +588,14 @@ def get_argparser():
         help="If true notify users in the Slack channel, currently only for GCP disk",
     )
 
+    # Add Argument for label that need to be used for getting username
+    parser.add_argument(
+        "-m",
+        "--slack_user_label",
+        metavar="SLACK_USER_LABEL",
+        help="The the gcp label that can be used to get username. Example: --slack_channel testing",
+    )
+
     # Add Argument for InfluxDB
     parser.add_argument(
         "-i",
@@ -697,6 +707,7 @@ def main():
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
     slack_notify_users = args.get("slack_notify_users")
+    slack_user_label = args.get("slack_user_label")
     influxdb = args.get("influxdb")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
@@ -770,6 +781,7 @@ def main():
                     name_regex,
                     exception_regex,
                     slack_notify_users,
+                    slack_user_label
                 )
             elif resource == "ip":
                 crc.delete_ip(

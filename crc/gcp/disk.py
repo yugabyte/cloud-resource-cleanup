@@ -102,7 +102,7 @@ class Disk(Service):
         logging.info(f"count of items in disk_names_to_delete: {count}")
         return count
 
-    def _is_old_disk_detach(self, disk):
+    def _is_disk_older_than_detach_age(self, disk):
         """
         Check if the disk is older than the specified age
 
@@ -163,7 +163,7 @@ class Disk(Service):
                         continue
                     if not disk.last_detach_timestamp:
                         continue
-                    if self._is_old_disk_detach(disk):
+                    if self._is_disk_older_than_detach_age(disk):
                         try:
                             if not self.dry_run:
                                 service.disks().delete(
@@ -195,7 +195,7 @@ class Disk(Service):
                 logging.warning(f"No GCP disk to delete.")
 
             if not self.dry_run:
-                logging.info(
+                logging.warning(
                     f"number of GCP disks deleted: {len(self.disk_names_to_delete)}"
                 )
                 logging.warning(

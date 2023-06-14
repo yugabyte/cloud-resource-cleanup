@@ -150,6 +150,13 @@ class CRC:
         )
 
     def slack_lookup_user_by_email(self, email):
+        """
+        Get the Slack User Id by email
+
+        :param email: String to search the user by email in Slack
+        :return: User Id
+        :rtype: str
+        """
         try: 
             user_info = self.slack_client.users_lookupByEmail(email=email)
             return user_info["user"]["id"]
@@ -157,6 +164,11 @@ class CRC:
             return "not_found"
         
     def get_user_groups_list(self):
+        """
+        Get the Slack User Groups Lists
+        :return: User Groups List
+        :rtype: list
+        """
         try:
             user_groups = self.slack_client.usergroups_list()
             return user_groups["usergroups"]
@@ -174,7 +186,7 @@ class CRC:
         :type resource: str
         :param operation_type: Operation type (e.g. "Deleted", "Stopped")
         :type operation_type: str
-        :param operated_list: List or Dict of operated resources
+        :param operated_list: List or Dict of operated resources. Dict if slack_notify_users is true else list.
         :type operated_list: Union[list, dict]
         :return: Message to be sent to the Slack channel
         :rtype: str
@@ -424,10 +436,15 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
         :param age: Dictionary of age conditions to filter the disks.
+        :param detach_age: Dictionary of detach age
+        :param name_regex: List of regex patterns to filter the disks.
+        :param exception_regex: List of regex patterns to exclude the disks.
+        :param slack_notify_users: Bool to ping the users/usergroups in the slack ping.
+        :param slack_user_label: String to lookup for the disks by matching disk label.
         """
         if self.cloud not in ["azure", "gcp"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE, and GCP. AWS clean the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported only on AZURE and GCP. AWS cleans the NICs, Disks along with VM"
             )
         if self.cloud == "azure":
             disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
@@ -573,10 +590,10 @@ def get_argparser():
 
     # Add Argument for Age Threshold
     parser.add_argument(
-        "--detach-age",
+        "--detach_age",
         type=ast.literal_eval,
         metavar="{'days': value1, 'hours': value2}",
-        help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach-age {'days': 3, 'hours': 12}",
+        help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach_age {'days': 3, 'hours': 12}",
     )
 
     # Add Argument for Dry Run Mode
@@ -615,7 +632,7 @@ def get_argparser():
     parser.add_argument(
         "--slack_user_label",
         metavar="SLACK_USER_LABEL",
-        help="The the gcp label that can be used to get username. Example: --slack_user_label yb_owner",
+        help="The gcp label that can be used to get username. Example: --slack_user_label owner",
     )
 
     # Add Argument for InfluxDB
@@ -754,7 +771,7 @@ def main():
             "All Resources cleanup is supported only with all Clouds. Format: --cloud all --resources all"
         )
     
-    if slack_notify_users and slack_user_label == None:
+    if slack_notify_users and not slack_user_label:
         raise ValueError(
             "--slack_user_label is mandatory when passing --slack_notify_user"
         )

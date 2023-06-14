@@ -35,6 +35,7 @@ We support below Cloud Providers:
   * Delete Orphan public IPs
   * Stop VMs
 * GCP
+  * Delete Orphan Disks
   * Delete Orphan IPs
   * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
@@ -132,6 +133,9 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 * `slack_channel`: Use this option to specify a Slack channel to receive notifications about the execution of the script. Only works if specified.
+* `detach_age`: Use this option to specify the detached age for filtering GCP Disks. This option only works for GCP disks deletions.
+* `slack_notify_users`: Use this option to tag the user in the Slack notification. It is mandatory to pass `--slack_user_label` with this flag. This option only works for GCP disks deletions.
+* `slack_user_label`: Use this option to specify the label to look up in the GCP disks. This option only works for GCP disks deletions.
 * `influxdb`: Use this option to specify InfluxDB connection details. The argument takes a dictionary value, with keys 'url', 'org', 'bucket', and an optional key 'resource_suffix'. Example usage: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC', 'resource_suffix': 'test'}. Only works if specified.
 
 
@@ -148,7 +152,7 @@ python crc.py --cloud azure --resource vm --filter_tags "{'test_task': ['stress-
 
 3. To delete all GCP disks that are older than 2 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':
 ```
-python crc.py --cloud gcp --project_id test_project --resource disk --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 2}"
+python crc.py --cloud gcp --project_id test_project --resource disk --filter_tags "{'test_task': ['stress-test']}" --detach_age "{'days': 14}"
 ```
 
 4. To stop all VMs across all clouds that have the tag `test_task` with the value `stress-test` and `perf-test` and do not have the tag `test_owner`:

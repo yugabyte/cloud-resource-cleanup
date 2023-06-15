@@ -150,7 +150,7 @@ python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-te
 python crc.py --cloud azure --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 2}" --operation_type stop
 ```
 
-3. To delete all GCP disks that are older than 2 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':
+3. To delete all GCP disks that are older than 14 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':
 ```
 python crc.py --cloud gcp --project_id test_project --resource disk --filter_tags "{'test_task': ['stress-test']}" --detach_age "{'days': 14}"
 ```

@@ -175,9 +175,63 @@ class CRC:
         except:
             print("Something Went Wront! Could not get user_groups.")
             return "not_found"
+        
+    def ping_on_slack(self, resource: str, operation_type: str, operated_list: dict):
+        """
+        Pings individuals 1:1 and groups/untagged into the channel on the Slack 
+
+        :param resource: Cloud resource type (e.g. "nics", "vms", "ips", "keypairs", "disks")
+        :type resource: str
+        :param operation_type: Operation type (e.g. "Deleted", "Stopped")
+        :type operation_type: str
+        :param operated_list: Dict of operated resources.
+        :type operated_list: dict
+        :return: Message to be sent to the Slack channel
+        :rtype: str
+        """
+        operated_list_length = 0
+        msg = ""
+        user_groups = self.get_user_groups_list()
+        for key in operated_list.keys():
+            operated_list_length += len(operated_list[key])
+        if self.dry_run:
+            msg = f"`Dry Run`: Will be {operation_type}:"
+        else:
+            msg = f"{operation_type} the following"
+
+        for key in operated_list.keys():
+            print(f"Pinging '{key}'")
+            member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
+            operated_list_length = len(operated_list[key])
+            if member_id == "not_found":
+                for user_group in user_groups:
+                    if user_group['handle'] == key:
+                        member_id = user_group['id']
+                        break
+                    
+                if member_id == "not_found":
+                    # Untagged
+                    final_msg = msg +  f"`{operated_list_length}` {self.cloud} {resource}(s):\n*{key}* disks `{operated_list[key]}`\n\n"
+                else:
+                    # User Groups
+                    final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
+                
+                self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=final_msg, link_names=True)
+            else:
+                # Individual User
+
+                final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<@{member_id}> disks `{operated_list[key]}`\n\n"
+                
+                # Open Conversation between the bot and the user
+                users_in_conversation = [member_id]
+                response = self.slack_client.conversations_open(users=users_in_conversation)
+                channel_id = response['channel']['id']
+                
+                # Post Message
+                self.slack_client.chat_postMessage(channel = channel_id, text=final_msg, link_names=True)
 
     def get_msg(
-        self, resource: str, operation_type: str, operated_list: Union[list, dict]
+        self, resource: str, operation_type: str, operated_list: list
     ) -> str:
         """
         Returns a message to be sent to the Slack channel
@@ -186,45 +240,17 @@ class CRC:
         :type resource: str
         :param operation_type: Operation type (e.g. "Deleted", "Stopped")
         :type operation_type: str
-        :param operated_list: List or Dict of operated resources. Dict if slack_notify_users is true else list.
-        :type operated_list: Union[list, dict]
+        :param operated_list: List of operated resources.
+        :type operated_list: list
         :return: Message to be sent to the Slack channel
         :rtype: str
         """
-        if type(operated_list) == list:
-            operated_list_length = len(operated_list)
+        operated_list_length = len(operated_list)
 
-            if self.dry_run:
-                return f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+        if self.dry_run:
+            return f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 
-            return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
-
-        if type(operated_list) == dict:
-            operated_list_length = 0
-            msg = ""
-            user_groups = self.get_user_groups_list()
-            for key in operated_list.keys():
-                operated_list_length += len(operated_list[key])
-            if self.dry_run:
-                msg = f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n"
-            else:
-                msg = f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n"
-
-            for key in operated_list.keys():
-                member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
-                if member_id == "not_found":
-                    for user_group in user_groups:
-                        if user_group['handle'] == key:
-                            member_id = user_group['id']
-                            break
-                        
-                    if member_id == "not_found":
-                        msg += f"• *{key}* disks `{operated_list[key]}`\n\n"
-                    else:
-                        msg += f"• <!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
-                else:
-                    msg += f"• <@{member_id}> disks `{operated_list[key]}`\n\n"
-            return msg
+        return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 
     def notify_deleted_nic_via_slack(self, nic: object):
         """
@@ -286,8 +312,13 @@ class CRC:
         :param disk: Disk object
         :type vm: object
         """
-        msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg, link_names=True)
+        if type(disk.get_deleted) == list:
+            # Send a one single message into the channel
+            msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
+            self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg, link_names=True)
+        elif type(disk.get_deleted) == dict:
+            # Directly ping the individuals 1:1 and groups/untagged into channel
+            self.ping_on_slack(DISKS, DELETED, disk.get_deleted)
 
     def write_influxdb(self, resource_name: str, resources: List[str]) -> None:
         """
@@ -448,7 +479,6 @@ class CRC:
             )
         if self.cloud == "azure":
             disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
-            disk.delete()
         if self.cloud == "gcp":
             disk = GCP_Disk(
                 dry_run = self.dry_run,
@@ -463,7 +493,8 @@ class CRC:
                 slack_notify_users = slack_notify_users,
                 slack_user_label = slack_user_label
             )
-            disk.delete()
+
+        disk.delete()
 
         if self.slack_client:
             self.notify_deleted_disk_via_slack(disk)

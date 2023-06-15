@@ -1,6 +1,7 @@
 # Copyright (c) Yugabyte, Inc.
 
 import logging
+import os
 
 LOG_FORMATTER = (
     "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
@@ -22,6 +23,9 @@ def init_logging(filename: str, log_level: str = "debug"):
 
     # Create a log message formatter.
     formatter = logging.Formatter(LOG_FORMATTER)
+
+    # Create log directory in script path if not found
+    os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
 
     # Create file handler which logs debug messages to a log file.
     fh = logging.FileHandler(filename, mode="w")

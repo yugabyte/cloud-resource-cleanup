@@ -19,6 +19,9 @@ from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
+from crc.gcp.disk import Disk as GCP_Disk
+
+from typing import Union
 
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
@@ -146,8 +149,89 @@ class CRC:
             f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
         )
 
+    def slack_lookup_user_by_email(self, email):
+        """
+        Get the Slack User Id by email
+
+        :param email: String to search the user by email in Slack
+        :return: User Id
+        :rtype: str
+        """
+        try: 
+            user_info = self.slack_client.users_lookupByEmail(email=email)
+            return user_info["user"]["id"]
+        except:
+            return "not_found"
+        
+    def get_user_groups_list(self):
+        """
+        Get the Slack User Groups Lists
+        :return: User Groups List
+        :rtype: list
+        """
+        try:
+            user_groups = self.slack_client.usergroups_list()
+            return user_groups["usergroups"]
+        except:
+            print("Something Went Wront! Could not get user_groups.")
+            return "not_found"
+        
+    def ping_on_slack(self, resource: str, operation_type: str, operated_list: dict):
+        """
+        Pings individuals 1:1 and groups/untagged into the channel on the Slack 
+
+        :param resource: Cloud resource type (e.g. "nics", "vms", "ips", "keypairs", "disks")
+        :type resource: str
+        :param operation_type: Operation type (e.g. "Deleted", "Stopped")
+        :type operation_type: str
+        :param operated_list: Dict of operated resources.
+        :type operated_list: dict
+        :return: Message to be sent to the Slack channel
+        :rtype: str
+        """
+        operated_list_length = 0
+        msg = ""
+        user_groups = self.get_user_groups_list()
+        for key in operated_list.keys():
+            operated_list_length += len(operated_list[key])
+        if self.dry_run:
+            msg = f"`Dry Run`: Will be {operation_type}:"
+        else:
+            msg = f"{operation_type} the following"
+
+        for key in operated_list.keys():
+            print(f"Pinging '{key}'")
+            member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
+            operated_list_length = len(operated_list[key])
+            if member_id == "not_found":
+                for user_group in user_groups:
+                    if user_group['handle'] == key:
+                        member_id = user_group['id']
+                        break
+                    
+                if member_id == "not_found":
+                    # Untagged
+                    final_msg = msg +  f"`{operated_list_length}` {self.cloud} {resource}(s):\n*{key}* disks `{operated_list[key]}`\n\n"
+                else:
+                    # User Groups
+                    final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
+                
+                self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=final_msg, link_names=True)
+            else:
+                # Individual User
+
+                final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<@{member_id}> disks `{operated_list[key]}`\n\n"
+                
+                # Open Conversation between the bot and the user
+                users_in_conversation = [member_id]
+                response = self.slack_client.conversations_open(users=users_in_conversation)
+                channel_id = response['channel']['id']
+                
+                # Post Message
+                self.slack_client.chat_postMessage(channel = channel_id, text=final_msg, link_names=True)
+
     def get_msg(
-        self, resource: str, operation_type: str, operated_list: List[str]
+        self, resource: str, operation_type: str, operated_list: list
     ) -> str:
         """
         Returns a message to be sent to the Slack channel
@@ -156,7 +240,7 @@ class CRC:
         :type resource: str
         :param operation_type: Operation type (e.g. "Deleted", "Stopped")
         :type operation_type: str
-        :param operated_list: List of operated resources
+        :param operated_list: List of operated resources.
         :type operated_list: list
         :return: Message to be sent to the Slack channel
         :rtype: str
@@ -228,8 +312,13 @@ class CRC:
         :param disk: Disk object
         :type vm: object
         """
-        msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        if type(disk.get_deleted) == list:
+            # Send a one single message into the channel
+            msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
+            self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg, link_names=True)
+        elif type(disk.get_deleted) == dict:
+            # Directly ping the individuals 1:1 and groups/untagged into channel
+            self.ping_on_slack(DISKS, DELETED, disk.get_deleted)
 
     def write_influxdb(self, resource_name: str, resources: List[str]) -> None:
         """
@@ -365,6 +454,11 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        detach_age: Dict[str, int],
+        name_regex: List[str],
+        exception_regex: List[str],
+        slack_notify_users: bool,
+        slack_user_label: str
     ):
         """
         Delete Disks that match the specified criteria.
@@ -373,13 +467,33 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
         :param age: Dictionary of age conditions to filter the disks.
+        :param detach_age: Dictionary of detach age
+        :param name_regex: List of regex patterns to filter the disks.
+        :param exception_regex: List of regex patterns to exclude the disks.
+        :param slack_notify_users: Bool to ping the users/usergroups in the slack ping.
+        :param slack_user_label: String to lookup for the disks by matching disk label.
         """
-        if self.cloud != "azure":
+        if self.cloud not in ["azure", "gcp"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE. AWS, GCP clean the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported only on AZURE and GCP. AWS cleans the NICs, Disks along with VM"
+            )
+        if self.cloud == "azure":
+            disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
+        if self.cloud == "gcp":
+            disk = GCP_Disk(
+                dry_run = self.dry_run,
+                project_id = self.project_id,
+                filter_labels = filter_tags,
+                exception_labels = exception_tags,
+                age = age,
+                detach_age = detach_age,
+                notags = self.notags,
+                name_regex = name_regex,
+                exception_regex = exception_regex,
+                slack_notify_users = slack_notify_users,
+                slack_user_label = slack_user_label
             )
 
-        disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
         disk.delete()
 
         if self.slack_client:
@@ -501,8 +615,16 @@ def get_argparser():
         "-a",
         "--age",
         type=ast.literal_eval,
-        metavar="{'days': 3, 'hours': 12}",
+        metavar="{'days': value1, 'hours': value2}",
         help="Age Threshold for resources. Age is not respected for IPs. Example: -a or --age {'days': 3, 'hours': 12}",
+    )
+
+    # Add Argument for Age Threshold
+    parser.add_argument(
+        "--detach_age",
+        type=ast.literal_eval,
+        metavar="{'days': value1, 'hours': value2}",
+        help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach_age {'days': 3, 'hours': 12}",
     )
 
     # Add Argument for Dry Run Mode
@@ -528,6 +650,20 @@ def get_argparser():
         "--slack_channel",
         metavar="SLACK_CHANNEL",
         help="The Slack channel to send the notifications to. Example: --slack_channel testing",
+    )
+
+   # Add Argument for Slack Channel
+    parser.add_argument(
+        "--slack_notify_users",
+        action="store_true",
+        help="If true notify users in the Slack channel, currently only for GCP disk",
+    )
+
+    # Add Argument for label that need to be used for getting username
+    parser.add_argument(
+        "--slack_user_label",
+        metavar="SLACK_USER_LABEL",
+        help="The gcp label that can be used to get username. Example: --slack_user_label owner",
     )
 
     # Add Argument for InfluxDB
@@ -636,9 +772,12 @@ def main():
     name_regex = args.get("name_regex")
     exception_regex = args.get("exception_regex")
     age = args.get("age")
+    detach_age = args.get("detach_age")
     dry_run = args.get("dry_run")
     notags = args.get("notags")
     slack_channel = args.get("slack_channel")
+    slack_notify_users = args.get("slack_notify_users")
+    slack_user_label = args.get("slack_user_label")
     influxdb = args.get("influxdb")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
@@ -662,6 +801,11 @@ def main():
         raise ValueError(
             "All Resources cleanup is supported only with all Clouds. Format: --cloud all --resources all"
         )
+    
+    if slack_notify_users and not slack_user_label:
+        raise ValueError(
+            "--slack_user_label is mandatory when passing --slack_notify_user"
+        )
 
     # Process Cloud
     clouds = CLOUDS if clouds == "all" else [clouds]
@@ -676,6 +820,7 @@ def main():
     is_valid_list("name_regex", name_regex)
     is_valid_list("exception_regex", exception_regex)
     is_valid_dict("age", age)
+    is_valid_dict("detach_age", detach_age)
     is_valid_dict("influxdb", influxdb)
 
     if slack_channel:
@@ -703,7 +848,16 @@ def main():
         )
         for resource in resources:
             if resource == "disk":
-                crc.delete_disks(filter_tags, exception_tags, age)
+                crc.delete_disks(
+                    filter_tags,
+                    exception_tags,
+                    age,
+                    detach_age,
+                    name_regex,
+                    exception_regex,
+                    slack_notify_users,
+                    slack_user_label
+                )
             elif resource == "ip":
                 crc.delete_ip(
                     filter_tags,

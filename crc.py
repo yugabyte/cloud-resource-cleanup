@@ -328,23 +328,26 @@ class CRC:
             resource_name (str): The name of the resource being written to InfluxDB.
             resources (List[str]): A list of resources to be written to InfluxDB.
         """
-        # Get the write API object from the InfluxDB client, with synchronous write options
-        write_api = self.influxdb_client.write_api(write_options=SYNCHRONOUS)
-
-        if self.resource_suffix:
-            resource_name = resource_name + "_" + self.resource_suffix
-
-        # Create a Point object with the resource name, tags for the names of the resources,
-        # and a field for the count of resources
-        point = (
-            Point(self.cloud)
-            .tag("resource", resource_name)
-            .field("names", str(resources))
-            .field("count", len(resources))
-        )
-
-        # Write the Point object to the InfluxDB bucket
-        write_api.write(bucket=self.influxdb_bucket, record=point)
+        try:
+            # Get the write API object from the InfluxDB client, with synchronous write options
+            write_api = self.influxdb_client.write_api(write_options=SYNCHRONOUS)
+    
+            if self.resource_suffix:
+                resource_name = resource_name + "_" + self.resource_suffix
+    
+            # Create a Point object with the resource name, tags for the names of the resources,
+            # and a field for the count of resources
+            point = (
+                Point(self.cloud)
+                .tag("resource", resource_name)
+                .field("names", str(resources))
+                .field("count", len(resources))
+            )
+    
+            # Write the Point object to the InfluxDB bucket
+            write_api.write(bucket=self.influxdb_bucket, record=point)
+        except Exception as e:
+            print(f"Unable to push data to influxDB: {e}")
 
     def delete_vm(
         self,

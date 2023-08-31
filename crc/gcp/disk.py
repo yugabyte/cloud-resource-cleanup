@@ -70,7 +70,7 @@ class Disk(Service):
         super().__init__()
         self.dry_run = dry_run
         self.project_id = project_id
-        self.filter_tags = filter_labels
+        self.filter_labels = filter_labels
         self.exception_labels = exception_labels
         self.age = age
         self.detach_age = detach_age
@@ -116,10 +116,27 @@ class Disk(Service):
         dt = datetime.now().astimezone(detached_timestamp.tzinfo)
         return self.is_old(self.detach_age, dt, detached_timestamp)
 
+    def _has_matching_filter_label(self, disk):
+        """
+        Check if the disk has any labels that match the filter
+        This method return True if filter_labels is empty
+
+        :param disk: The disk to check for filter labels
+        :type disk: dict
+        :return: True if the disk has a label that matches the filter, False otherwise
+        :rtype: bool
+        """
+        if not self.filter_labels:
+            return True
+        return any(
+            key in disk.labels and (not value or disk.labels[key] in value)
+            for key, value in self.filter_labels.items()
+        )
+
     def _should_skip_disk(self, disk):
         """
-        Check if the instance should be skipped based on the exception tags and disks that do not have the specified notags.
-        :return: True if the instance should be skipped, False otherwise
+        Check if the disk should be skipped based on the exception tags and disks that do not have the specified notags.
+        :return: True if the disk should be skipped, False otherwise
         :rtype: bool
         """
         in_exception_labels = False
@@ -160,6 +177,8 @@ class Disk(Service):
                     if disk.users:
                         continue
                     if self._should_skip_disk(disk):
+                        continue
+                    if not self._has_matching_filter_label(disk):
                         continue
                     if not disk.last_detach_timestamp:
                         continue

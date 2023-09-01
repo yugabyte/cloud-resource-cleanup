@@ -97,6 +97,8 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        slack_notify_users: bool,
+        slack_user_label: str
     ):
         """
         Get the VM object for the specified cloud.
@@ -118,6 +120,8 @@ class CRC:
                 exception_tags,
                 age,
                 self.notags,
+                slack_notify_users,
+                slack_user_label,
             )
         raise ValueError(
             f"Invalid cloud provided: {self.cloud}. Supported clouds are {CLOUDS}"
@@ -194,13 +198,13 @@ class CRC:
         user_groups = self.get_user_groups_list()
         for key in operated_list.keys():
             operated_list_length += len(operated_list[key])
-        if self.dry_run:
-            msg = f"`Dry Run`: Will be {operation_type}:"
-        else:
-            msg = f"{operation_type} the following"
 
         for key in operated_list.keys():
             print(f"Pinging '{key}'")
+            if self.dry_run:
+                msg = f"`Dry Run`: Will be {operation_type}:"
+            else:
+                msg = f"{operation_type} the following"
             member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
             operated_list_length = len(operated_list[key])
             if member_id == "not_found":
@@ -208,22 +212,42 @@ class CRC:
                     if user_group['handle'] == key:
                         member_id = user_group['id']
                         break
-                    
+
                 if member_id == "not_found":
                     # Untagged
-                    final_msg = msg +  f"`{operated_list_length}` {self.cloud} {resource}(s):\n*{key}* disks `{operated_list[key]}`\n\n"
+                    msg +=  f"`{operated_list_length}` {self.cloud} {resource}(s):\n*{key}* {resource} `"
+                    msg += ",".join(
+                        [
+                            f"{instance['name']}" for instance in operated_list[key]
+                        ]
+                    )
+                    msg += "`\n\n"
                 else:
                     # User Groups
-                    final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
-                
+                    msg += f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> {resource} `"
+                    msg += ",".join(
+                        [
+                            f"{instance['name']}" for instance in operated_list[key]
+                        ]
+                    )
+                    msg += "`\n\n"
+                final_msg = msg
                 self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=final_msg, link_names=True)
             else:
                 # Individual User
-
-                final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<@{member_id}> disks `{operated_list[key]}`\n\n"
+                msg = f"Hi <@{member_id}>! your running {resource}'s in {self.cloud}: `{operated_list_length}`\n"
+                if len(operated_list[key]) > 0:
+                    #msg += "*Running Instances:*\n"
+                    msg += "\n".join(
+                        [
+                            f"• <https://console.cloud.google.com/compute/instancesDetail/zones/{instance['zone']}/instances/{instance['name']}?project=yugabyte|{instance['name']}> | Accound Id: *{instance['project']}*"
+                            for instance in operated_list[key]
+                        ]
+                    )
+                final_msg = msg
                 
                 # Open Conversation between the bot and the user
-                users_in_conversation = [member_id]
+                users_in_conversation = ["U049FM40L1J","U03PH0Q27SR",member_id]
                 response = self.slack_client.conversations_open(users=users_in_conversation)
                 channel_id = response['channel']['id']
                 
@@ -269,8 +293,14 @@ class CRC:
         :param vm: Virtual machine object
         :type vm: object
         """
-        msg = self.get_msg(VMS, DELETED, vm.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
+        if type(vm.get_deleted) == list:
+            # Send a one single message into the channel
+            msg = self.get_msg(VMS, DELETED, vm.get_deleted)
+            self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg, link_names=True)
+        elif type(vm.get_deleted) == dict:
+            # Directly ping the individuals 1:1 and groups/untagged into channel
+            self.ping_on_slack(VMS, DELETED, vm.get_deleted)
 
         if self.cloud == "azure":
             self.notify_deleted_nic_via_slack(vm)
@@ -355,6 +385,8 @@ class CRC:
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
         instance_state: List[str],
+        slack_notify_users: bool,
+        slack_user_label: str,
     ):
         """
         Delete virtual machines that match the specified criteria.
@@ -363,8 +395,10 @@ class CRC:
         :param exception_tags: Dictionary of tags to exclude the VM.
         :param age: Dictionary of age conditions to filter the VM.
         :param instance_state: List of instance states that should be deleted.
+        :param slack_notify_users: Bool to ping the users/usergroups in the slack ping.
+        :param slack_user_label: String to lookup for the instances by matching instance label.
         """
-        vm = self._get_vm(filter_tags, exception_tags, age)
+        vm = self._get_vm(filter_tags, exception_tags, age, slack_notify_users, slack_user_label)
         self._delete_vm(vm, instance_state)
 
         if self.slack_client:
@@ -877,6 +911,8 @@ def main():
                         exception_tags,
                         age,
                         resource_states,
+                        slack_notify_users,
+                        slack_user_label
                     )
                 elif operation_type == "stop":
                     crc.stop_vm(filter_tags, exception_tags, age)

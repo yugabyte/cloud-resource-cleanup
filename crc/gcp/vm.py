@@ -45,6 +45,8 @@ class VM(Service):
         exception_labels: Dict[str, List[str]],
         age: int,
         notags: Dict[str, List[str]],
+        slack_notify_users: bool,
+        slack_user_label: str
     ) -> None:
         """
         Initialize an instance of the VM class.
@@ -64,7 +66,6 @@ class VM(Service):
         :type notags: Dict[str, List[str]]
         """
         super().__init__()
-        self.instance_names_to_delete = []
         self.instance_names_to_stop = []
         self.dry_run = dry_run
         self.project_id = project_id
@@ -72,6 +73,12 @@ class VM(Service):
         self.exception_labels = exception_labels
         self.age = age
         self.notags = notags
+        self.slack_notify_users = slack_notify_users
+        self.slack_user_label = slack_user_label
+        if self.slack_notify_users:
+            self.instance_names_to_delete = {}
+        else:
+            self.instance_names_to_delete = []
 
     @property
     def get_deleted(self) -> str:
@@ -149,7 +156,19 @@ class VM(Service):
                                     instance=instance.name,
                                 ).execute()
                                 logging.info(f"Deleting instance {instance.name}")
-                            self.instance_names_to_delete.append(instance.name)
+                            if self.slack_notify_users:
+                                if self.slack_user_label in instance.labels:
+                                    if instance.labels[self.slack_user_label] in self.instance_names_to_delete:
+                                        self.instance_names_to_delete[instance.labels[self.slack_user_label]].append({"name":instance.name,"zone":zone,"project":self.project_id})
+                                    else:
+                                        self.instance_names_to_delete[instance.labels[self.slack_user_label]] = [{"name":instance.name,"zone":zone,"project":self.project_id}]
+                                else:
+                                    if 'not_tagged' not in self.instance_names_to_delete:
+                                        self.instance_names_to_delete['not_tagged'] = [{"name":instance.name,"zone":zone,"project":self.project_id}]
+                                    else:
+                                        self.instance_names_to_delete['not_tagged'].append({"name":instance.name,"zone":zone,"project":self.project_id})
+                            else:
+                                self.instance_names_to_delete.append(instance.name)
                         elif operation_type == "stop":
                             if not self.dry_run:
                                 service.instances().stop(

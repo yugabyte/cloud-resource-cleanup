@@ -207,7 +207,7 @@ class CRC:
                 msg = f"{operation_type} the following"
             member_id = self.slack_lookup_user_by_email(f"{key}@yugabyte.com")
             operated_list_length = len(operated_list[key])
-            if member_id == "not_found":
+            if member_id == "not_found" and key != 'not_tagged':
                 for user_group in user_groups:
                     if user_group['handle'] == key:
                         member_id = user_group['id']
@@ -235,7 +235,14 @@ class CRC:
                 self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=final_msg, link_names=True)
             else:
                 # Individual User
-                msg = f"Hi <@{member_id}>! your running {resource}'s in {self.cloud}: `{operated_list_length}`\n"
+                if key == 'not_tagged':
+                    # Open Conversation between the bot and the user
+                    users_in_conversation = ["U049FM40L1J","U03PH0Q27SR"]
+                    msg =  f"List of untagged {resource}(s) in {self.cloud}`"
+                else:
+                    # Open Conversation between the bot and the user
+                    users_in_conversation = ["U049FM40L1J","U03PH0Q27SR",member_id]
+                    msg = f"Hi <@{member_id}>! your running {resource}'s in {self.cloud}: `{operated_list_length}`\n"
                 if len(operated_list[key]) > 0:
                     #msg += "*Running Instances:*\n"
                     msg += "\n".join(
@@ -246,8 +253,6 @@ class CRC:
                     )
                 final_msg = msg
                 
-                # Open Conversation between the bot and the user
-                users_in_conversation = ["U049FM40L1J","U03PH0Q27SR",member_id]
                 response = self.slack_client.conversations_open(users=users_in_conversation)
                 channel_id = response['channel']['id']
                 

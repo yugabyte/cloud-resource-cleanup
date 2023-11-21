@@ -149,7 +149,7 @@ class KMS(Service):
 
             if not self.dry_run:
                 for cmk_id in keys:
-                    client.delete_key(KeyId=cmk_id)
+                    client.schedule_key_deletion(KeyId=cmk_id, PendingWindowInDays=14) # Decide for appropriate window
                     logging.info(f"CMK - {cmk_id} Deleted from AWS console")
 
             # Add deleted IPs to deleted_ips list

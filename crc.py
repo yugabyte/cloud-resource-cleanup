@@ -15,6 +15,7 @@ from crc.aws.keypairs import KeyPairs
 from crc.aws.vm import VM as AWS_VM
 from crc.aws.vpc import VPC
 from crc.azu.disk import Disk
+from crc.aws.kms import KMS
 from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.ip import IP as GCP_IP
@@ -25,7 +26,7 @@ from typing import Union
 
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
-RESOURCES = ["disk", "ip", "keypair", "vm"]
+RESOURCES = ["disk", "ip", "keypair", "vm", "kms"]
 
 DELETED = "Deleted"
 STOPPED = "Stopped"
@@ -35,6 +36,7 @@ DISKS = "Disk"
 VMS = "VM"
 IPS = "IP"
 KEYPAIRS = "Keypair"
+KMS = "KMS"
 
 
 class CRC:
@@ -320,6 +322,16 @@ class CRC:
             # Directly ping the individuals 1:1 and groups/untagged into channel
             self.ping_on_slack(DISKS, DELETED, disk.get_deleted)
 
+    def notify_deleted_kms_via_slack(self, kms: object):
+        """
+        Sends a notification message to the Slack channel about deleted KMS
+
+        :param keypair: KMS
+        :type vm: object
+        """
+        msg = self.get_msg(KMS, DELETED, kms.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
     def write_influxdb(self, resource_name: str, resources: List[str]) -> None:
         """
         Writes data to InfluxDB.
@@ -518,6 +530,29 @@ class CRC:
         """
         vpc = VPC(self.dry_run, filter_tags, exception_tags, self.notags)
         vpc.delete()
+
+    def delete_kms(
+        self,
+        filter_tags: Dict[str, List[str]],
+        exception_tags: Dict[str, List[str]]
+    ):
+        """
+        Delete KMS that match the specified criteria.
+
+        :param filter_tags: Dictionary of tags to filter the KMS.
+        """
+
+        if self.cloud != "aws":
+            raise ValueError("KMS operation is only supported on AWS.")
+        
+        kms = KMS(self.dry_run, filter_tags, exception_tags)
+        kms.delete()
+
+        if self.slack_client:
+            self.notify_deleted_kms_via_slack(kms)
+
+        if self.influxdb_client:
+            self.write_influxdb(KMS, kms.get_deleted)
 
 def get_argparser():
     """
@@ -882,6 +917,8 @@ def main():
                     crc.stop_vm(filter_tags, exception_tags, age)
             elif resource == "vpc":
                 crc.delete_vpc(filter_tags, exception_tags)
+            elif resource == "kms":
+                crc.delete_kms(filter_tags, exception_tags)
 
 
 if __name__ == "__main__":

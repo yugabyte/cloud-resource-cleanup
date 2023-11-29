@@ -1,13 +1,14 @@
 # Copyright (c) Yugabyte, Inc.
 
+import json
 import logging
 from typing import Dict, List
 
 import boto3
-import json
 
 from crc.aws._base import get_all_regions
 from crc.service import Service
+
 
 class KMS(Service):
     service_name = "kms"
@@ -20,15 +21,14 @@ class KMS(Service):
     The default_region_name variable specifies the default region to be used when interacting with the AWS service.
     """
 
-    jenkins_user = 'arn:aws:iam::454529406029:user/jenkins-slave'
-    """
-    The jenkins_user variable specifis the user for which associated KMS has to be deleted
-    """
     def __init__(
         self,
         dry_run: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
+        key_descriptiom: str,
+        user: str,
+        pending_window: int,
     ) -> None:
         """
         Initializes the object with filter tags to be used when searching for kms.
@@ -38,13 +38,24 @@ class KMS(Service):
         but will not perform any operations on them.
         :param filter_tags: dictionary containing key-value pairs as filter tags
         :type filter_tags: Dict[str, List[str]]
+        :param exception_tags: dictionary containing key-value pairs as exception tags
+        :type exception_tags: Dict[str, List[str]]
+        :param key_description: name/string matching key description in key policy
+        :type key_description: str
+        :param user: User for which associated keys have to be deleted
+        :type user: str
+        :param pending_window: The duration in days until keys will be in Pending deletion state before getting deleted
+        :type pending_window: int
         """
         super().__init__()
         self.kms_keys_to_delete = []
         self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
-    
+        self.key_description = key_descriptiom
+        self.jenkins_user = user
+        self.pending_window = pending_window
+
     @property
     def get_deleted(self):
         """
@@ -52,21 +63,6 @@ class KMS(Service):
         It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
         """
         return self.kms_keys_to_delete
-    
-    def _get_filter(self) -> List[Dict[str, List[str]]]:
-        """
-        Creates a filter to be used when searching for kms, based on the filter tags provided during initialization.
-
-        :return: list of filters.
-        :rtype: List[Dict[str, List[str]]]
-        """
-        filters = []
-        if self.filter_tags:
-            for key, value in self.filter_tags.items():
-                filters.append({"Name": f"tag:{key}", "Values": value})
-
-        logging.info(f"Filters created: {filters}")
-        return filters
 
     def _should_skip_kms(self, tags: List[Dict[str, str]]) -> bool:
         """
@@ -80,7 +76,6 @@ class KMS(Service):
             logging.warning("Tags and not present")
             return False
 
-
         for tag in tags:
             k = tag["Key"]
             v = tag["Value"]
@@ -92,7 +87,6 @@ class KMS(Service):
                     return True
 
         return False
-    
 
     def delete(self):
         """
@@ -101,59 +95,69 @@ class KMS(Service):
         but will not perform any operations on them.
         """
 
-        kms_filter = self._get_filter()
+        keys = {}
+        skipped_keys = []
+        kms_keys = []
+        active_keys = []
+        client = boto3.client(self.service_name, region_name=self.default_region_name)
 
-        regions = get_all_regions(self.service_name, self.default_region_name)
+        paginator = client.get_paginator("list_keys")
+        for page in paginator.paginate():
+            kms_keys.extend(page["Keys"])
 
-        for region in regions:
-            keys = {}
-            skipped_keys = []
-            kms_keys = []
-            active_keys = []
-            client = boto3.client(self.service_name, region_name=region)
-            
-            paginator = client.get_paginator('list_keys')
-            for page in paginator.paginate(Filters=kms_filter):
-                kms_keys.extend(page['Keys'])
+        logging.info(f"Total keys found = {len(kms_keys)}")
 
-            self.kms_keys_to_delete.extend(kms_keys)
+        for keys in kms_keys:
+            try:
+                if self._should_skip_kms(keys):
+                    continue
 
-            if self.dry_run:
-                continue
+                key_metadata = client.describe_key(KeyId=keys["KeyId"])
+                key_state = key_metadata["KeyMetadata"]["KeyState"]
+                key_des = key_metadata["KeyMetadata"]["Description"]
 
-            logging.info(f"Total keys found = {len(kms_keys)}")
-            for keys in kms_keys:
-                try: 
-                    if self._should_skip_vpc(keys):
-                        continue
+                key_tags = client.list_resource_tags(KeyId=keys["KeyId"])
+                response_tags = key_tags.get("Tags", [])
 
-                    key_metadata = client.describe_key(KeyId=keys['KeyId'])
-                    key_state = key_metadata['KeyMetadata']['KeyState']
-                    key_des = key_metadata['KeyMetadata']['Description']
-                    # Check if the key meets the filter conditions
-                    if (
-                        key_state == 'Enabled'
-                        and "Yugabyte Master Key" in key_des
-                        and all(keys.get(tag, None) in self.filter_tags.get(tag, []) for tag in self.filter_tags)
-                    ):
-                        policy = client.get_key_policy(KeyId=keys['KeyId'], PolicyName='default')['Policy']
-                        policy_json = json.loads(policy)
-                        for ids in policy_json['Statement']:
-                            user_arn = ids['Principal']['AWS']
-                            if ids['Principal']['AWS'] == self.jenkins_user:
-                                print(f"Key {keys['KeyId']} found with user {ids['Principal']['AWS']}")
-                                active_keys.append(keys['KeyId'])
-                except:
-                    print(f"KEY SKIPPED")
-                    skipped_keys.append(keys['KeyId'])
+                response_set = {
+                    (tag["TagKey"], tag["TagValue"]) for tag in response_tags
+                }
+                filter_set = {
+                    (k, v) for k, values in self.filter_tags.items() for v in values
+                }
 
-            if not self.dry_run:
-                for cmk_id in keys:
-                    client.schedule_key_deletion(KeyId=cmk_id, PendingWindowInDays=14) # Decide for appropriate window
-                    logging.info(f"CMK - {cmk_id} Deleted from AWS console")
+                # Check if the key meets the filter conditions
+                if (
+                    key_state == "Enabled"
+                    and self.key_description in key_des
+                    and filter_set.issubset(response_set)
+                ):
+                    policy = client.get_key_policy(
+                        KeyId=keys["KeyId"], PolicyName="default"
+                    )["Policy"]
+                    policy_json = json.loads(policy)
+                    for ids in policy_json["Statement"]:
+                        user_arn = ids["Principal"]["AWS"]
+                        if user_arn == self.jenkins_user:
+                            logging.info(
+                                f"Key {keys['KeyId']} found with user {user_arn}"
+                            )
+                            active_keys.append(keys["KeyId"])
+            except:
+                logging.warning(f"KEY SKIPPED", keys["KeyId"])
+                skipped_keys.append(keys["KeyId"])
 
-            # Add deleted IPs to deleted_ips list
-            self.kms_keys_to_delete.extend(list(keys.keys()))
+        logging.info(f"total number of active Jenkins keys = {len(active_keys)}")
+
+        if not self.dry_run:
+            for cmk_id in active_keys:
+                client.schedule_key_deletion(
+                    KeyId=cmk_id, PendingWindowInDays=self.pending_window
+                )
+                logging.info(f"CMK - {cmk_id} Deleted from AWS console")
+
+        # Add deleted IPs to deleted_ips list
+        self.kms_keys_to_delete.extend(list(active_keys))
 
         if not self.dry_run:
             logging.warning(
@@ -161,6 +165,7 @@ class KMS(Service):
             )
             logging.warning(f"List of AWS KMS deleted: {self.kms_keys_to_delete}")
         else:
+            a = 0
             logging.warning(
                 f"List of AWS KMS (Total: {len(self.kms_keys_to_delete)}) which will be deleted: {self.kms_keys_to_delete}"
             )

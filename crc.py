@@ -3,7 +3,7 @@
 import argparse
 import ast
 import os
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -12,17 +12,15 @@ from slack_sdk import WebClient
 # Import classes for interacting with different resources across different clouds
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
+from crc.aws.kms import KMS
 from crc.aws.vm import VM as AWS_VM
 from crc.aws.vpc import VPC
 from crc.azu.disk import Disk
-from crc.aws.kms import KMS
 from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
+from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
-from crc.gcp.disk import Disk as GCP_Disk
-
-from typing import Union
 
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
@@ -36,7 +34,7 @@ DISKS = "Disk"
 VMS = "VM"
 IPS = "IP"
 KEYPAIRS = "Keypair"
-KMS = "KMS"
+# KMS = "KMS"
 
 
 class CRC:
@@ -159,12 +157,12 @@ class CRC:
         :return: User Id
         :rtype: str
         """
-        try: 
+        try:
             user_info = self.slack_client.users_lookupByEmail(email=email)
             return user_info["user"]["id"]
         except:
             return "not_found"
-        
+
     def get_user_groups_list(self):
         """
         Get the Slack User Groups Lists
@@ -177,10 +175,10 @@ class CRC:
         except:
             print("Something Went Wront! Could not get user_groups.")
             return "not_found"
-        
+
     def ping_on_slack(self, resource: str, operation_type: str, operated_list: dict):
         """
-        Pings individuals 1:1 and groups/untagged into the channel on the Slack 
+        Pings individuals 1:1 and groups/untagged into the channel on the Slack
 
         :param resource: Cloud resource type (e.g. "nics", "vms", "ips", "keypairs", "disks")
         :type resource: str
@@ -207,34 +205,47 @@ class CRC:
             operated_list_length = len(operated_list[key])
             if member_id == "not_found":
                 for user_group in user_groups:
-                    if user_group['handle'] == key:
-                        member_id = user_group['id']
+                    if user_group["handle"] == key:
+                        member_id = user_group["id"]
                         break
-                    
+
                 if member_id == "not_found":
                     # Untagged
-                    final_msg = msg +  f"`{operated_list_length}` {self.cloud} {resource}(s):\n*{key}* disks `{operated_list[key]}`\n\n"
+                    final_msg = (
+                        msg
+                        + f"`{operated_list_length}` {self.cloud} {resource}(s):\n*{key}* disks `{operated_list[key]}`\n\n"
+                    )
                 else:
                     # User Groups
-                    final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
-                
-                self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=final_msg, link_names=True)
+                    final_msg = (
+                        msg
+                        + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
+                    )
+
+                self.slack_client.chat_postMessage(
+                    channel="#" + self.slack_channel, text=final_msg, link_names=True
+                )
             else:
                 # Individual User
 
-                final_msg = msg + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<@{member_id}> disks `{operated_list[key]}`\n\n"
-                
+                final_msg = (
+                    msg
+                    + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<@{member_id}> disks `{operated_list[key]}`\n\n"
+                )
+
                 # Open Conversation between the bot and the user
                 users_in_conversation = [member_id]
-                response = self.slack_client.conversations_open(users=users_in_conversation)
-                channel_id = response['channel']['id']
-                
-                # Post Message
-                self.slack_client.chat_postMessage(channel = channel_id, text=final_msg, link_names=True)
+                response = self.slack_client.conversations_open(
+                    users=users_in_conversation
+                )
+                channel_id = response["channel"]["id"]
 
-    def get_msg(
-        self, resource: str, operation_type: str, operated_list: list
-    ) -> str:
+                # Post Message
+                self.slack_client.chat_postMessage(
+                    channel=channel_id, text=final_msg, link_names=True
+                )
+
+    def get_msg(self, resource: str, operation_type: str, operated_list: list) -> str:
         """
         Returns a message to be sent to the Slack channel
 
@@ -317,7 +328,9 @@ class CRC:
         if type(disk.get_deleted) == list:
             # Send a one single message into the channel
             msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
-            self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg, link_names=True)
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg, link_names=True
+            )
         elif type(disk.get_deleted) == dict:
             # Directly ping the individuals 1:1 and groups/untagged into channel
             self.ping_on_slack(DISKS, DELETED, disk.get_deleted)
@@ -343,10 +356,10 @@ class CRC:
         try:
             # Get the write API object from the InfluxDB client, with synchronous write options
             write_api = self.influxdb_client.write_api(write_options=SYNCHRONOUS)
-    
+
             if self.resource_suffix:
                 resource_name = resource_name + "_" + self.resource_suffix
-    
+
             # Create a Point object with the resource name, tags for the names of the resources,
             # and a field for the count of resources
             point = (
@@ -355,7 +368,7 @@ class CRC:
                 .field("names", str(resources))
                 .field("count", len(resources))
             )
-    
+
             # Write the Point object to the InfluxDB bucket
             write_api.write(bucket=self.influxdb_bucket, record=point)
         except Exception as e:
@@ -473,7 +486,7 @@ class CRC:
         name_regex: List[str],
         exception_regex: List[str],
         slack_notify_users: bool,
-        slack_user_label: str
+        slack_user_label: str,
     ):
         """
         Delete Disks that match the specified criteria.
@@ -496,17 +509,17 @@ class CRC:
             disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "gcp":
             disk = GCP_Disk(
-                dry_run = self.dry_run,
-                project_id = self.project_id,
-                filter_labels = filter_tags,
-                exception_labels = exception_tags,
-                age = age,
-                detach_age = detach_age,
-                notags = self.notags,
-                name_regex = name_regex,
-                exception_regex = exception_regex,
-                slack_notify_users = slack_notify_users,
-                slack_user_label = slack_user_label
+                dry_run=self.dry_run,
+                project_id=self.project_id,
+                filter_labels=filter_tags,
+                exception_labels=exception_tags,
+                age=age,
+                detach_age=detach_age,
+                notags=self.notags,
+                name_regex=name_regex,
+                exception_regex=exception_regex,
+                slack_notify_users=slack_notify_users,
+                slack_user_label=slack_user_label,
             )
 
         disk.delete()
@@ -518,9 +531,7 @@ class CRC:
             self.write_influxdb(DISKS, disk.get_deleted)
 
     def delete_vpc(
-        self,
-        filter_tags: Dict[str, List[str]],
-        exception_tags: Dict[str, List[str]]
+        self, filter_tags: Dict[str, List[str]], exception_tags: Dict[str, List[str]]
     ):
         """
         Delete VPCs that match the specified criteria.
@@ -534,7 +545,10 @@ class CRC:
     def delete_kms(
         self,
         filter_tags: Dict[str, List[str]],
-        exception_tags: Dict[str, List[str]]
+        exception_tags: Dict[str, List[str]],
+        key_description: str,
+        user: str,
+        pending_window: int,
     ):
         """
         Delete KMS that match the specified criteria.
@@ -544,8 +558,15 @@ class CRC:
 
         if self.cloud != "aws":
             raise ValueError("KMS operation is only supported on AWS.")
-        
-        kms = KMS(self.dry_run, filter_tags, exception_tags)
+
+        kms = KMS(
+            self.dry_run,
+            filter_tags,
+            exception_tags,
+            key_description,
+            user,
+            pending_window,
+        )
         kms.delete()
 
         if self.slack_client:
@@ -553,6 +574,7 @@ class CRC:
 
         if self.influxdb_client:
             self.write_influxdb(KMS, kms.get_deleted)
+
 
 def get_argparser():
     """
@@ -580,7 +602,7 @@ def get_argparser():
         "-r",
         "--resource",
         default="all",
-        choices=["disk", "ip", "keypair", "vm", "vpc", "all"],
+        choices=["disk", "ip", "keypair", "vm", "vpc", "kms", "all"],
         metavar="RESOURCE",
         help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
     )
@@ -690,7 +712,7 @@ def get_argparser():
         help="The Slack channel to send the notifications to. Example: --slack_channel testing",
     )
 
-   # Add Argument for Slack Channel
+    # Add Argument for Slack Channel
     parser.add_argument(
         "--slack_notify_users",
         action="store_true",
@@ -711,6 +733,35 @@ def get_argparser():
         type=ast.literal_eval,
         metavar="{'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC'}",
         help="InfluxDB connection details in the form of a dictionary. Example: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC', 'resource_suffix': 'test'}",
+    )
+
+    # Add Argument for Pending Window
+    parser.add_argument(
+        "-pw",
+        "--pending_window",
+        type=int,
+        default=7,
+        choices=range(7, 31),
+        metavar="PENDING_WINDOW",
+        help="The pending window(days) to schedule KMS deletion after this duration. Must be between 7 and 30 inclusive.",
+    )
+
+    # Add Argument for Key Description
+    parser.add_argument(
+        "-k",
+        "--key_description",
+        type=str,
+        metavar="KEY_DESCRIPTION",
+        help="The string/name to be present in Key description in the Key JSON policy.",
+    )
+
+    # Add Argument for Jenkins Username
+    parser.add_argument(
+        "-u",
+        "--user",
+        type=str,
+        metavar="JENKINS_USERNAME",
+        help="The Jenkins username for which associated KMS keys will be deleted.",
     )
 
     return vars(parser.parse_args())
@@ -817,6 +868,9 @@ def main():
     slack_notify_users = args.get("slack_notify_users")
     slack_user_label = args.get("slack_user_label")
     influxdb = args.get("influxdb")
+    pending_window = args.get("pending_window")
+    key_description = args.get("key_description")
+    user = args.get("user")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -839,11 +893,21 @@ def main():
         raise ValueError(
             "All Resources cleanup is supported only with all Clouds. Format: --cloud all --resources all"
         )
-    
+
     if slack_notify_users and not slack_user_label:
         raise ValueError(
             "--slack_user_label is mandatory when passing --slack_notify_user"
         )
+
+    if resources == "kms" or resources == "all":
+        if not key_description:
+            raise ValueError(
+                "Key description string is required for deleting KMS keys."
+            )
+        if not user:
+            raise ValueError(
+                "Jenkins user ARN is reuired for deleting associated KMS keys."
+            )
 
     # Process Cloud
     clouds = CLOUDS if clouds == "all" else [clouds]
@@ -894,7 +958,7 @@ def main():
                     name_regex,
                     exception_regex,
                     slack_notify_users,
-                    slack_user_label
+                    slack_user_label,
                 )
             elif resource == "ip":
                 crc.delete_ip(
@@ -918,7 +982,9 @@ def main():
             elif resource == "vpc":
                 crc.delete_vpc(filter_tags, exception_tags)
             elif resource == "kms":
-                crc.delete_kms(filter_tags, exception_tags)
+                crc.delete_kms(
+                    filter_tags, exception_tags, key_description, user, pending_window
+                )
 
 
 if __name__ == "__main__":

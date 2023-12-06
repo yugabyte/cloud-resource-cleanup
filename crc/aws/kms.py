@@ -1,5 +1,6 @@
 # Copyright (c) Yugabyte, Inc.
 
+import datetime
 import json
 import logging
 from typing import Dict, List
@@ -10,7 +11,7 @@ from crc.aws._base import get_all_regions
 from crc.service import Service
 
 
-class KMS(Service):
+class Kms(Service):
     service_name = "kms"
     """
     The service_name variable specifies the AWS service that this class will interact with.
@@ -26,9 +27,10 @@ class KMS(Service):
         dry_run: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
-        key_descriptiom: str,
-        user: str,
-        pending_window: int,
+        kms_key_descriptiom: str,
+        jenkins_user: str,
+        kms_pending_window: int,
+        age: Dict[str, int],
     ) -> None:
         """
         Initializes the object with filter tags to be used when searching for kms.
@@ -40,21 +42,24 @@ class KMS(Service):
         :type filter_tags: Dict[str, List[str]]
         :param exception_tags: dictionary containing key-value pairs as exception tags
         :type exception_tags: Dict[str, List[str]]
-        :param key_description: name/string matching key description in key policy
-        :type key_description: str
-        :param user: User for which associated keys have to be deleted
-        :type user: str
-        :param pending_window: The duration in days until keys will be in Pending deletion state before getting deleted
-        :type pending_window: int
+        :param kms_key_description: name/string matching key description in key policy
+        :type kms_key_description: str
+        :param jenkins_user: User for which associated keys have to be deleted
+        :type jenkins_user: str
+        :param kms_pending_window: The duration in days until keys will be in Pending deletion state before getting deleted
+        :type kms_pending_window: int
+        :param age: dictionary containing key-value pairs as age threshold, the key is either "days" or "hours" or both and value is the number of days or hours.
+        :type age: Dict[str, int]
         """
         super().__init__()
         self.kms_keys_to_delete = []
         self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
-        self.key_description = key_descriptiom
-        self.jenkins_user = user
-        self.pending_window = pending_window
+        self.kms_key_description = kms_key_descriptiom
+        self.jenkins_user = jenkins_user
+        self.kms_pending_window = kms_pending_window
+        self.age = age
 
     @property
     def get_deleted(self):
@@ -73,7 +78,7 @@ class KMS(Service):
         :rtype: bool
         """
         if not self.exception_tags:
-            logging.warning("Tags and not present")
+            logging.warning("Exception tags and not present")
             return False
 
         for tag in tags:
@@ -109,28 +114,36 @@ class KMS(Service):
 
         for keys in kms_keys:
             try:
-                if self._should_skip_kms(keys):
-                    continue
-
-                key_metadata = client.describe_key(KeyId=keys["KeyId"])
-                key_state = key_metadata["KeyMetadata"]["KeyState"]
-                key_des = key_metadata["KeyMetadata"]["Description"]
-
                 key_tags = client.list_resource_tags(KeyId=keys["KeyId"])
                 response_tags = key_tags.get("Tags", [])
 
                 response_set = {
                     (tag["TagKey"], tag["TagValue"]) for tag in response_tags
                 }
-                filter_set = {
-                    (k, v) for k, values in self.filter_tags.items() for v in values
-                }
+                if self.filter_tags:
+                    filter_set = {(k, v) for k, values in self.filter_tags.items() for v in values}
+                else:
+                    filter_set = set()
 
-                # Check if the key meets the filter conditions
+                if not filter_set.issubset(response_set):
+                    continue
+                
+                if self._should_skip_kms(keys):
+                    continue
+
+                key_metadata = client.describe_key(KeyId=keys["KeyId"])
+                key_state = key_metadata["KeyMetadata"]["KeyState"]
+                key_des = key_metadata["KeyMetadata"]["Description"]
+                key_creation_date = key_metadata["KeyMetadata"]["CreationDate"]
+
                 if (
                     key_state == "Enabled"
-                    and self.key_description in key_des
-                    and filter_set.issubset(response_set)
+                    and self.kms_key_description in key_des
+                    and self.is_old(
+                        self.age,
+                        datetime.datetime.now().astimezone(key_creation_date.tzinfo),
+                        key_creation_date,
+                    )
                 ):
                     policy = client.get_key_policy(
                         KeyId=keys["KeyId"], PolicyName="default"
@@ -144,7 +157,7 @@ class KMS(Service):
                             )
                             active_keys.append(keys["KeyId"])
             except:
-                logging.warning(f"KEY SKIPPED", keys["KeyId"])
+                logging.warning(f"KEY SKIPPED {keys['KeyId']}")
                 skipped_keys.append(keys["KeyId"])
 
         logging.info(f"total number of active Jenkins keys = {len(active_keys)}")
@@ -152,11 +165,11 @@ class KMS(Service):
         if not self.dry_run:
             for cmk_id in active_keys:
                 client.schedule_key_deletion(
-                    KeyId=cmk_id, PendingWindowInDays=self.pending_window
+                    KeyId=cmk_id, PendingWindowInDays=self.kms_pending_window
                 )
                 logging.info(f"CMK - {cmk_id} Deleted from AWS console")
 
-        # Add deleted IPs to deleted_ips list
+        # Add deleted keys to kms_keys_to_delete list
         self.kms_keys_to_delete.extend(list(active_keys))
 
         if not self.dry_run:
@@ -165,7 +178,6 @@ class KMS(Service):
             )
             logging.warning(f"List of AWS KMS deleted: {self.kms_keys_to_delete}")
         else:
-            a = 0
             logging.warning(
                 f"List of AWS KMS (Total: {len(self.kms_keys_to_delete)}) which will be deleted: {self.kms_keys_to_delete}"
             )

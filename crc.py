@@ -12,7 +12,7 @@ from slack_sdk import WebClient
 # Import classes for interacting with different resources across different clouds
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
-from crc.aws.kms import KMS
+from crc.aws.kms import Kms
 from crc.aws.vm import VM as AWS_VM
 from crc.aws.vpc import VPC
 from crc.azu.disk import Disk
@@ -34,7 +34,7 @@ DISKS = "Disk"
 VMS = "VM"
 IPS = "IP"
 KEYPAIRS = "Keypair"
-# KMS = "KMS"
+KMS = "KMS"
 
 
 class CRC:
@@ -546,26 +546,33 @@ class CRC:
         self,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
-        key_description: str,
-        user: str,
-        pending_window: int,
+        kms_key_description: str,
+        jenkins_user: str,
+        kms_pending_window: int,
+        age: Dict[str, int],
     ):
         """
         Delete KMS that match the specified criteria.
 
         :param filter_tags: Dictionary of tags to filter the KMS.
+        :param exception_tage: Dictionary of tags to exclude the KMS.
+        :param kms_key_description: String to be present in KMS key description.
+        :param jenkins_user: AWS ARN of Jenkins slave for which associated keys will be deleted.
+        :param kms_pending_window: Number of days till which keys will be scheduled for deletion.
+        :param age: Time to live for keys.
         """
 
         if self.cloud != "aws":
             raise ValueError("KMS operation is only supported on AWS.")
 
-        kms = KMS(
+        kms = Kms(
             self.dry_run,
             filter_tags,
             exception_tags,
-            key_description,
-            user,
-            pending_window,
+            kms_key_description,
+            jenkins_user,
+            kms_pending_window,
+            age,
         )
         kms.delete()
 
@@ -737,28 +744,25 @@ def get_argparser():
 
     # Add Argument for Pending Window
     parser.add_argument(
-        "-pw",
-        "--pending_window",
+        "--kms_pending_window",
         type=int,
         default=7,
         choices=range(7, 31),
-        metavar="PENDING_WINDOW",
+        metavar="KMS_PENDING_WINDOW",
         help="The pending window(days) to schedule KMS deletion after this duration. Must be between 7 and 30 inclusive.",
     )
 
     # Add Argument for Key Description
     parser.add_argument(
-        "-k",
-        "--key_description",
+        "--kms_key_description",
         type=str,
-        metavar="KEY_DESCRIPTION",
+        metavar="KMS_KEY_DESCRIPTION",
         help="The string/name to be present in Key description in the Key JSON policy.",
     )
 
     # Add Argument for Jenkins Username
     parser.add_argument(
-        "-u",
-        "--user",
+        "--jenkins_user",
         type=str,
         metavar="JENKINS_USERNAME",
         help="The Jenkins username for which associated KMS keys will be deleted.",
@@ -868,9 +872,9 @@ def main():
     slack_notify_users = args.get("slack_notify_users")
     slack_user_label = args.get("slack_user_label")
     influxdb = args.get("influxdb")
-    pending_window = args.get("pending_window")
-    key_description = args.get("key_description")
-    user = args.get("user")
+    kms_pending_window = args.get("kms_pending_window")
+    kms_key_description = args.get("kms_key_description")
+    jenkins_user = args.get("jenkins_user")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -900,11 +904,11 @@ def main():
         )
 
     if resources == "kms" or resources == "all":
-        if not key_description:
+        if not kms_key_description:
             raise ValueError(
                 "Key description string is required for deleting KMS keys."
             )
-        if not user:
+        if not jenkins_user:
             raise ValueError(
                 "Jenkins user ARN is reuired for deleting associated KMS keys."
             )
@@ -983,7 +987,7 @@ def main():
                 crc.delete_vpc(filter_tags, exception_tags)
             elif resource == "kms":
                 crc.delete_kms(
-                    filter_tags, exception_tags, key_description, user, pending_window
+                    filter_tags, exception_tags, kms_key_description, jenkins_user, kms_pending_window, age
                 )
 
 

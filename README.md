@@ -29,6 +29,7 @@ We support below Cloud Providers:
   * Delete Orphan keypairs
   * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
+  * Delete KMS
 * Azure
   * Delete Orphan disks
   * Delete VMs (and attached NICs)
@@ -137,6 +138,10 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `slack_notify_users`: Use this option to tag the user in the Slack notification. It is mandatory to pass `--slack_user_label` with this flag. This option only works for GCP disks deletions.
 * `slack_user_label`: Use this option to specify the label to look up in the GCP disks. This option only works for GCP disks deletions.
 * `influxdb`: Use this option to specify InfluxDB connection details. The argument takes a dictionary value, with keys 'url', 'org', 'bucket', and an optional key 'resource_suffix'. Example usage: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC', 'resource_suffix': 'test'}. Only works if specified.
+* `kms_pending_window`: Use this option to specify the number of days before the key actually gets deleted. The number of days
+must be between 7 to 30 inclusive.
+* `kms_key_description`: Use this option to match specfic string in kms key description.
+* `jenkins_user`: Use this option to specify the jenkins slave AWS ARN for which keys will be deleted.
 
 
 # Examples

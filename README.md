@@ -141,7 +141,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `kms_pending_window`: Use this option to specify the number of days before the key actually gets deleted. The number of days
 must be between 7 to 30 inclusive.
 * `kms_key_description`: Use this option to match specfic string in kms key description.
-* `kms_user`: Use this option to specify the jenkins slave AWS ARN for which keys will be deleted.
+* `kms_user`: Use this option to specify AWS ARN of user for which keys will be deleted.
 
 
 # Examples
@@ -173,6 +173,11 @@ python crc.py --cloud all --resource vm --age "{'days': 2}" --notags "{'test_tas
 6. To Delete AWS VPCs and all attached resources
 ```
 python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test', 'perf-test']}" --notags "{'test_owner': []}"
+```
+
+7. To Delete AWS KMS that are older than 3 days
+```
+python3 crc.py --cloud aws --resource kms --kms_key_description <key-description> --kms_user <AWS-ARN> --age "{'days': 3}"
 ```
 # Notes
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.

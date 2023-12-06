@@ -547,7 +547,7 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         kms_key_description: str,
-        jenkins_user: str,
+        kms_user: str,
         kms_pending_window: int,
         age: Dict[str, int],
     ):
@@ -557,7 +557,7 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the KMS.
         :param exception_tage: Dictionary of tags to exclude the KMS.
         :param kms_key_description: String to be present in KMS key description.
-        :param jenkins_user: AWS ARN of Jenkins slave for which associated keys will be deleted.
+        :param kms_user: AWS ARN of Jenkins slave for which associated keys will be deleted.
         :param kms_pending_window: Number of days till which keys will be scheduled for deletion.
         :param age: Time to live for keys.
         """
@@ -570,7 +570,7 @@ class CRC:
             filter_tags,
             exception_tags,
             kms_key_description,
-            jenkins_user,
+            kms_user,
             kms_pending_window,
             age,
         )
@@ -762,7 +762,7 @@ def get_argparser():
 
     # Add Argument for Jenkins Username
     parser.add_argument(
-        "--jenkins_user",
+        "--kms_user",
         type=str,
         metavar="JENKINS_USERNAME",
         help="The Jenkins username for which associated KMS keys will be deleted.",
@@ -874,7 +874,7 @@ def main():
     influxdb = args.get("influxdb")
     kms_pending_window = args.get("kms_pending_window")
     kms_key_description = args.get("kms_key_description")
-    jenkins_user = args.get("jenkins_user")
+    kms_user = args.get("kms_user")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -908,7 +908,7 @@ def main():
             raise ValueError(
                 "Key description string is required for deleting KMS keys."
             )
-        if not jenkins_user:
+        if not kms_user:
             raise ValueError(
                 "Jenkins user ARN is reuired for deleting associated KMS keys."
             )
@@ -990,7 +990,7 @@ def main():
                     filter_tags,
                     exception_tags,
                     kms_key_description,
-                    jenkins_user,
+                    kms_user,
                     kms_pending_window,
                     age,
                 )

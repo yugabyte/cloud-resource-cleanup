@@ -141,7 +141,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `kms_pending_window`: Use this option to specify the number of days before the key actually gets deleted. The number of days
 must be between 7 to 30 inclusive.
 * `kms_key_description`: Use this option to match specfic string in kms key description.
-* `jenkins_user`: Use this option to specify the jenkins slave AWS ARN for which keys will be deleted.
+* `kms_user`: Use this option to specify the jenkins slave AWS ARN for which keys will be deleted.
 
 
 # Examples

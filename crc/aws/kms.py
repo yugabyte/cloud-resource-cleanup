@@ -28,7 +28,7 @@ class Kms(Service):
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         kms_key_descriptiom: str,
-        jenkins_user: str,
+        kms_user: str,
         kms_pending_window: int,
         age: Dict[str, int],
     ) -> None:
@@ -44,8 +44,8 @@ class Kms(Service):
         :type exception_tags: Dict[str, List[str]]
         :param kms_key_description: name/string matching key description in key policy
         :type kms_key_description: str
-        :param jenkins_user: User for which associated keys have to be deleted
-        :type jenkins_user: str
+        :param kms_user: User for which associated keys have to be deleted
+        :type kms_user: str
         :param kms_pending_window: The duration in days until keys will be in Pending deletion state before getting deleted
         :type kms_pending_window: int
         :param age: dictionary containing key-value pairs as age threshold, the key is either "days" or "hours" or both and value is the number of days or hours.
@@ -57,7 +57,7 @@ class Kms(Service):
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.kms_key_description = kms_key_descriptiom
-        self.jenkins_user = jenkins_user
+        self.kms_user = kms_user
         self.kms_pending_window = kms_pending_window
         self.age = age
 
@@ -153,7 +153,7 @@ class Kms(Service):
                     policy_json = json.loads(policy)
                     for ids in policy_json["Statement"]:
                         user_arn = ids["Principal"]["AWS"]
-                        if user_arn == self.jenkins_user:
+                        if user_arn == self.kms_user:
                             logging.info(
                                 f"Key {keys['KeyId']} found with user {user_arn}"
                             )

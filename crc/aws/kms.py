@@ -121,13 +121,15 @@ class Kms(Service):
                     (tag["TagKey"], tag["TagValue"]) for tag in response_tags
                 }
                 if self.filter_tags:
-                    filter_set = {(k, v) for k, values in self.filter_tags.items() for v in values}
+                    filter_set = {
+                        (k, v) for k, values in self.filter_tags.items() for v in values
+                    }
                 else:
                     filter_set = set()
 
                 if not filter_set.issubset(response_set):
                     continue
-                
+
                 if self._should_skip_kms(keys):
                     continue
 

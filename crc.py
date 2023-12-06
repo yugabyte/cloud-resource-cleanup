@@ -987,7 +987,12 @@ def main():
                 crc.delete_vpc(filter_tags, exception_tags)
             elif resource == "kms":
                 crc.delete_kms(
-                    filter_tags, exception_tags, kms_key_description, jenkins_user, kms_pending_window, age
+                    filter_tags,
+                    exception_tags,
+                    kms_key_description,
+                    jenkins_user,
+                    kms_pending_window,
+                    age,
                 )
 
 

@@ -130,7 +130,7 @@ class Kms(Service):
                 if not filter_set.issubset(response_set):
                     continue
 
-                if self._should_skip_kms(keys):
+                if self._should_skip_kms(response_tags):
                     continue
 
                 key_metadata = client.describe_key(KeyId=keys["KeyId"])

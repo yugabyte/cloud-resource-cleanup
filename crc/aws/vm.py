@@ -149,13 +149,6 @@ class VM(Service):
                         )
                         continue
                     instance_id = i["InstanceId"]
-                    if instance_id == "i-034bda0b3c27e142f":
-                        logging.info("AWS Instance details")
-                        logging.info(i)
-                    termination_protection = i.get('InstanceLifecycle', "off") == "on"
-                    if termination_protection:
-                        logging.info(f"Skipping Instance {instance_name}: {instance_id} because it has Termination Protection enabled")
-                        continue
                     network_interface_id = i["NetworkInterfaces"][0][
                         "NetworkInterfaceId"
                     ]
@@ -259,22 +252,33 @@ class VM(Service):
 
             if instances_to_operate:
                 try:
+                    finalized_instances = []
                     if operation_type == "delete":
                         if not self.dry_run:
-                            client.terminate_instances(InstanceIds=instances_to_operate)
-                            for i in range(len(instances_to_operate)):
+                            for ins in instances_to_operate:
+                                try:
+                                    client.terminate_instances(InstanceIds=[ins])
+                                    finalized_instances.append(ins)
+                                except Exception as e:
+                                    logging.error(f"Error occured while {operation_type} instance {ins}: {e}")
+                            for i in range(len(finalized_instances)):
                                 logging.info(
-                                    f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} deleted."
+                                    f"Instance {finalized_instances[i]} with id {finalized_instances[i]} deleted."
                                 )
-                        self.instance_names_to_delete.extend(instance_names_to_operate)
+                        self.instance_names_to_delete.extend(finalized_instances)
                     elif operation_type == "stop":
                         if not self.dry_run:
-                            client.stop_instances(InstanceIds=instances_to_operate)
-                            for i in range(len(instances_to_operate)):
+                            for ins in instances_to_operate:
+                                try:
+                                    client.stop_instances(InstanceIds=[ins])
+                                    finalized_instances.append(ins)
+                                except Exception as e:
+                                    logging.error(f"Error occurred while {operation_type} instance {ins}: {e}")
+                            for i in range(len(finalized_instances)):
                                 logging.info(
-                                    f"Instance {instance_names_to_operate[i]} with id {instances_to_operate[i]} stopped."
+                                    f"Instance {finalized_instances[i]} with id {finalized_instances[i]} stopped."
                                 )
-                        self.instance_names_to_stop.extend(instance_names_to_operate)
+                        self.instance_names_to_stop.extend(finalized_instances)
                 except Exception as e:
                     logging.error(
                         f"Error occurred while {operation_type} instances: {e}"

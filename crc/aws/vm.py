@@ -149,6 +149,9 @@ class VM(Service):
                         )
                         continue
                     instance_id = i["InstanceId"]
+                    if instance_id == "i-034bda0b3c27e142f":
+                        logging.info("AWS Instance details")
+                        logging.info(i)
                     termination_protection = i.get('InstanceLifecycle', "off") == "on"
                     if termination_protection:
                         logging.info(f"Skipping Instance {instance_name}: {instance_id} because it has Termination Protection enabled")

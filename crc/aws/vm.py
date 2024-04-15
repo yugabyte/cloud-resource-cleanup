@@ -149,6 +149,10 @@ class VM(Service):
                         )
                         continue
                     instance_id = i["InstanceId"]
+                    termination_protection = i.get('InstanceLifecycle', "off") == "on"
+                    if termination_protection:
+                        logging.info(f"Skipping Instance {instance_name}: {instance_id} because it has Termination Protection enabled")
+                        continue
                     network_interface_id = i["NetworkInterfaces"][0][
                         "NetworkInterfaceId"
                     ]

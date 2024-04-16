@@ -265,7 +265,9 @@ class VM(Service):
                                 logging.info(
                                     f"Instance {finalized_instances[i]} with id {finalized_instances[i]} deleted."
                                 )
-                        self.instance_names_to_delete.extend(finalized_instances)
+                            self.instance_names_to_delete.extend(finalized_instances)
+                        else:
+                            self.instance_names_to_delete.extend(instances_to_operate)
                     elif operation_type == "stop":
                         if not self.dry_run:
                             for ins in instances_to_operate:
@@ -278,7 +280,9 @@ class VM(Service):
                                 logging.info(
                                     f"Instance {finalized_instances[i]} with id {finalized_instances[i]} stopped."
                                 )
-                        self.instance_names_to_stop.extend(finalized_instances)
+                            self.instance_names_to_stop.extend(finalized_instances)
+                        else:
+                            self.instance_names_to_stop.extend(instances_to_operate)
                 except Exception as e:
                     logging.error(
                         f"Error occurred while {operation_type} instances: {e}"

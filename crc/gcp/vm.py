@@ -229,7 +229,7 @@ class VM(Service):
         """
         if not self.filter_labels:
             return True
-        return any(
+        return all(
             key in instance.labels and (not value or instance.labels[key] in value)
             for key, value in self.filter_labels.items()
         )

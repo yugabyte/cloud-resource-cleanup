@@ -201,7 +201,7 @@ class VM(Service):
         if self._should_skip_instance(vm):
             return False
 
-        if not self.filter_tags or any(
+        if not self.filter_tags or all(
             key in vm.tags and (not value or vm.tags[key] in value)
             for key, value in self.filter_tags.items()
         ):

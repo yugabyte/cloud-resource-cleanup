@@ -255,30 +255,30 @@ class VM(Service):
                     finalized_instances = []
                     if operation_type == "delete":
                         if not self.dry_run:
-                            for ins in instances_to_operate:
+                            for ind, ins in enumerate(instances_to_operate):
                                 try:
                                     client.terminate_instances(InstanceIds=[ins])
-                                    finalized_instances.append(ins)
+                                    finalized_instances.append(instance_names_to_operate[ind])
                                 except Exception as e:
                                     logging.error(f"Error occured while {operation_type} instance {ins}: {e}")
                             for i in range(len(finalized_instances)):
                                 logging.info(
-                                    f"Instance {finalized_instances[i]} with id {finalized_instances[i]} deleted."
+                                    f"Instance: {finalized_instances[i]} deleted."
                                 )
                             self.instance_names_to_delete.extend(finalized_instances)
                         else:
-                            self.instance_names_to_delete.extend(instances_to_operate)
+                            self.instance_names_to_delete.extend(instance_names_to_operate)
                     elif operation_type == "stop":
                         if not self.dry_run:
-                            for ins in instances_to_operate:
+                            for ind, ins in enumerate(instances_to_operate):
                                 try:
                                     client.stop_instances(InstanceIds=[ins])
-                                    finalized_instances.append(ins)
+                                    finalized_instances.append(instance_names_to_operate[ind])
                                 except Exception as e:
                                     logging.error(f"Error occurred while {operation_type} instance {ins}: {e}")
                             for i in range(len(finalized_instances)):
                                 logging.info(
-                                    f"Instance {finalized_instances[i]} with id {finalized_instances[i]} stopped."
+                                    f"Instance {finalized_instances[i]} stopped."
                                 )
                             self.instance_names_to_stop.extend(finalized_instances)
                         else:

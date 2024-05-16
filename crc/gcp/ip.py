@@ -76,6 +76,7 @@ class IP(Service):
             )
 
             for address in addresses:
+                logging.info(address)
                 name = address.name
 
                 # Skip if address is not in the default state

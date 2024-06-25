@@ -92,8 +92,10 @@ class NIC(Service):
         :return: True if the NIC should be deleted, False otherwise.
         """
         to_include = any(filter_name in nic_name for filter_name in self.name_regex)
-        to_exclude = any(
-            exception_name in nic_name for exception_name in self.exception_regex
+        to_exclude = (
+            any(exception_name in nic_name for exception_name in self.exception_regex)
+            if self.exception_regex
+            else False
         )
         return to_include and not to_exclude
 

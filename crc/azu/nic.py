@@ -76,7 +76,10 @@ class NIC(Service):
         """
         Deletes the unattached network interface (NIC).
         """
+        all_nics = self.base.get_network_client().network_interfaces.list_all()
+        logging.info(f"All NICs: {all_nics}")
         for nic in self.base.get_network_client().network_interfaces.list_all():
+            logging.info(nic)
             if not nic.virtual_machine:
                 if self._should_delete_nic(nic.name):
                     self._attempt_delete(nic.name)

@@ -56,7 +56,7 @@ class NIC(Service):
         In dry_run mode, this method will only list the NICs that match the specified filter and exception names,
         but will not perform any operations on them.
         """
-        if not self.nics_names_to_delete:
+        if not self.name_regex:
             logging.warning("No Azure NICs to delete.")
             return
 

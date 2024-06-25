@@ -25,7 +25,7 @@ from crc.gcp.vm import VM as GCP_VM
 
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
-RESOURCES = ["disk", "ip", "keypair", "vm", "kms"]
+RESOURCES = ["disk", "ip", "keypair", "vm", "kms", "nic"]
 
 DELETED = "Deleted"
 STOPPED = "Stopped"
@@ -634,7 +634,7 @@ def get_argparser():
         "-r",
         "--resource",
         default="all",
-        choices=["disk", "ip", "keypair", "vm", "vpc", "kms", "all"],
+        choices=["disk", "ip", "keypair", "vm", "vpc", "kms", "nic", "all"],
         metavar="RESOURCE",
         help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
     )

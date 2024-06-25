@@ -16,6 +16,7 @@ from crc.aws.kms import Kms
 from crc.aws.vm import VM as AWS_VM
 from crc.aws.vpc import VPC
 from crc.azu.disk import Disk
+from crc.azu.nic import NIC
 from crc.azu.ip import IP as AZU_IP
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.disk import Disk as GCP_Disk
@@ -476,6 +477,30 @@ class CRC:
 
         if self.influxdb_client:
             self.write_influxdb(KEYPAIRS, keypair.get_deleted)
+
+    def delete_nic(
+        self,
+        name_regex: List[str],
+        exception_regex: List[str],
+    ):
+        """
+        Delete NICs that match the specified criteria.
+        This method is only supported on Azure.
+
+        :param name_regex: List of regex patterns to filter the nics.
+        :param exception_regex: List of regex patterns to exclude the nics.
+        """
+        if self.cloud != "azure":
+            raise ValueError("NICs operation is only supported on Azure.")
+
+        nic = NIC(self.dry_run, name_regex, exception_regex)
+        nic.delete()
+
+        if self.slack_client:
+            self.notify_deleted_keypair_via_slack(nic)
+
+        if self.influxdb_client:
+            self.write_influxdb(NICS, nic.get_deleted)
 
     def delete_disks(
         self,
@@ -973,6 +998,8 @@ def main():
                 )
             elif resource == "keypair":
                 crc.delete_keypairs(name_regex, exception_regex, age)
+            elif resource == "nic":
+                crc.delete_nic(name_regex, exception_regex)
             elif resource == "vm":
                 if operation_type == "delete":
                     crc.delete_vm(

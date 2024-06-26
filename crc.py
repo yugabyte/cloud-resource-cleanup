@@ -319,6 +319,16 @@ class CRC:
         msg = self.get_msg(KEYPAIRS, DELETED, keypair.get_deleted)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
+    def notify_deleted_nic_via_slack(self, nic: object):
+        """
+        Sends a notification message to the Slack channel about deleted NICs
+
+        :param nic: NIC object
+        :type vm: object
+        """
+        msg = self.get_msg(NICS, DELETED, nic.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
     def notify_deleted_disk_via_slack(self, disk: object):
         """
         Sends a notification message to the Slack channel about deleted Disks
@@ -497,7 +507,7 @@ class CRC:
         nic.delete()
 
         if self.slack_client:
-            self.notify_deleted_keypair_via_slack(nic)
+            self.notify_deleted_nic_via_slack(nic)
 
         if self.influxdb_client:
             self.write_influxdb(NICS, nic.get_deleted)

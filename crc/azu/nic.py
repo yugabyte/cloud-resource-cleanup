@@ -77,9 +77,7 @@ class NIC(Service):
         Deletes the unattached network interface (NIC).
         """
         all_nics = self.base.get_network_client().network_interfaces.list_all()
-        logging.info(f"All NICs: {all_nics}")
         for nic in self.base.get_network_client().network_interfaces.list_all():
-            logging.info(nic)
             if not nic.virtual_machine:
                 if self._should_delete_nic(nic.name):
                     self._attempt_delete(nic.name)
@@ -119,7 +117,7 @@ class NIC(Service):
                 self.nics_names_to_delete.append(nic_name)
             except Exception as e:
                 failure_count -= 1
-                logging.error(f"Error occurred while processing NIC {nic_name}: {e}")
+                logging.error(f"Error occurred while deleting NIC {nic_name}: {e}")
                 if failure_count:
                     logging.info(f"Retrying deletion of NIC {nic_name}")
 

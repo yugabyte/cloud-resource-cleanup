@@ -5,7 +5,7 @@ from typing import List
 
 from google.cloud import compute_v1
 
-from crc.gcp._base import GCP_REGION_LIST
+from crc.gcp._base import get_gcp_regions
 from crc.service import Service
 
 
@@ -67,7 +67,7 @@ class IP(Service):
         Delete the IP addresses that match the filter regex and do not match the exception regex.
         It checks if the filter_regex attribute of the class is empty, if so, it returns True because there are no regex set to filter the IPs, so any ip should be considered.
         """
-        for region in GCP_REGION_LIST:
+        for region in get_gcp_regions(self.project_id):
             ips_to_delete = []
 
             # Get all addresses in the region

@@ -14,7 +14,7 @@ class NIC(Service):
     """
 
     def __init__(
-        self, dry_run: bool, name_regex: List[str], exception_regex: List[str]
+        self, resource_group: str, dry_run: bool, name_regex: List[str], exception_regex: List[str]
     ) -> None:
         """
         Initializes the object with filter and exception tags to be used when searching for NICs.
@@ -29,7 +29,7 @@ class NIC(Service):
         """
         super().__init__()
         self.nics_names_to_delete = []
-        self.base = Base()
+        self.base = Base(resource_group)
         self.dry_run = dry_run
         self.name_regex = name_regex
         self.exception_regex = exception_regex

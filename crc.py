@@ -52,6 +52,7 @@ class CRC:
         slack_client: object,
         influxdb_client: object,
         project_id: str = None,
+        resource_group: str = None,
         slack_channel: str = None,
         influxdb_conn: dict = None,
     ) -> None:
@@ -65,6 +66,7 @@ class CRC:
         slack_client (object): the Slack client instance used to send messages
         influxdb_client (object): the InfluxDB client instance used to send data
         project_id (str, optional): the ID of the project (mandatory for GCP)
+        resource_group (str, optional): the resource group where azure resources reside (mandatory for Azure)
         slack_channel (str, optional): the name of the Slack channel to send messages to
         influxdb_conn (dict, optional): the Influx DB Connection string
         """
@@ -77,6 +79,8 @@ class CRC:
         self.slack_client = slack_client
         self.influxdb_client = influxdb_client
         self.slack_channel = slack_channel
+        self.resource_group = resource_group
+
         if influxdb_conn:
             self.influxdb_bucket = influxdb_conn.get("bucket")
             self.resource_suffix = influxdb_conn.get("resource_suffix")
@@ -110,7 +114,7 @@ class CRC:
         if self.cloud == "aws":
             return AWS_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "azure":
-            return AZU_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
+            return AZU_VM(self.resource_group, self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "gcp":
             return GCP_VM(
                 self.dry_run,
@@ -143,7 +147,7 @@ class CRC:
         if self.cloud == "aws":
             return ElasticIPs(self.dry_run, filter_tags, exception_tags, self.notags)
         if self.cloud == "azure":
-            return AZU_IP(self.dry_run, filter_tags, exception_tags, self.notags)
+            return AZU_IP(self.resource_group, self.dry_run, filter_tags, exception_tags, self.notags)
         if self.cloud == "gcp":
             return GCP_IP(self.dry_run, self.project_id, name_regex, exception_regex)
         raise ValueError(
@@ -503,7 +507,7 @@ class CRC:
         if self.cloud != "azure":
             raise ValueError("NICs operation is only supported on Azure.")
 
-        nic = NIC(self.dry_run, name_regex, exception_regex)
+        nic = NIC(self.resource_group, self.dry_run, name_regex, exception_regex)
         nic.delete()
 
         if self.slack_client:
@@ -541,7 +545,7 @@ class CRC:
                 "Incorrect Cloud Provided. Disks operation is supported only on AZURE and GCP. AWS cleans the NICs, Disks along with VM"
             )
         if self.cloud == "azure":
-            disk = Disk(self.dry_run, filter_tags, exception_tags, age, self.notags)
+            disk = Disk(self.resource_group, self.dry_run, filter_tags, exception_tags, age, self.notags)
         if self.cloud == "gcp":
             disk = GCP_Disk(
                 dry_run=self.dry_run,
@@ -803,6 +807,13 @@ def get_argparser():
         help="The Jenkins username for which associated KMS keys will be deleted.",
     )
 
+    # Add Argument for Resource Group (Azure only)
+    parser.add_argument(
+        "--resource_group",
+        metavar="RESOURCE_GROUP",
+        help="Resource group for Azure. Required only for Azure. Example: --resource_group test-rg",
+    )
+
     return vars(parser.parse_args())
 
 
@@ -910,6 +921,7 @@ def main():
     kms_pending_window = args.get("kms_pending_window")
     kms_key_description = args.get("kms_key_description")
     kms_user = args.get("kms_user")
+    resource_group = args.get("resource_group")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -984,6 +996,7 @@ def main():
             slack_client,
             influxdb_client,
             project_id,
+            resource_group,
             slack_channel,
             influxdb,
         )

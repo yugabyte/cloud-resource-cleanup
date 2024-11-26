@@ -20,6 +20,7 @@ class Disk(Service):
 
     def __init__(
         self,
+        resource_group: str,
         dry_run: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
@@ -39,6 +40,7 @@ class Disk(Service):
         """
         super().__init__()
         self.disks_names_to_delete = []
+        self.base = Base(resource_group)
         self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
@@ -68,10 +70,9 @@ class Disk(Service):
         Deletes disks that match the specified filter tags, do not match the specified exception tags and notags, and are older than the specified age.
         And if the dry_run is False, it will perform the deletion operation otherwise it will only list the resources that match the specified filter and exception tags.
         """
-        base = Base()
 
         # Get a list of all disks
-        disks = base.get_compute_client().disks.list()
+        disks = self.base.get_compute_client().disks.list()
 
         # Iterate through each disk
         for disk in disks:
@@ -115,8 +116,8 @@ class Disk(Service):
                     ):
                         if not self.dry_run:
                             # Delete the disk
-                            base.get_compute_client().disks.begin_delete(
-                                base.resource_group, disk.name
+                            self.base.get_compute_client().disks.begin_delete(
+                                self.base.resource_group, disk.name
                             )
                             # Log that the disk was deleted
                             logging.info("Deleted disk: " + disk.name)

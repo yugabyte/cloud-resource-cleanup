@@ -22,6 +22,7 @@ class VM(Service):
 
     def __init__(
         self,
+        resource_group: str,
         dry_run: bool,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
@@ -47,7 +48,7 @@ class VM(Service):
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
         self.nics_names_to_delete = []
-        self.base = Base()
+        self.base = Base(resource_group)
         self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags

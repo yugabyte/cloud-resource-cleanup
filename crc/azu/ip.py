@@ -12,7 +12,7 @@ class IP(Service):
     """
 
     def __init__(
-        self, dry_run: bool, filter_tags: dict, exception_tags: dict, notags: dict
+        self, resource_group: str, dry_run: bool, filter_tags: dict, exception_tags: dict, notags: dict
     ) -> None:
         """
         Initialize the IP class with filter and exception tags.
@@ -25,6 +25,7 @@ class IP(Service):
         """
         super().__init__()
         self.deleted_ips = []
+        self.base = Base(resource_group)
         self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
@@ -50,8 +51,7 @@ class IP(Service):
         """
         Delete public IP addresses that match the filter and exception tags.
         """
-        base = Base()
-        ips = base.get_network_client().public_ip_addresses.list_all()
+        ips = self.base.get_network_client().public_ip_addresses.list_all()
 
         for ip in ips:
             filter_tags_match = not self.filter_tags or (
@@ -79,8 +79,8 @@ class IP(Service):
                 and ip.ip_configuration is None
             ):
                 if not self.dry_run:
-                    base.get_network_client().public_ip_addresses.begin_delete(
-                        resource_group_name=base.resource_group,
+                    self.base.get_network_client().public_ip_addresses.begin_delete(
+                        resource_group_name=self.base.resource_group,
                         public_ip_address_name=ip.name,
                     )
                     logging.info(f"Deleted IP address: {ip.name}")

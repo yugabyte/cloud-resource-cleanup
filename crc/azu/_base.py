@@ -12,7 +12,7 @@ class Base:
     This module contains functions to authenticate and connect to Azure, and clients to manage Azure resources
     """
 
-    def __init__(self) -> None:
+    def __init__(self, resource_group: str) -> None:
         """
         Initialize the class with environment variables for Azure credentials.
         """
@@ -36,7 +36,7 @@ class Base:
         self.secret = os.environ[
             "AZURE_CREDENTIALS_CLIENT_SECRET"
         ]  # The client secret for the Azure application that will authenticate to Azure.
-        self.resource_group = os.environ[
+        self.resource_group = resource_group if resource_group else os.environ[
             "AZURE_RESOURCE_GROUP"
         ]  # The name of the resource group you want to manage resources in.
 

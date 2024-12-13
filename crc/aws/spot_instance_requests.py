@@ -210,8 +210,8 @@ class SpotInstanceRequests(Service):
                         self.spot_requests_to_delete.extend(finalized_requests)
                         self.instance_ids_to_delete.extend(finalised_instances)
                     else:
-                        self.spot_requests_to_delete.extend(finalized_requests)
-                        self.instance_ids_to_delete.extend(finalised_instances)
+                        self.spot_requests_to_delete.extend(requests_to_operate)
+                        self.instance_ids_to_delete.extend(instance_id_to_operate)
                 except Exception as e:
                     logging.error(
                         f"Error occurred while deleting spot instance requests: {e}"

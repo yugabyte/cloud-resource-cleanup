@@ -85,7 +85,8 @@ The script requires certain environment variables to be set in order to interact
 * `AZURE_CREDENTIALS_SUBSCRIPTION_ID`: The subscription ID for your Azure subscription.
 * `AZURE_CREDENTIALS_CLIENT_SECRET`: The client secret for your Azure application.
 * `AZURE_CREDENTIALS_CLIENT_ID`: The client ID for your Azure application.
-* `AZURE_RESOURCE_GROUP`: The name of the resource group in Azure to use. In case you want to use a different resource group or don't want to set this as environment variable, you can specify it using the `--resource_group` option.
+* `AZURE_RESOURCE_GROUP`: The name of the resource group to use in Azure. If you don't want to set this as an environment variable or want to use a different resource group than the one set in the environment variable, you can specify it using the `--resource_group` option. Note that the `--resource_group` option will take priority over the environment variable.
+
 ### Slack (Optional)
 * `SLACK_BOT_TOKEN`: The API token for the Slack bot you want to use to receive notifications.
 ### InfluxDB (Optional)

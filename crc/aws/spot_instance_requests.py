@@ -105,13 +105,14 @@ class SpotInstanceRequests(Service):
         spot_requests = []
         instance_ids = []
         for spot_request in spot_request_details["SpotInstanceRequests"]:
-            for request in spot_request["SpotInstanceRequestId"]:
+            for request in spot_request:
                 try:
                     if "Tags" not in request:
                         continue
                     tags = request["Tags"]
                     if self._should_skip_spot_request(tags):
                         continue
+                    request_id = request["SpotInstanceRequestId"]
                     instance_id = request["InstanceId"]
                     if self.is_old(
                         self.age,
@@ -119,9 +120,9 @@ class SpotInstanceRequests(Service):
                         datetime.datetime.now(tz=tzutc()),
                     ):
                         instance_ids.append(instance_id)
-                        spot_requests.append(request)
+                        spot_requests.append(request_id)
                         logging.info(
-                            f"Spot Request {request} with Instance ID {instance_id} added to list of requests to be cleaned up."
+                            f"Spot Request {request_id} with Instance ID {instance_id} added to list of requests to be cleaned up."
                         )
                 except Exception as e:
                     logging.error(
@@ -177,7 +178,9 @@ class SpotInstanceRequests(Service):
         spot_filter = self._get_filter()
         for region in get_all_regions(self.service_name, self.default_region_name):
             client = boto3.client(self.service_name, region_name=region)
-            describe_spot_response = client.describe_spot_instance_requests()
+            describe_spot_response = client.describe_spot_instance_requests(
+                Filters=spot_filter
+            )
 
             logging.info(describe_spot_response)
 

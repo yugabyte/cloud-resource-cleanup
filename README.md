@@ -124,7 +124,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 ```
 * `cloud`: Specify the cloud name (aws, azure, gcp or all). Required.
 * `project_id`: Required for gcp
-* `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair) or specify "all" to target all types of resources. Default: 'all'
+* `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair, spot_instance_requests) or specify "all" to target all types of resources. Default: 'all'
 * `resource_group`: Use this option to specify the resource group for Azure. If this flag is provided, the script will only operate on resources within the specified resource group. This allows for more precise targeting of resources in your Azure environment.
 * `operation_type`: Specify the type of operation to perform on the resource (delete or stop). Default: 'delete'
 * `dry_run`: Enabling this option will only list resources that match the specified criteria without performing any operations on them. Use the `-d` or `--dry_run` flag to enable this feature. If this option is not specified, the script will perform the operation specified by the `operation_type` argument.
@@ -181,6 +181,12 @@ python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-te
 ```
 python3 crc.py --cloud aws --resource kms --kms_key_description <key-description> --kms_user <AWS-ARN> --age "{'days': 3}"
 ```
+
+8. To delete all AWS Spot Instance Requests that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
+```
+python crc.py --cloud aws --resource spot_instance_requests --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
+```
+
 # Notes
 * Please make sure to test this script in a non-production environment before using it in a production environment. This script will delete resources permanently and cannot be undone.
 * Try using the dry run mode feature to avoid unfortunate circumstances.

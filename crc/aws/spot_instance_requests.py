@@ -179,6 +179,8 @@ class SpotInstanceRequests(Service):
             client = boto3.client(self.service_name, region_name=region)
             describe_spot_response = client.describe_spot_instance_requests()
 
+            logging.info(describe_spot_response)
+
             (
                 requests_to_operate,
                 instance_id_to_operate,

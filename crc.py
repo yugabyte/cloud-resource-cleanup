@@ -684,7 +684,7 @@ def get_argparser():
         "-r",
         "--resource",
         default="all",
-        choices=["disk", "ip", "keypair", "vm", "vpc", "kms", "nic", "all"],
+        choices=["disk", "ip", "keypair", "vm", "vpc", "kms", "nic", "spot_instance_requests", "all"],
         metavar="RESOURCE",
         help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
     )

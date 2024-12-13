@@ -177,9 +177,7 @@ class SpotInstanceRequests(Service):
         spot_filter = self._get_filter()
         for region in get_all_regions(self.service_name, self.default_region_name):
             client = boto3.client(self.service_name, region_name=region)
-            describe_spot_response = client.describe_spot_instance_requests(
-                Filters=spot_filter
-            )
+            describe_spot_response = client.describe_spot_instance_requests()
 
             (
                 requests_to_operate,

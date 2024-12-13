@@ -160,7 +160,9 @@ class VM(Service):
                     ][0]["Attachment"]["AttachTime"]
                     if self.is_old(
                         self.age,
-                        datetime.datetime.now().astimezone(network_interface_attached_time.tzinfo),
+                        datetime.datetime.now().astimezone(
+                            network_interface_attached_time.tzinfo
+                        ),
                         network_interface_attached_time,
                     ):
                         instance_ids.append(instance_id)
@@ -258,24 +260,34 @@ class VM(Service):
                             for ind, ins in enumerate(instances_to_operate):
                                 try:
                                     client.terminate_instances(InstanceIds=[ins])
-                                    finalized_instances.append(instance_names_to_operate[ind])
+                                    finalized_instances.append(
+                                        instance_names_to_operate[ind]
+                                    )
                                 except Exception as e:
-                                    logging.error(f"Error occured while {operation_type} instance {ins}: {e}")
+                                    logging.error(
+                                        f"Error occured while {operation_type} instance {ins}: {e}"
+                                    )
                             for i in range(len(finalized_instances)):
                                 logging.info(
                                     f"Instance: {finalized_instances[i]} deleted."
                                 )
                             self.instance_names_to_delete.extend(finalized_instances)
                         else:
-                            self.instance_names_to_delete.extend(instance_names_to_operate)
+                            self.instance_names_to_delete.extend(
+                                instance_names_to_operate
+                            )
                     elif operation_type == "stop":
                         if not self.dry_run:
                             for ind, ins in enumerate(instances_to_operate):
                                 try:
                                     client.stop_instances(InstanceIds=[ins])
-                                    finalized_instances.append(instance_names_to_operate[ind])
+                                    finalized_instances.append(
+                                        instance_names_to_operate[ind]
+                                    )
                                 except Exception as e:
-                                    logging.error(f"Error occurred while {operation_type} instance {ins}: {e}")
+                                    logging.error(
+                                        f"Error occurred while {operation_type} instance {ins}: {e}"
+                                    )
                             for i in range(len(finalized_instances)):
                                 logging.info(
                                     f"Instance {finalized_instances[i]} stopped."

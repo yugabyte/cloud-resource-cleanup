@@ -14,7 +14,11 @@ class NIC(Service):
     """
 
     def __init__(
-        self, resource_group: str, dry_run: bool, name_regex: List[str], exception_regex: List[str]
+        self,
+        resource_group: str,
+        dry_run: bool,
+        name_regex: List[str],
+        exception_regex: List[str],
     ) -> None:
         """
         Initializes the object with filter and exception tags to be used when searching for NICs.

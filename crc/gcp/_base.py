@@ -2,6 +2,7 @@
 
 from google.cloud import compute_v1
 
+
 def get_gcp_regions(project_id):
     client = compute_v1.RegionsClient()
     project_id = project_id

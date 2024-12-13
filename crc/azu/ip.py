@@ -12,7 +12,12 @@ class IP(Service):
     """
 
     def __init__(
-        self, resource_group: str, dry_run: bool, filter_tags: dict, exception_tags: dict, notags: dict
+        self,
+        resource_group: str,
+        dry_run: bool,
+        filter_tags: dict,
+        exception_tags: dict,
+        notags: dict,
     ) -> None:
         """
         Initialize the IP class with filter and exception tags.

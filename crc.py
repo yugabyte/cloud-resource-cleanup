@@ -15,6 +15,7 @@ from crc.aws.keypairs import KeyPairs
 from crc.aws.kms import Kms
 from crc.aws.vm import VM as AWS_VM
 from crc.aws.vpc import VPC
+from crc.aws.spot_instance_requests import SpotInstanceRequests
 from crc.azu.disk import Disk
 from crc.azu.nic import NIC
 from crc.azu.ip import IP as AZU_IP
@@ -36,6 +37,7 @@ VMS = "VM"
 IPS = "IP"
 KEYPAIRS = "Keypair"
 KMS = "KMS"
+SPOT_INSTANCE_REQUEST = "SPOT_INSTANCE_REQUEST"
 
 
 class CRC:
@@ -303,6 +305,16 @@ class CRC:
         msg = self.get_msg(VMS, STOPPED, vm.get_stopped)
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
+    def notify_deleted_spot_request_via_slack(self, spot_instance_request: object):
+        """
+        Sends a notification message to the Slack channel about deleted spot_instance_request
+
+        :param spot_instance_request: spot_instance_request object
+        :type spot_instance_request: object
+        """
+        msg = self.get_msg(SPOT_INSTANCE_REQUEST, DELETED, spot_instance_request.get_deleted)
+        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+
     def notify_deleted_ip_via_slack(self, ip: object):
         """
         Sends a message to a Slack channel about deleted IP instances.
@@ -414,6 +426,30 @@ class CRC:
             self.write_influxdb(VMS, vm.get_deleted)
             if self.cloud == "azure":
                 self.write_influxdb(NICS, vm.get_deleted_nic)
+
+    def delete_spot_instance_requests(
+        self,
+        filter_tags: Dict[str, List[str]],
+        exception_tags: Dict[str, List[str]],
+        age: Dict[str, int],
+    ):
+        """
+        Delete virtual machines that match the specified criteria.
+
+        :param filter_tags: Dictionary of tags to filter the VM.
+        :param exception_tags: Dictionary of tags to exclude the VM.
+        :param age: Dictionary of age conditions to filter the VM.
+        :param instance_state: List of instance states that should be deleted.
+        """
+        spot_instance_requests = SpotInstanceRequests(self.dry_run, filter_tags, exception_tags, age, self.notags)
+        spot_instance_requests.delete()
+
+        if self.slack_client:
+            self.notify_deleted_spot_request_via_slack(spot_instance_requests)
+
+        if self.influxdb_client:
+            # report this on VMS as well
+            self.write_influxdb(VMS, spot_instance_requests.get_deleted)
 
     def stop_vm(
         self,
@@ -1044,6 +1080,8 @@ def main():
                     kms_pending_window,
                     age,
                 )
+            elif resource == "spot_instance_requests":
+                crc.delete_spot_instance_requests(filter_tags, exception_tags, age)
 
 
 if __name__ == "__main__":

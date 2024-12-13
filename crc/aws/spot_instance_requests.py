@@ -5,7 +5,6 @@ import logging
 from typing import Dict, List, Tuple
 
 import boto3
-from dateutil.tz import tzutc
 
 from crc.aws._base import get_all_regions
 from crc.service import Service
@@ -113,10 +112,12 @@ class SpotInstanceRequests(Service):
                     continue
                 request_id = request["SpotInstanceRequestId"]
                 instance_id = request["InstanceId"]
+                create_time = request["CreateTime"]
                 if self.is_old(
                     self.age,
                     # Defaults to use utc timezone
-                    datetime.datetime.now(tz=tzutc()),
+                    datetime.datetime.now().astimezone(create_time.tzinfo),
+                    create_time,
                 ):
                     instance_ids.append(instance_id)
                     spot_requests.append(request_id)

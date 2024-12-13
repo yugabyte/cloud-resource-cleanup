@@ -104,30 +104,29 @@ class SpotInstanceRequests(Service):
         """
         spot_requests = []
         instance_ids = []
-        for spot_request in spot_request_details["SpotInstanceRequests"]:
-            for request in spot_request:
-                try:
-                    if "Tags" not in request:
-                        continue
-                    tags = request["Tags"]
-                    if self._should_skip_spot_request(tags):
-                        continue
-                    request_id = request["SpotInstanceRequestId"]
-                    instance_id = request["InstanceId"]
-                    if self.is_old(
-                        self.age,
-                        # Defaults to use utc timezone
-                        datetime.datetime.now(tz=tzutc()),
-                    ):
-                        instance_ids.append(instance_id)
-                        spot_requests.append(request_id)
-                        logging.info(
-                            f"Spot Request {request_id} with Instance ID {instance_id} added to list of requests to be cleaned up."
-                        )
-                except Exception as e:
-                    logging.error(
-                        f"Error occurred while processing spot request {request}: {e}"
+        for request in spot_request_details["SpotInstanceRequests"]:
+            try:
+                if "Tags" not in request:
+                    continue
+                tags = request["Tags"]
+                if self._should_skip_spot_request(tags):
+                    continue
+                request_id = request["SpotInstanceRequestId"]
+                instance_id = request["InstanceId"]
+                if self.is_old(
+                    self.age,
+                    # Defaults to use utc timezone
+                    datetime.datetime.now(tz=tzutc()),
+                ):
+                    instance_ids.append(instance_id)
+                    spot_requests.append(request_id)
+                    logging.info(
+                        f"Spot Request {request_id} with Instance ID {instance_id} added to list of requests to be cleaned up."
                     )
+            except Exception as e:
+                logging.error(
+                    f"Error occurred while processing spot request {request}: {e}"
+                )
         return spot_requests, instance_ids
 
     def _should_skip_spot_request(self, tags: List[Dict[str, str]]) -> bool:

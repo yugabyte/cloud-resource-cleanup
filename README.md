@@ -85,7 +85,8 @@ The script requires certain environment variables to be set in order to interact
 * `AZURE_CREDENTIALS_SUBSCRIPTION_ID`: The subscription ID for your Azure subscription.
 * `AZURE_CREDENTIALS_CLIENT_SECRET`: The client secret for your Azure application.
 * `AZURE_CREDENTIALS_CLIENT_ID`: The client ID for your Azure application.
-* `AZURE_RESOURCE_GROUP`: The name of the resource group in Azure to use.
+* `AZURE_RESOURCE_GROUP`: The name of the resource group to use in Azure. If you don't want to set this as an environment variable or want to use a different resource group than the one set in the environment variable, you can specify it using the `--resource_group` option. Note that the `--resource_group` option will take priority over the environment variable.
+
 ### Slack (Optional)
 * `SLACK_BOT_TOKEN`: The API token for the Slack bot you want to use to receive notifications.
 ### InfluxDB (Optional)
@@ -124,6 +125,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `cloud`: Specify the cloud name (aws, azure, gcp or all). Required.
 * `project_id`: Required for gcp
 * `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair) or specify "all" to target all types of resources. Default: 'all'
+* `resource_group`: Use this option to specify the resource group for Azure. If this flag is provided, the script will only operate on resources within the specified resource group. This allows for more precise targeting of resources in your Azure environment.
 * `operation_type`: Specify the type of operation to perform on the resource (delete or stop). Default: 'delete'
 * `dry_run`: Enabling this option will only list resources that match the specified criteria without performing any operations on them. Use the `-d` or `--dry_run` flag to enable this feature. If this option is not specified, the script will perform the operation specified by the `operation_type` argument.
 * `resource_states`: Specify the state of the resource you want to delete. Only applicable for virtual machines (VMs) and can be either 'RUNNING' or 'STOPPED'. Default: ['RUNNING']. This means that by default, only running VMs will be considered for deletion.
@@ -150,9 +152,9 @@ must be between 7 to 30 inclusive.
 python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
 ```
 
-2. To stop all Azure VMs that are older than 2 days and have the tag `test_task` with the value `stress-test`:
+2. To stop all Azure VMs in `test-rg` resource group that are older than 2 days and have the tag `test_task` with the value `stress-test`:
 ```
-python crc.py --cloud azure --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 2}" --operation_type stop
+python crc.py --cloud azure --resource_group test-rg --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 2}" --operation_type stop
 ```
 
 3. To delete all GCP disks that are older than 14 days and have the tag `test_task` with the value `stress-test` and project_id as 'test_project':

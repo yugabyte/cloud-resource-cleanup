@@ -50,7 +50,7 @@ class Disk(Service):
         name_regex: List[str],
         exception_regex: List[str],
         slack_notify_users: bool,
-        slack_user_label: str
+        slack_user_label: str,
     ) -> None:
         """
         Initialize the Disk management class.
@@ -193,15 +193,26 @@ class Disk(Service):
                                 logging.info(f"Deleting disk {disk.name}")
                             if self.slack_notify_users:
                                 if self.slack_user_label in disk.labels:
-                                    if disk.labels[self.slack_user_label] in self.disk_names_to_delete:
-                                        self.disk_names_to_delete[disk.labels[self.slack_user_label]].append(disk.name)
+                                    if (
+                                        disk.labels[self.slack_user_label]
+                                        in self.disk_names_to_delete
+                                    ):
+                                        self.disk_names_to_delete[
+                                            disk.labels[self.slack_user_label]
+                                        ].append(disk.name)
                                     else:
-                                        self.disk_names_to_delete[disk.labels[self.slack_user_label]] = [disk.name]
+                                        self.disk_names_to_delete[
+                                            disk.labels[self.slack_user_label]
+                                        ] = [disk.name]
                                 else:
-                                    if 'not_tagged' not in self.disk_names_to_delete:
-                                        self.disk_names_to_delete['not_tagged'] = [disk.name]
+                                    if "not_tagged" not in self.disk_names_to_delete:
+                                        self.disk_names_to_delete["not_tagged"] = [
+                                            disk.name
+                                        ]
                                     else:
-                                        self.disk_names_to_delete['not_tagged'].append(disk.name)
+                                        self.disk_names_to_delete["not_tagged"].append(
+                                            disk.name
+                                        )
                             else:
                                 self.disk_names_to_delete.append(disk.name)
 

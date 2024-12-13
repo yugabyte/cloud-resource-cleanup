@@ -36,9 +36,9 @@ class Base:
         self.secret = os.environ[
             "AZURE_CREDENTIALS_CLIENT_SECRET"
         ]  # The client secret for the Azure application that will authenticate to Azure.
-        self.resource_group = resource_group if resource_group else os.environ[
-            "AZURE_RESOURCE_GROUP"
-        ]  # The name of the resource group you want to manage resources in.
+        self.resource_group = (
+            resource_group if resource_group else os.environ["AZURE_RESOURCE_GROUP"]
+        )  # The name of the resource group you want to manage resources in.
 
         self.credential = ClientSecretCredential(
             tenant_id=self.tenant_id,  # The tenant ID associated with the Azure subscription

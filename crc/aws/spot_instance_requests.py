@@ -182,6 +182,8 @@ class SpotInstanceRequests(Service):
                 Filters=spot_filter
             )
 
+            logging.info(describe_spot_response)
+
             (
                 requests_to_operate,
                 instance_id_to_operate,

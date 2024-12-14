@@ -108,7 +108,9 @@ class SpotInstanceRequests(Service):
                 if "Tags" not in request:
                     continue
                 tags = request["Tags"]
-                if self._should_skip_spot_request(tags):
+                if request["State"] == "cancelled" or self._should_skip_spot_request(
+                    tags
+                ):
                     continue
                 request_id = request["SpotInstanceRequestId"]
                 instance_id = request["InstanceId"]
@@ -181,8 +183,6 @@ class SpotInstanceRequests(Service):
             describe_spot_response = client.describe_spot_instance_requests(
                 Filters=spot_filter
             )
-
-            logging.info(describe_spot_response)
 
             (
                 requests_to_operate,

@@ -109,18 +109,22 @@ class Service:
             Optional[str]: The value of 'retention_age' if present and valid, otherwise None.
         """
         if not key:
-            logging.warning("No key provided to search for.")
+            logging.warning("No custom_age_tag_key provided to search for.")
+            return None
+
+        if not tags:
+            logging.warning("No tags provided to search for custom_age_tag_key.")
             return None
 
         try:
-            # Handle tags as a dictionary
+            # Process tags when provided as a dictionary, used by Azure and GCP.
             if isinstance(tags, dict):
                 value = tags.get(key)
                 if value:
                     logging.info(f"Found '{key}' tag: {value}")
                     return self._parse_literal(value, key)
 
-            # Handle tags as a list of dictionaries
+            # Process tags provided as a list of dictionaries, specific to AWS.
             elif isinstance(tags, list):
                 for tag in tags:
                     if tag.get("Key") == key:

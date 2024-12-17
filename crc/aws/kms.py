@@ -119,7 +119,6 @@ class Kms(Service):
         for keys in kms_keys:
             try:
                 key_tags = client.list_resource_tags(KeyId=keys["KeyId"])
-                logging.info(key_tags)
                 response_tags = key_tags.get("Tags", [])
 
                 response_set = {
@@ -143,7 +142,6 @@ class Kms(Service):
                 key_des = key_metadata["KeyMetadata"]["Description"]
                 key_creation_date = key_metadata["KeyMetadata"]["CreationDate"]
 
-                logging.info(response_tags)
                 retention_age = self.get_retention_age(
                     response_tags, self.custom_age_tag_key
                 )

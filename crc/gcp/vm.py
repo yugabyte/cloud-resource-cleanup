@@ -250,6 +250,7 @@ class VM(Service):
         timestamp = instance.creation_timestamp
         created_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().astimezone(created_timestamp.tzinfo)
+        logging.info(instance.labels)
         retention_age = self.get_retention_age(instance.labels, self.custom_age_tag_key)
         if retention_age:
             logging.info(f"Updating age for instance: {instance.name}")

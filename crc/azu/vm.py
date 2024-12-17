@@ -134,6 +134,7 @@ class VM(Service):
             if self._should_perform_operation_on_vm(vm):
                 dt = datetime.datetime.now().astimezone(vm.time_created.tzinfo)
 
+                logging.info(vm.tags)
                 retention_age = self.get_retention_age(vm.tags, self.custom_age_tag_key)
                 if retention_age:
                     logging.info(f"Updating age for vm: {vm.name}")

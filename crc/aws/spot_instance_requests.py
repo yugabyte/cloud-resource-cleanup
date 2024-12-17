@@ -116,7 +116,6 @@ class SpotInstanceRequests(Service):
                     tags
                 ):
                     continue
-                logging.info(tags)
                 request_id = request["SpotInstanceRequestId"]
                 instance_id = request["InstanceId"]
                 create_time = request["CreateTime"]

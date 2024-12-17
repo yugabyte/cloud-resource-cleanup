@@ -110,6 +110,7 @@ class Disk(Service):
 
             # Check if the disk matches the specified filter tags and not exception tags
             if filter_tags_match and not exception_tags_match and not no_tags_match:
+                logging.info(disk.tags)
                 retention_age = self.get_retention_age(
                     disk.tags, self.custom_age_tag_key
                 )

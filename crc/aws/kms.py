@@ -142,6 +142,7 @@ class Kms(Service):
                 key_des = key_metadata["KeyMetadata"]["Description"]
                 key_creation_date = key_metadata["KeyMetadata"]["CreationDate"]
 
+                logging.info(response_tags)
                 retention_age = self.get_retention_age(
                     response_tags, self.custom_age_tag_key
                 )

@@ -4,7 +4,7 @@ import ast
 import datetime
 import logging
 import os
-from typing import Dict
+from typing import Dict, List, Optional, Union
 
 from crc.utils import init_logging
 
@@ -87,26 +87,49 @@ class Service:
         )
         return False
 
-    def get_retention_age(self, tags: Dict[str, str], key: str):
+    def _parse_literal(self, value: str, key: str) -> Optional[str]:
+        """Helper function to safely parse a literal value."""
+        try:
+            return ast.literal_eval(value)
+        except (ValueError, SyntaxError) as e:
+            logging.error(f"Error parsing '{key}' tag value '{value}': {e}")
+            return None
+
+    def get_retention_age(
+        self, tags: Union[Dict[str, str], List[Dict[str, str]]], key: str
+    ) -> Optional[str]:
         """
         Retrieve the 'retention_age' value from the provided tags.
 
         Args:
-            tags (Dict[str, str]): A dictionary of tags.
+            tags (Union[Dict[str, str], List[Dict[str, str]]]): Tags as a dictionary or list of key-value pairs.
             key (str): The key to search for in the tags.
 
         Returns:
-            str | None: The value of 'retention_age' if present, otherwise None.
+            Optional[str]: The value of 'retention_age' if present and valid, otherwise None.
         """
         if not key:
+            logging.warning("No key provided to search for.")
             return None
-        for tag, value in tags.items():
-            if tag == key:
-                logging.info(f"Found {key} tag: {value}.")
-                try:
-                    value = ast.literal_eval(value)
-                except Exception as e:
-                    logging.error(f"Error parsing {key} tag: {e}")
-                    return None
-                return value
+
+        try:
+            # Handle tags as a dictionary
+            if isinstance(tags, dict):
+                value = tags.get(key)
+                if value:
+                    logging.info(f"Found '{key}' tag: {value}")
+                    return self._parse_literal(value, key)
+
+            # Handle tags as a list of dictionaries
+            elif isinstance(tags, list):
+                for tag in tags:
+                    if tag.get("Key") == key:
+                        value = tag.get("Value")
+                        if value:
+                            logging.info(f"Found '{key}' tag: {value}")
+                            return self._parse_literal(value, key)
+        except Exception as e:
+            logging.error(f"Error retrieving '{key}' tag: {e}")
+
+        logging.info(f"'{key}' tag not found.")
         return None

@@ -163,6 +163,7 @@ class VM(Service):
                         "NetworkInterfaces"
                     ][0]["Attachment"]["AttachTime"]
 
+                    logging.info(tags)
                     retention_age = self.get_retention_age(
                         tags, self.custom_age_tag_key
                     )

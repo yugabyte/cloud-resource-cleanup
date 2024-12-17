@@ -117,6 +117,7 @@ class Disk(Service):
         timestamp = disk.last_detach_timestamp
         detached_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().astimezone(detached_timestamp.tzinfo)
+        logging.info(disk.labels)
         retention_age = self.get_retention_age(disk.labels, self.custom_age_tag_key)
         if retention_age:
             logging.info(f"Updating age for disk: {disk.name}")

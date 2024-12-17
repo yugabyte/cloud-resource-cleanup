@@ -253,9 +253,16 @@ class CRC:
                         + f"`{operated_list_length}` {self.cloud} {resource}(s):\n<!subteam^{member_id}> disks `{operated_list[key]}`\n\n"
                     )
 
-                self.slack_client.chat_postMessage(
-                    channel="#" + self.slack_channel, text=final_msg, link_names=True
-                )
+                try:
+                    self.slack_client.chat_postMessage(
+                        channel="#" + self.slack_channel,
+                        text=final_msg,
+                        link_names=True,
+                    )
+                except Exception as e:
+                    print(
+                        f"Failed to send message '{final_msg}' to Slack channel '{self.slack_channel}': {e}"
+                    )
             else:
                 # Individual User
 
@@ -271,10 +278,15 @@ class CRC:
                 )
                 channel_id = response["channel"]["id"]
 
-                # Post Message
-                self.slack_client.chat_postMessage(
-                    channel=channel_id, text=final_msg, link_names=True
-                )
+                try:
+                    # Post Message
+                    self.slack_client.chat_postMessage(
+                        channel=channel_id, text=final_msg, link_names=True
+                    )
+                except Exception as e:
+                    print(
+                        f"Failed to send message '{final_msg}' to Slack channel '{channel_id}': {e}"
+                    )
 
     def get_msg(self, resource: str, operation_type: str, operated_list: list) -> str:
         """
@@ -304,7 +316,14 @@ class CRC:
         :type nic: object
         """
         msg = self.get_msg(NICS, DELETED, nic.get_deleted_nic)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def notify_deleted_vm_via_slack(self, vm: object):
         """
@@ -314,7 +333,14 @@ class CRC:
         :type vm: object
         """
         msg = self.get_msg(VMS, DELETED, vm.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
         if self.cloud == "azure":
             self.notify_deleted_nic_via_slack(vm)
@@ -327,7 +353,14 @@ class CRC:
         :type vm: object
         """
         msg = self.get_msg(VMS, STOPPED, vm.get_stopped)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def notify_deleted_spot_request_via_slack(self, spot_instance_request: object):
         """
@@ -339,7 +372,14 @@ class CRC:
         msg = self.get_msg(
             SPOT_INSTANCE_REQUEST, DELETED, spot_instance_request.get_deleted
         )
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def notify_deleted_ip_via_slack(self, ip: object):
         """
@@ -349,7 +389,14 @@ class CRC:
         ip (object): the deleted IP instance
         """
         msg = self.get_msg(IPS, DELETED, ip.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def notify_deleted_keypair_via_slack(self, keypair: object):
         """
@@ -359,7 +406,14 @@ class CRC:
         :type vm: object
         """
         msg = self.get_msg(KEYPAIRS, DELETED, keypair.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def notify_deleted_nic_via_slack(self, nic: object):
         """
@@ -369,7 +423,14 @@ class CRC:
         :type vm: object
         """
         msg = self.get_msg(NICS, DELETED, nic.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def notify_deleted_disk_via_slack(self, disk: object):
         """
@@ -381,9 +442,14 @@ class CRC:
         if type(disk.get_deleted) == list:
             # Send a one single message into the channel
             msg = self.get_msg(DISKS, DELETED, disk.get_deleted)
-            self.slack_client.chat_postMessage(
-                channel="#" + self.slack_channel, text=msg, link_names=True
-            )
+            try:
+                self.slack_client.chat_postMessage(
+                    channel="#" + self.slack_channel, text=msg, link_names=True
+                )
+            except Exception as e:
+                print(
+                    f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+                )
         elif type(disk.get_deleted) == dict:
             # Directly ping the individuals 1:1 and groups/untagged into channel
             self.ping_on_slack(DISKS, DELETED, disk.get_deleted)
@@ -396,7 +462,14 @@ class CRC:
         :type vm: object
         """
         msg = self.get_msg(KMS, DELETED, kms.get_deleted)
-        self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
+        try:
+            self.slack_client.chat_postMessage(
+                channel="#" + self.slack_channel, text=msg
+            )
+        except Exception as e:
+            print(
+                f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
+            )
 
     def write_influxdb(self, resource_name: str, resources: List[str]) -> None:
         """

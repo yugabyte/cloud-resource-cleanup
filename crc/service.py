@@ -29,28 +29,47 @@ class Service:
 
     def is_old(
         self,
-        age: Dict[str, int],
+        age: Dict[str, int] | int,
         current_time: datetime.datetime,
         creation_time: datetime.datetime,
     ) -> bool:
         """
-        This function checks if the resource is old based on the age threshold specified in the age argument.
-        The age argument should be a dictionary containing either 'days' or 'hours' or both as keys, and the number of days or hours as the value respectively.
-        Example: age = {'days': 3, 'hours': 12}
-        The function returns a boolean value - True if the resource is older than the specified age threshold and False otherwise.
-        It also logs the resource age and the threshold specified for easy debugging.
+        Determines if a resource is older than a specified age threshold.
+
+        The age threshold can either be an integer or a dictionary:
+            - If `age` is an integer, it is treated as 'days' by default.
+            - If `age` is a dictionary, it can include 'days', 'hours', or both as keys with their respective values.
+
+        Example:
+            age = {'days': 3, 'hours': 12}  # 3 days and 12 hours
+            age = 7  # Equivalent to {'days': 7}
+
+        The function calculates the resource's age based on its `creation_time`
+        and compares it with the provided threshold.
 
         Parameters:
-        age (Dict[str, int]) : A dictionary containing 'days' or 'hours' or both as keys and number of days or hours as the value respectively.
-        current_time (datetime.datetime) : The current time.
-        creation_time (datetime.datetime) : The time the resource was created.
+            age (Dict[str, int] | int): A dictionary with 'days' and/or 'hours' as keys
+                                        and their corresponding integer values,
+                                        or a single integer representing days.
+            current_time (datetime.datetime): The current time for comparison.
+            creation_time (datetime.datetime): The time the resource was created.
 
         Returns:
-        bool : True if the resource is older than the specified age threshold and False otherwise.
+            bool: True if the resource is older than the specified threshold, otherwise False.
+
+        Logs:
+            - Warning if no age threshold is specified.
+            - Info logs for debugging resource age and the threshold applied.
         """
         if not age:
             logging.warning("Age is not specified. Ignoring age threshold check")
             return True
+
+        if isinstance(age, int):
+            # Default to 'days' if a single integer is provided
+            age = {"days": age}
+
+        logging.info(f"Validating resource age with threshold: {age}")
         age_delta = current_time - creation_time
         age_in_days = age_delta.days
         age_in_seconds = age_delta.total_seconds()

@@ -29,7 +29,7 @@ class Service:
 
     def is_old(
         self,
-        age: Dict[str, int] | int,
+        age: Union[Dict[str, int], int],
         current_time: datetime.datetime,
         creation_time: datetime.datetime,
     ) -> bool:

@@ -138,11 +138,15 @@ class Kms(Service):
                 key_des = key_metadata["KeyMetadata"]["Description"]
                 key_creation_date = key_metadata["KeyMetadata"]["CreationDate"]
 
+                retention_age = self.get_retention_age(response_tags)
+                if retention_age:
+                    logging.info(f"Updating age for Key: {keys['KeyId']}")
+
                 if (
                     key_state == "Enabled"
                     and self.kms_key_description in key_des
                     and self.is_old(
-                        self.age,
+                        retention_age or self.age,
                         datetime.datetime.now().astimezone(key_creation_date.tzinfo),
                         key_creation_date,
                     )

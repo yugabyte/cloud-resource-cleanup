@@ -107,9 +107,13 @@ class Disk(Service):
 
             # Check if the disk matches the specified filter tags and not exception tags
             if filter_tags_match and not exception_tags_match and not no_tags_match:
+                retention_age = self.get_retention_age(disk.tags)
+                if retention_age:
+                    logging.info(f"Updating age for disk: {disk.name}")
+
                 # Get the current time and compare it to the disk's time created
                 dt = datetime.datetime.now().astimezone(disk.time_created.tzinfo)
-                if self.is_old(self.age, dt, disk.time_created):
+                if self.is_old(retention_age or self.age, dt, disk.time_created):
                     # Check if the disk is in a state that is allowed for deletion
                     if any(
                         disk.disk_state in state for state in self.default_disk_state

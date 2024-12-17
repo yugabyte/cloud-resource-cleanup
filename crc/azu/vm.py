@@ -130,7 +130,11 @@ class VM(Service):
             if self._should_perform_operation_on_vm(vm):
                 dt = datetime.datetime.now().astimezone(vm.time_created.tzinfo)
 
-                if self.is_old(self.age, dt, vm.time_created):
+                retention_age = self.get_retention_age(vm.tags)
+                if retention_age:
+                    logging.info(f"Updating age for vm: {vm.name}")
+
+                if self.is_old(retention_age or self.age, dt, vm.time_created):
                     try:
                         status = self._get_vm_status(vm.name)
 

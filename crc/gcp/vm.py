@@ -246,7 +246,10 @@ class VM(Service):
         timestamp = instance.creation_timestamp
         created_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().astimezone(created_timestamp.tzinfo)
-        return self.is_old(self.age, dt, created_timestamp)
+        retention_age = self.get_retention_age(instance.labels)
+        if retention_age:
+            logging.info(f"Updating age for instance: {instance.name}")
+        return self.is_old(retention_age or self.age, dt, created_timestamp)
 
     def delete(
         self,

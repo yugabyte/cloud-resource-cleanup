@@ -1,5 +1,6 @@
 # Copyright (c) Yugabyte, Inc.
 
+import ast
 import datetime
 import logging
 import os
@@ -85,3 +86,24 @@ class Service:
             "The resource is not older than the threshold specified in the age argument"
         )
         return False
+
+    def get_retention_age(self, tags: Dict[str, str]):
+        """
+        Retrieve the 'retention_age' value from the provided tags.
+
+        Args:
+            tags (Dict[str, str]): A dictionary of tags.
+
+        Returns:
+            str | None: The value of 'retention_age' if present, otherwise None.
+        """
+        for tag, value in tags.items():
+            if tag == "retention_age":
+                logging.info(f"Found retention_age tag: {value}.")
+                try:
+                    value = ast.literal_eval(value)
+                except Exception as e:
+                    logging.error(f"Error parsing retention_age tag: {e}")
+                    return None
+                return value
+        return None

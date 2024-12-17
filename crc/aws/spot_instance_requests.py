@@ -115,8 +115,15 @@ class SpotInstanceRequests(Service):
                 request_id = request["SpotInstanceRequestId"]
                 instance_id = request["InstanceId"]
                 create_time = request["CreateTime"]
+
+                retention_age = self.get_retention_age(tags)
+                if retention_age:
+                    logging.info(
+                        f"Updating age for SpotInstanceRequestId: {request_id}"
+                    )
+
                 if self.is_old(
-                    self.age,
+                    retention_age or self.age,
                     # Defaults to use utc timezone
                     datetime.datetime.now().astimezone(create_time.tzinfo),
                     create_time,

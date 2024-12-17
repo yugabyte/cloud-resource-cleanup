@@ -158,8 +158,13 @@ class VM(Service):
                     network_interface_attached_time = network_interface_details[
                         "NetworkInterfaces"
                     ][0]["Attachment"]["AttachTime"]
+
+                    retention_age = self.get_retention_age(tags)
+                    if retention_age:
+                        logging.info(f"Updating age for instance_id: {instance_id}")
+
                     if self.is_old(
-                        self.age,
+                        retention_age or self.age,
                         datetime.datetime.now().astimezone(
                             network_interface_attached_time.tzinfo
                         ),

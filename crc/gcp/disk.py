@@ -1,9 +1,9 @@
 # Copyright (c) Yugabyte, Inc.
 
 import logging
+import re
 from datetime import datetime
 from typing import Dict, List
-import re
 
 from google.cloud import compute_v1
 from googleapiclient import discovery
@@ -114,7 +114,10 @@ class Disk(Service):
         timestamp = disk.last_detach_timestamp
         detached_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().astimezone(detached_timestamp.tzinfo)
-        return self.is_old(self.detach_age, dt, detached_timestamp)
+        retention_age = self.get_retention_age(disk.labels)
+        if retention_age:
+            logging.info(f"Updating age for disk: {disk.name}")
+        return self.is_old(retention_age or self.detach_age, dt, detached_timestamp)
 
     def _has_matching_filter_label(self, disk):
         """

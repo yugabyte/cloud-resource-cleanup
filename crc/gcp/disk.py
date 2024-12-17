@@ -45,6 +45,7 @@ class Disk(Service):
         filter_labels: Dict[str, List[str]],
         exception_labels: Dict[str, List[str]],
         age: int,
+        custom_age_tag_key: str,
         detach_age: int,
         notags: Dict[str, List[str]],
         name_regex: List[str],
@@ -62,6 +63,7 @@ class Disk(Service):
         :param filter_labels: Dictionary of labels and their values used to filter Disks for deletion.
         :param exception_labels: Dictionary of labels and their values used to exclude Disks from deletion.
         :param age: Age in days of Disks that will be deleted.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         :param detach_age: Age in days the Disks last got detached .
         :param notags: dictionary containing key-value pairs as filter tags to exclude disks which do not have these tags
         :param name_regex: A list of regular expressions for incuding disks.
@@ -73,6 +75,7 @@ class Disk(Service):
         self.filter_labels = filter_labels
         self.exception_labels = exception_labels
         self.age = age
+        self.custom_age_tag_key = custom_age_tag_key
         self.detach_age = detach_age
         self.notags = notags
         self.name_regex = name_regex
@@ -114,7 +117,7 @@ class Disk(Service):
         timestamp = disk.last_detach_timestamp
         detached_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().astimezone(detached_timestamp.tzinfo)
-        retention_age = self.get_retention_age(disk.labels)
+        retention_age = self.get_retention_age(disk.labels, self.custom_age_tag_key)
         if retention_age:
             logging.info(f"Updating age for disk: {disk.name}")
         return self.is_old(retention_age or self.detach_age, dt, detached_timestamp)

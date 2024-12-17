@@ -44,6 +44,7 @@ class VM(Service):
         filter_labels: Dict[str, List[str]],
         exception_labels: Dict[str, List[str]],
         age: int,
+        custom_age_tag_key: str,
         notags: Dict[str, List[str]],
     ) -> None:
         """
@@ -60,6 +61,8 @@ class VM(Service):
         :type exception_labels: Dict[str, List[str]]
         :param age: Age in days of VMs that will be deleted.
         :type age: int
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
+        :type custom_age_tag_key: str
         :param notags: dictionary containing key-value pairs as filter tags to exclude instances which do not have these tags
         :type notags: Dict[str, List[str]]
         """
@@ -71,6 +74,7 @@ class VM(Service):
         self.filter_labels = filter_labels
         self.exception_labels = exception_labels
         self.age = age
+        self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags
 
     @property
@@ -246,7 +250,7 @@ class VM(Service):
         timestamp = instance.creation_timestamp
         created_timestamp = datetime.strptime(timestamp, self.time_format)
         dt = datetime.now().astimezone(created_timestamp.tzinfo)
-        retention_age = self.get_retention_age(instance.labels)
+        retention_age = self.get_retention_age(instance.labels, self.custom_age_tag_key)
         if retention_age:
             logging.info(f"Updating age for instance: {instance.name}")
         return self.is_old(retention_age or self.age, dt, created_timestamp)

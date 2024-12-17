@@ -35,6 +35,7 @@ class SpotInstanceRequests(Service):
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
         notags: Dict[str, List[str]],
     ) -> None:
         """
@@ -49,6 +50,8 @@ class SpotInstanceRequests(Service):
         :type exception_tags: Dict[str, List[str]]
         :param age: dictionary containing key-value pairs as age threshold, the key is either "days" or "hours" or both and value is the number of days or hours.
         :type age: Dict[str, int]
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
+        :type custom_age_tag_key: str
         :param notags: dictionary containing key-value pairs as filter tags to exclude instances which do not have these tags
         :type notags: Dict[str, List[str]]
         """
@@ -59,6 +62,7 @@ class SpotInstanceRequests(Service):
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
+        self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags
 
     @property
@@ -116,7 +120,7 @@ class SpotInstanceRequests(Service):
                 instance_id = request["InstanceId"]
                 create_time = request["CreateTime"]
 
-                retention_age = self.get_retention_age(tags)
+                retention_age = self.get_retention_age(tags, self.custom_age_tag_key)
                 if retention_age:
                     logging.info(
                         f"Updating age for SpotInstanceRequestId: {request_id}"

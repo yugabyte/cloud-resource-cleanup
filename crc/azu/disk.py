@@ -25,6 +25,7 @@ class Disk(Service):
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
         notags: Dict[str, List[str]],
     ) -> None:
         """
@@ -36,6 +37,7 @@ class Disk(Service):
         :param filter_tags: A dictionary of tags to filter virtual machines by.
         :param exception_tags: A dictionary of tags to exclude virtual machines by.
         :param age: A dictionary specifying the age threshold for stopping and deleting virtual machines.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         :param notags: A dictionary of tags to filter resources that do not have the specified tags.
         """
         super().__init__()
@@ -45,6 +47,7 @@ class Disk(Service):
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age
+        self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags
 
     @property
@@ -107,7 +110,9 @@ class Disk(Service):
 
             # Check if the disk matches the specified filter tags and not exception tags
             if filter_tags_match and not exception_tags_match and not no_tags_match:
-                retention_age = self.get_retention_age(disk.tags)
+                retention_age = self.get_retention_age(
+                    disk.tags, self.custom_age_tag_key
+                )
                 if retention_age:
                     logging.info(f"Updating age for disk: {disk.name}")
 

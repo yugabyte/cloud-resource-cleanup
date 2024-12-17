@@ -13,12 +13,12 @@ from slack_sdk import WebClient
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
 from crc.aws.kms import Kms
+from crc.aws.spot_instance_requests import SpotInstanceRequests
 from crc.aws.vm import VM as AWS_VM
 from crc.aws.vpc import VPC
-from crc.aws.spot_instance_requests import SpotInstanceRequests
 from crc.azu.disk import Disk
-from crc.azu.nic import NIC
 from crc.azu.ip import IP as AZU_IP
+from crc.azu.nic import NIC
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
@@ -104,6 +104,7 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
     ):
         """
         Get the VM object for the specified cloud.
@@ -111,12 +112,28 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
         :param age: Dictionary of age conditions to filter the VM.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         :return: VM object
         """
         if self.cloud == "aws":
-            return AWS_VM(self.dry_run, filter_tags, exception_tags, age, self.notags)
+            return AWS_VM(
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+            )
         if self.cloud == "azure":
-            return AZU_VM(self.resource_group, self.dry_run, filter_tags, exception_tags, age, self.notags)
+            return AZU_VM(
+                self.resource_group,
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+            )
         if self.cloud == "gcp":
             return GCP_VM(
                 self.dry_run,
@@ -124,6 +141,7 @@ class CRC:
                 filter_tags,
                 exception_tags,
                 age,
+                custom_age_tag_key,
                 self.notags,
             )
         raise ValueError(
@@ -149,7 +167,13 @@ class CRC:
         if self.cloud == "aws":
             return ElasticIPs(self.dry_run, filter_tags, exception_tags, self.notags)
         if self.cloud == "azure":
-            return AZU_IP(self.resource_group, self.dry_run, filter_tags, exception_tags, self.notags)
+            return AZU_IP(
+                self.resource_group,
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                self.notags,
+            )
         if self.cloud == "gcp":
             return GCP_IP(self.dry_run, self.project_id, name_regex, exception_regex)
         raise ValueError(
@@ -312,7 +336,9 @@ class CRC:
         :param spot_instance_request: spot_instance_request object
         :type spot_instance_request: object
         """
-        msg = self.get_msg(SPOT_INSTANCE_REQUEST, DELETED, spot_instance_request.get_deleted)
+        msg = self.get_msg(
+            SPOT_INSTANCE_REQUEST, DELETED, spot_instance_request.get_deleted
+        )
         self.slack_client.chat_postMessage(channel="#" + self.slack_channel, text=msg)
 
     def notify_deleted_ip_via_slack(self, ip: object):
@@ -406,6 +432,7 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
         instance_state: List[str],
     ):
         """
@@ -414,9 +441,10 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
         :param age: Dictionary of age conditions to filter the VM.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         :param instance_state: List of instance states that should be deleted.
         """
-        vm = self._get_vm(filter_tags, exception_tags, age)
+        vm = self._get_vm(filter_tags, exception_tags, age, custom_age_tag_key)
         self._delete_vm(vm, instance_state)
 
         if self.slack_client:
@@ -432,6 +460,7 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
     ):
         """
         Delete virtual machines that match the specified criteria.
@@ -439,9 +468,16 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
         :param age: Dictionary of age conditions to filter the VM.
-        :param instance_state: List of instance states that should be deleted.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         """
-        spot_instance_requests = SpotInstanceRequests(self.dry_run, filter_tags, exception_tags, age, self.notags)
+        spot_instance_requests = SpotInstanceRequests(
+            self.dry_run,
+            filter_tags,
+            exception_tags,
+            age,
+            custom_age_tag_key,
+            self.notags,
+        )
         spot_instance_requests.delete()
 
         if self.slack_client:
@@ -456,6 +492,7 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
     ):
         """
         Stop virtual machines that match the specified criteria.
@@ -463,8 +500,9 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
         :param age: Dictionary of age conditions to filter the VM.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         """
-        vm = self._get_vm(filter_tags, exception_tags, age)
+        vm = self._get_vm(filter_tags, exception_tags, age, custom_age_tag_key)
         vm.stop()
 
         if self.slack_client:
@@ -557,6 +595,7 @@ class CRC:
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
+        custom_age_tag_key: str,
         detach_age: Dict[str, int],
         name_regex: List[str],
         exception_regex: List[str],
@@ -570,6 +609,7 @@ class CRC:
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
         :param age: Dictionary of age conditions to filter the disks.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         :param detach_age: Dictionary of detach age
         :param name_regex: List of regex patterns to filter the disks.
         :param exception_regex: List of regex patterns to exclude the disks.
@@ -581,7 +621,15 @@ class CRC:
                 "Incorrect Cloud Provided. Disks operation is supported only on AZURE and GCP. AWS cleans the NICs, Disks along with VM"
             )
         if self.cloud == "azure":
-            disk = Disk(self.resource_group, self.dry_run, filter_tags, exception_tags, age, self.notags)
+            disk = Disk(
+                self.resource_group,
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+            )
         if self.cloud == "gcp":
             disk = GCP_Disk(
                 dry_run=self.dry_run,
@@ -589,6 +637,7 @@ class CRC:
                 filter_labels=filter_tags,
                 exception_labels=exception_tags,
                 age=age,
+                custom_age_tag_key=custom_age_tag_key,
                 detach_age=detach_age,
                 notags=self.notags,
                 name_regex=name_regex,
@@ -625,6 +674,7 @@ class CRC:
         kms_user: str,
         kms_pending_window: int,
         age: Dict[str, int],
+        custom_age_tag_key: str,
     ):
         """
         Delete KMS that match the specified criteria.
@@ -635,6 +685,7 @@ class CRC:
         :param kms_user: AWS ARN of Jenkins slave for which associated keys will be deleted.
         :param kms_pending_window: Number of days till which keys will be scheduled for deletion.
         :param age: Time to live for keys.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
         """
 
         if self.cloud != "aws":
@@ -648,6 +699,7 @@ class CRC:
             kms_user,
             kms_pending_window,
             age,
+            custom_age_tag_key,
         )
         kms.delete()
 
@@ -684,7 +736,17 @@ def get_argparser():
         "-r",
         "--resource",
         default="all",
-        choices=["disk", "ip", "keypair", "vm", "vpc", "kms", "nic", "spot_instance_requests", "all"],
+        choices=[
+            "disk",
+            "ip",
+            "keypair",
+            "vm",
+            "vpc",
+            "kms",
+            "nic",
+            "spot_instance_requests",
+            "all",
+        ],
         metavar="RESOURCE",
         help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
     )
@@ -759,6 +821,18 @@ def get_argparser():
         type=ast.literal_eval,
         metavar="{'days': value1, 'hours': value2}",
         help="Age Threshold for resources. Age is not respected for IPs. Example: -a or --age {'days': 3, 'hours': 12}",
+    )
+
+    # Add Argument for Custom Age Threshold Tag Key
+    parser.add_argument(
+        "--custom_age_tag_key",
+        metavar="CUSTOM_AGE_TAG_KEY",
+        help=(
+            "Define a custom tag key for the age threshold of resources. This tag is "
+            "ignored for IPs and Keypairs. Example usage: --custom_age_tag_key retention_age. "
+            "The value can be specified in a dictionary format (e.g., {'days': 3, 'hours': 6}) or as an "
+            "integer, which will be interpreted as days by default."
+        ),
     )
 
     # Add Argument for Age Threshold
@@ -947,6 +1021,7 @@ def main():
     name_regex = args.get("name_regex")
     exception_regex = args.get("exception_regex")
     age = args.get("age")
+    custom_age_tag_key = args.get("custom_age_tag_key")
     detach_age = args.get("detach_age")
     dry_run = args.get("dry_run")
     notags = args.get("notags")
@@ -1042,6 +1117,7 @@ def main():
                     filter_tags,
                     exception_tags,
                     age,
+                    custom_age_tag_key,
                     detach_age,
                     name_regex,
                     exception_regex,
@@ -1065,10 +1141,11 @@ def main():
                         filter_tags,
                         exception_tags,
                         age,
+                        custom_age_tag_key,
                         resource_states,
                     )
                 elif operation_type == "stop":
-                    crc.stop_vm(filter_tags, exception_tags, age)
+                    crc.stop_vm(filter_tags, exception_tags, age, custom_age_tag_key)
             elif resource == "vpc":
                 crc.delete_vpc(filter_tags, exception_tags)
             elif resource == "kms":
@@ -1079,9 +1156,12 @@ def main():
                     kms_user,
                     kms_pending_window,
                     age,
+                    custom_age_tag_key,
                 )
             elif resource == "spot_instance_requests":
-                crc.delete_spot_instance_requests(filter_tags, exception_tags, age)
+                crc.delete_spot_instance_requests(
+                    filter_tags, exception_tags, age, custom_age_tag_key
+                )
 
 
 if __name__ == "__main__":

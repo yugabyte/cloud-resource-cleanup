@@ -31,6 +31,7 @@ class Kms(Service):
         kms_user: str,
         kms_pending_window: int,
         age: Dict[str, int],
+        custom_age_tag_key: str,
     ) -> None:
         """
         Initializes the object with filter tags to be used when searching for kms.
@@ -50,6 +51,8 @@ class Kms(Service):
         :type kms_pending_window: int
         :param age: dictionary containing key-value pairs as age threshold, the key is either "days" or "hours" or both and value is the number of days or hours.
         :type age: Dict[str, int]
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
+        :type custom_age_tag_key: str
         """
         super().__init__()
         self.kms_keys_to_delete = []
@@ -60,6 +63,7 @@ class Kms(Service):
         self.kms_user = kms_user
         self.kms_pending_window = kms_pending_window
         self.age = age
+        self.custom_age_tag_key = custom_age_tag_key
 
     @property
     def get_deleted(self):
@@ -138,7 +142,9 @@ class Kms(Service):
                 key_des = key_metadata["KeyMetadata"]["Description"]
                 key_creation_date = key_metadata["KeyMetadata"]["CreationDate"]
 
-                retention_age = self.get_retention_age(response_tags)
+                retention_age = self.get_retention_age(
+                    response_tags, self.custom_age_tag_key
+                )
                 if retention_age:
                     logging.info(f"Updating age for Key: {keys['KeyId']}")
 

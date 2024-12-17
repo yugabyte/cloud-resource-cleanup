@@ -87,23 +87,24 @@ class Service:
         )
         return False
 
-    def get_retention_age(self, tags: Dict[str, str]):
+    def get_retention_age(self, tags: Dict[str, str], key: str):
         """
         Retrieve the 'retention_age' value from the provided tags.
 
         Args:
             tags (Dict[str, str]): A dictionary of tags.
+            key (str): The key to search for in the tags.
 
         Returns:
             str | None: The value of 'retention_age' if present, otherwise None.
         """
         for tag, value in tags.items():
-            if tag == "retention_age":
-                logging.info(f"Found retention_age tag: {value}.")
+            if tag == key:
+                logging.info(f"Found {key} tag: {value}.")
                 try:
                     value = ast.literal_eval(value)
                 except Exception as e:
-                    logging.error(f"Error parsing retention_age tag: {e}")
+                    logging.error(f"Error parsing {key} tag: {e}")
                     return None
                 return value
         return None

@@ -135,5 +135,4 @@ class Service:
         except Exception as e:
             logging.error(f"Error retrieving '{key}' tag: {e}")
 
-        logging.info(f"'{key}' tag not found.")
         return None

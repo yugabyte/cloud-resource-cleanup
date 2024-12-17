@@ -135,6 +135,7 @@ class Service:
             logging.warning("No tags provided to search for custom_age_tag_key.")
             return None
 
+        logging.info(f"Searching for custom_age_tag_key: {key}")
         try:
             # Process tags when provided as a dictionary, used by Azure and GCP.
             if isinstance(tags, dict):

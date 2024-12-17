@@ -98,6 +98,8 @@ class Service:
         Returns:
             str | None: The value of 'retention_age' if present, otherwise None.
         """
+        if not key:
+            return None
         for tag, value in tags.items():
             if tag == key:
                 logging.info(f"Found {key} tag: {value}.")

@@ -119,6 +119,7 @@ class Kms(Service):
         for keys in kms_keys:
             try:
                 key_tags = client.list_resource_tags(KeyId=keys["KeyId"])
+                logging.info(key_tags)
                 response_tags = key_tags.get("Tags", [])
 
                 response_set = {

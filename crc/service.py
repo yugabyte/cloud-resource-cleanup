@@ -127,6 +127,7 @@ class Service:
         Returns:
             Optional[str]: The value of 'retention_age' if present and valid, otherwise None.
         """
+        logging.info(f"Type of tags is: {type(tags)}")
         if not key:
             logging.warning("No custom_age_tag_key provided to search for.")
             return None
@@ -137,7 +138,6 @@ class Service:
 
         logging.info(f"Searching for custom_age_tag_key: {key}")
         try:
-            logging.info(f"Type of tags is: {type(tags)}")
             # Process tags when provided as a dictionary, used by Azure and GCP.
             if isinstance(tags, dict):
                 logging.info(f"key: {key} in tags: {tags} - {tags.get(key)}")

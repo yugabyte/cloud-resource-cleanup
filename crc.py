@@ -908,6 +908,16 @@ def get_argparser():
         ),
     )
 
+    # Add argument for specifying the maximum age threshold for resources
+    parser.add_argument(
+        "--max_age",
+        metavar="MAX_AGE",
+        help=(
+            "Specify the maximum age threshold for resources. This value will override the value of the tag specified by 'custom_age_tag_key'. "
+            "Provide the age in dictionary format, e.g., {'days': 3, 'hours': 6}."
+        ),
+    )
+
     # Add Argument for Age Threshold
     parser.add_argument(
         "--detach_age",
@@ -1095,6 +1105,7 @@ def main():
     exception_regex = args.get("exception_regex")
     age = args.get("age")
     custom_age_tag_key = args.get("custom_age_tag_key")
+    max_age = args.get("max_age")
     detach_age = args.get("detach_age")
     dry_run = args.get("dry_run")
     notags = args.get("notags")
@@ -1171,6 +1182,10 @@ def main():
             org=influxdb["org"],
         )
 
+    if max_age:
+        os.environ["MAX_AGE"] = str(max_age)
+        print(f"Set MAX_AGE: {os.environ['MAX_AGE']}")
+
     # Perform operations
     for cloud in clouds:
         crc = CRC(
@@ -1235,6 +1250,9 @@ def main():
                 crc.delete_spot_instance_requests(
                     filter_tags, exception_tags, age, custom_age_tag_key
                 )
+    if max_age:
+        del os.environ["MAX_AGE"]
+        print("MAX_AGE reset.")
 
 
 if __name__ == "__main__":

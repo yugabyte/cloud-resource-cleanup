@@ -27,6 +27,41 @@ class Service:
         log_filename = os.path.join(self.logs_dir, self.logs_file)
         init_logging(log_filename)
 
+    def get_min_age(dict1, dict2):
+        """
+        Compares two dictionaries containing 'days' and 'hours' keys and returns the one representing
+        the lesser amount of time. The dictionaries may contain both 'days' and 'hours', or just one of them.
+
+        The comparison is done by converting both dictionaries to a total number of hours and comparing those values.
+
+        Args:
+            dict1 (dict): A dictionary containing 'days' and/or 'hours'. Example: {"days": 3, "hours": 5}
+            dict2 (dict): A dictionary containing 'days' and/or 'hours'. Example: {"days": 2, "hours": 10}
+
+        Returns:
+            dict: The dictionary that represents the smaller time duration. If both are equal, returns `dict2`.
+
+        Example:
+            dict1 = {"days": 3, "hours": 5}
+            dict2 = {"days": 2, "hours": 3}
+            get_min_age(dict1, dict2)  # Returns dict2 {"days": 2, "hours": 3}
+        """
+        # Define the number of hours in a day for conversion
+        HOURS_IN_A_DAY = 24
+
+        # Calculate total hours for dict1, assuming 0 for missing keys
+        days1 = dict1.get("days", 0)
+        hours1 = dict1.get("hours", 0)
+        total_hours1 = (days1 * HOURS_IN_A_DAY) + hours1
+
+        # Calculate total hours for dict2, assuming 0 for missing keys
+        days2 = dict2.get("days", 0)
+        hours2 = dict2.get("hours", 0)
+        total_hours2 = (days2 * HOURS_IN_A_DAY) + hours2
+
+        # Compare total hours and return the dictionary with the smaller time duration
+        return dict1 if total_hours1 < total_hours2 else dict2
+
     def is_old(
         self,
         age: Union[Dict[str, int], int],
@@ -68,6 +103,15 @@ class Service:
         if isinstance(age, int):
             # Default to 'days' if a single integer is provided
             age = {"days": age}
+
+        max_age = os.getenv("MAX_AGE")
+        if max_age:
+            max_age = ast.literal_eval(max_age)
+            if self.get_min_age(age, max_age) == max_age:
+                logging.info(
+                    f"Overwriting resource age: Setting age to the maximum threshold of {max_age}."
+                )
+                age = max_age
 
         logging.info(f"Validating resource age with threshold: {age}")
         age_delta = current_time - creation_time

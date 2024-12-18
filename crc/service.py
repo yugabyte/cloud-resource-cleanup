@@ -137,8 +137,10 @@ class Service:
 
         logging.info(f"Searching for custom_age_tag_key: {key}")
         try:
+            logging.info(f"Type of tags is: {type(tags)}")
             # Process tags when provided as a dictionary, used by Azure and GCP.
             if isinstance(tags, dict):
+                logging.info(f"key: {key} in tags: {tags} - {tags.get(key)}")
                 value = tags.get(key)
                 if value:
                     logging.info(f"Found '{key}' tag: {value}")

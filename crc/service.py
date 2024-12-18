@@ -127,7 +127,6 @@ class Service:
         Returns:
             Optional[str]: The value of 'retention_age' if present and valid, otherwise None.
         """
-        logging.info(f"Type of tags is: {type(tags)}")
         if not key:
             logging.warning("No custom_age_tag_key provided to search for.")
             return None
@@ -138,22 +137,22 @@ class Service:
 
         logging.info(f"Searching for custom_age_tag_key: {key}")
         try:
-            # Process tags when provided as a dictionary, used by Azure and GCP.
-            if isinstance(tags, dict):
-                logging.info(f"key: {key} in tags: {tags} - {tags.get(key)}")
-                value = tags.get(key)
-                if value:
-                    logging.info(f"Found '{key}' tag: {value}")
-                    return self._parse_literal(value, key)
-
             # Process tags provided as a list of dictionaries, specific to AWS.
-            elif isinstance(tags, list):
+            if isinstance(tags, list):
                 for tag in tags:
                     if tag.get("Key") == key:
                         value = tag.get("Value")
                         if value:
                             logging.info(f"Found '{key}' tag: {value}")
                             return self._parse_literal(value, key)
+            else:
+                # Process tags when provided as a dictionary, used by Azure and GCP.
+                # For GCP, the type of tags is <class 'google._upb._message.ScalarMapContainer'>.
+                # We will treat it as a dictionary and proceed accordingly.
+                value = tags.get(key)
+                if value:
+                    logging.info(f"Found '{key}' tag: {value}")
+                    return self._parse_literal(value, key)
         except Exception as e:
             logging.error(f"Error retrieving '{key}' tag: {e}")
 

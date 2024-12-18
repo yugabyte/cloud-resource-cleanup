@@ -27,7 +27,7 @@ class Service:
         log_filename = os.path.join(self.logs_dir, self.logs_file)
         init_logging(log_filename)
 
-    def get_min_age(dict1, dict2):
+    def get_min_age(self, dict1, dict2):
         """
         Compares two dictionaries containing 'days' and 'hours' keys and returns the one representing
         the lesser amount of time. The dictionaries may contain both 'days' and 'hours', or just one of them.

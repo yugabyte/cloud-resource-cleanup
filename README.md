@@ -151,7 +151,7 @@ must be between 7 to 30 inclusive.
 # Examples
 1. Delete all running AWS VMs that are older than `3 days and 12 hours` and have the tag `test_task` with the value `stress-test`. Additionally, consider the custom age specified in the `retention_age` tag, ensuring the value does not exceed the `max_age` of `14 days`.
 ```
-python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}" --custom_age_tag_key retention_age --max_age {'days': 14}.
+python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}" --custom_age_tag_key retention_age --max_age {'days': 14}
 ```
 
 2. To stop all Azure VMs in `test-rg` resource group that are older than 2 days and have the tag `test_task` with the value `stress-test`:

@@ -133,7 +133,9 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `exception_tags`: Use this option to exclude resources based on their tags. **Does not apply if `filter_tags` is not set**. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `any` of the key with `any` value pair matches. **This option does not apply to AWS keypairs and GCP IPs** (e.g. {'test_task': ['test-keep-resources', 'stress-test-keep-resources']}).
 * `name_regex`: Use this option to filter resources based on regular expressions applied to their names. If not specified, all available resources will be picked. **This option only applies to AWS keypairs and GCP IPs**. Resources will be included if `any` of the specified regular expressions match their names. (e.g. ['perftest_', 'feature_']).
 * `exception_regex`: Use this option to exclude resources based on regular expressions applied to their names. **This option does not apply if `name_regex` is not set**. Resources will be excluded if `any` of the specified regular expressions match their names. **This option only applies to AWS keypairs and GCP IPs** (e.g. ['perftest_keep_resources', 'feature_keep_resources'])
-* `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}). 
+* `age`: Use this option to specify an age threshold for resources when deleting resources other than `IPs` (e.g. {'days': 3, 'hours': 12}).
+* `custom_age_tag_key`: Define a custom tag key for the age threshold of resources. This tag is ignored for `IPs` and `Keypairs` (e.g. value of the tag {'days': 3, 'hours': 12}).
+* `max_age`: Specify the maximum age threshold for resources. This value will override the value of the tag specified by `custom_age_tag_key` (e.g. {'days': 14, 'hours': 12}).
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 * `slack_channel`: Use this option to specify a Slack channel to receive notifications about the execution of the script. Only works if specified.
 * `detach_age`: Use this option to specify the detached age for filtering GCP Disks. This option only works for GCP disks deletions.
@@ -147,9 +149,9 @@ must be between 7 to 30 inclusive.
 
 
 # Examples
-1. To delete all running AWS VMs that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
+1. Delete all running AWS VMs that are older than `3 days and 12 hours` and have the tag `test_task` with the value `stress-test`. Additionally, consider the custom age specified in the `retention_age` tag, ensuring the value does not exceed the `max_age` of `14 days`.
 ```
-python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
+python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}" --custom_age_tag_key retention_age --max_age {'days': 14}.
 ```
 
 2. To stop all Azure VMs in `test-rg` resource group that are older than 2 days and have the tag `test_task` with the value `stress-test`:

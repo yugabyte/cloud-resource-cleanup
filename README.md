@@ -30,6 +30,7 @@ We support below Cloud Providers:
   * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
   * Delete KMS
+  * Delete Spot Instance Requests
 * Azure
   * Delete Orphan disks
   * Delete VMs (and attached NICs)
@@ -50,6 +51,7 @@ In addition to these features, `cloud-resource-cleanup` also includes the follow
 * `Tag-based filtering`: Choose to include resources with specific tags. (`--filter_tags` option)
 * `Delete untagged resources`: Option to delete resources that don't have specified tags. (`--notags` option)
 * `Keep tagged resources`: Option to keep resources that have specific tags. (`--exception_tags` option)
+* `Custom Age Override`: Specify a custom age for a resource using the `--custom_age_tag_key` option.
 
 Get started with `cloud-resource-cleanup` today and see the difference it can make for your cloud infrastructure management.
 
@@ -98,18 +100,7 @@ You can set the environment variables in your shell by using the `export` comman
 ```
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
 ```
-Similarly, you can set the other environment variables as well.
-```
-export AWS_SECRET_ACCESS_KEY="your_secret_key"
-export AWS_ACCESS_KEY_ID="your_access_key"
-export AZURE_CREDENTIALS_TENANT_ID="your_tenant_id"
-export AZURE_CREDENTIALS_SUBSCRIPTION_ID="your_subscription_id"
-export AZURE_CREDENTIALS_CLIENT_SECRET="your_client_secret"
-export AZURE_CREDENTIALS_CLIENT_ID="your_client_id"
-export AZURE_RESOURCE_GROUP="your_resource_group"
-export SLACK_BOT_TOKEN="your_slack_bot_token"
-export INFLUXDB_TOKEN="your_influxdb_token"
-```
+
 You can also add these commands to your shell profile file, such as `~/.bash_profile` or `~/.bashrc`, to ensure that these environment variables are set every time you start a new shell session.
 
 Make sure to replace the placeholders with the appropriate values for your environment.

@@ -71,7 +71,7 @@ class SpotInstanceRequests(Service):
         This is a property decorator that returns the list of items in the spot_requests_to_delete list.
         It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
         """
-        return self.spot_requests_to_delete
+        return self.spot_requests_to_delete + self.instance_ids_to_delete
 
     @property
     def delete_count(self):
@@ -79,8 +79,8 @@ class SpotInstanceRequests(Service):
         This is a property decorator that returns the count of items in the spot_requests_to_delete list.
         It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
         """
-        count = len(self.spot_requests_to_delete)
-        logging.info(f"count of items in spot_requests_to_delete: {count}")
+        count = len(self.spot_requests_to_delete) + len(self.instance_ids_to_delete)
+        logging.info(f"count of items in spot_requests_to_delete & instance_ids_to_delete: {count}")
         return count
 
     def _get_filter(self) -> List[Dict[str, List[str]]]:
@@ -205,13 +205,12 @@ class SpotInstanceRequests(Service):
                     finalized_requests = []
                     finalised_instances = []
                     if not self.dry_run:
-                        for ind, req in enumerate(requests_to_operate):
+                        for req in requests_to_operate:
                             try:
                                 client.cancel_spot_instance_requests(
                                     SpotInstanceRequestIds=[req]
                                 )
                                 finalized_requests.append(req)
-                                finalised_instances.append(instance_id_to_operate[ind])
                             except Exception as e:
                                 logging.error(
                                     f"Error occured while deleting spot instance request {req}: {e}"
@@ -221,6 +220,18 @@ class SpotInstanceRequests(Service):
                                 f"Spot Instance Request: {finalized_requests[i]} deleted."
                             )
                         self.spot_requests_to_delete.extend(finalized_requests)
+                        for instance_id in instance_id_to_operate:
+                            try:
+                                client.terminate_instances(InstanceIds=[instance_id])
+                                finalised_instances.append(instance_id)
+                            except Exception as e:
+                                logging.error(
+                                    f"Error occured while deleting spot instance request instance {instance_id}: {e}"
+                                )
+                        for instance in finalised_instances:
+                            logging.info(
+                                f"Spot Instance Request Instance: {instance} deleted."
+                            )
                         self.instance_ids_to_delete.extend(finalised_instances)
                     else:
                         self.spot_requests_to_delete.extend(requests_to_operate)
@@ -238,12 +249,12 @@ class SpotInstanceRequests(Service):
                 f"List of AWS SpotInstanceRequest (Total: {len(self.spot_requests_to_delete)}) which will be deleted: {self.spot_requests_to_delete}"
             )
             logging.warning(
-                f"List of AWS SpotInstanceRequest (Total: {len(self.instance_ids_to_delete)}) which we should delete manually: {self.instance_ids_to_delete}"
+                f"List of AWS SpotInstanceRequest Instances (Total: {len(self.instance_ids_to_delete)}) which will be deleted: {self.instance_ids_to_delete}"
             )
         else:
             logging.warning(
                 f"List of AWS SpotInstanceRequest (Total: {len(self.spot_requests_to_delete)}) deleted: {self.spot_requests_to_delete}"
             )
             logging.warning(
-                f"List of AWS SpotInstanceRequest (Total: {len(self.instance_ids_to_delete)}) which we should delete manually: {self.instance_ids_to_delete}"
+                f"List of AWS SpotInstanceRequest Instances (Total: {len(self.instance_ids_to_delete)}) deleted: {self.instance_ids_to_delete}"
             )

@@ -30,7 +30,7 @@ We support below Cloud Providers:
   * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
   * Delete KMS
-  * Delete Spot Instance Requests
+  * Delete Spot Instance Requests & associated Instances
 * Azure
   * Delete Orphan disks
   * Delete VMs (and attached NICs)
@@ -175,7 +175,7 @@ python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-te
 python3 crc.py --cloud aws --resource kms --kms_key_description <key-description> --kms_user <AWS-ARN> --age "{'days': 3}"
 ```
 
-8. To delete all AWS Spot Instance Requests that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
+8. To delete all AWS Spot Instance Requests & associated Instances that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
 ```
 python crc.py --cloud aws --resource spot_instance_requests --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
 ```

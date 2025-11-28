@@ -135,13 +135,21 @@ class VM(Service):
                             tags_list = inst.get("Tags", []) or []
                             tags = {t.get("Key"): t.get("Value") for t in tags_list}
                             name = self._get_instance_name(tags_list) or tags.get("Name") or ""
+                            instance_id = inst.get("InstanceId")
+                            state = inst.get("State", {}).get("Name", "").upper()  # e.g. 'running', 'stopped'
+                            launch_time = inst.get("LaunchTime")  # boto3 returns datetime with tzinfo
+                            instance_type = inst.get("InstanceType")
+
                             results.append(
                                 {
                                     "cloud": "aws",
                                     "region": region,
-                                    "id": inst.get("InstanceId"),
+                                    "id": instance_id,
                                     "name": name,
                                     "tags": tags,
+                                    "state": state,
+                                    "launch_time": launch_time,
+                                    "instance_type": instance_type
                                 }
                             )
             except client.exceptions.ClientError as ce:

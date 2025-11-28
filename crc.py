@@ -1248,6 +1248,9 @@ def main():
                 rid = h.get("id") or h.get("instance_id") or name
                 # region/zone normalization
                 region = h.get("region") or h.get("zone") or h.get("location") or ""
+                state = (h.get("state") or "").upper()
+                launch_time = h.get("launch_time")  # could be datetime or string
+                instance_type = h.get("instance_type")
                 console_url = None
                 try:
                     if cloud == "aws":
@@ -1272,6 +1275,9 @@ def main():
                     "id": rid,
                     "region": region,
                     "console_url": console_url,
+                    "state": state,
+                    "launch_time": launch_time,
+                    "instance_type": instance_type
                 })
 
             if items:

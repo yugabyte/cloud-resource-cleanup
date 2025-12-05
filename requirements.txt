@@ -10,3 +10,4 @@ google-cloud-compute
 google-api-python-client
 slack_sdk
 influxdb-client[ciso]
+python-dateutil

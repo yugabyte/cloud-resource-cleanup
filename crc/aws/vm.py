@@ -105,6 +105,59 @@ class VM(Service):
         count = len(self.instance_names_to_stop)
         logging.info(f"count of items in instance_names_to_stop: {count}")
         return count
+    
+    def find_instances_with_tag(self, tag_key: str, tag_value: str) -> List[Dict[str, str]]:
+        """
+        Find instances that have a tag key with the provided value across ALL AWS regions.
+        Returns a list of dicts with keys: cloud, region, id, name, tags.
+        Read-only — does not modify instances.
+        """
+        results: List[Dict[str, str]] = []
+        try:
+            session = boto3.session.Session()
+            regions = session.get_available_regions(self.service_name)
+            if not regions:
+                regions = get_all_regions(self.service_name, self.default_region_name)
+        except Exception:
+            regions = get_all_regions(self.service_name, self.default_region_name)
+        for region in regions:
+            try:
+                client = boto3.client(self.service_name, region_name=region)
+            except Exception as e:
+                logging.warning(f"[aws:{region}] failed to create client: {e}")
+                continue
+            filters = [{"Name": f"tag:{tag_key}", "Values": [tag_value]}]
+            try:
+                paginator = client.get_paginator("describe_instances")
+                for page in paginator.paginate(Filters=filters):
+                    for reservation in page.get("Reservations", []):
+                        for inst in reservation.get("Instances", []):
+                            tags_list = inst.get("Tags", []) or []
+                            tags = {t.get("Key"): t.get("Value") for t in tags_list}
+                            name = self._get_instance_name(tags_list) or tags.get("Name") or ""
+                            instance_id = inst.get("InstanceId")
+                            state = inst.get("State", {}).get("Name", "").upper()  # e.g. 'running', 'stopped'
+                            launch_time = inst.get("LaunchTime")  # boto3 returns datetime with tzinfo
+                            instance_type = inst.get("InstanceType")
+
+                            results.append(
+                                {
+                                    "cloud": "aws",
+                                    "region": region,
+                                    "id": instance_id,
+                                    "name": name,
+                                    "tags": tags,
+                                    "state": state,
+                                    "launch_time": launch_time,
+                                    "instance_type": instance_type
+                                }
+                            )
+            except client.exceptions.ClientError as ce:
+                logging.warning(f"[aws:{region}] ClientError while describing instances: {ce}")
+            except Exception as e:
+                logging.warning(f"[aws:{region}] error while describing instances: {e}")
+        return results
+
 
     def _get_filter(self, instance_state: List[str]) -> List[Dict[str, List[str]]]:
         """

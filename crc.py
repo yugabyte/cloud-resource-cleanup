@@ -24,6 +24,9 @@ from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
 
+import sys
+from crc.notifications import notify_cleanup
+
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
 RESOURCES = ["disk", "ip", "keypair", "vm", "kms", "nic"]
@@ -307,6 +310,12 @@ class CRC:
             return f"`Dry Run`: Will be {operation_type}: `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
 
         return f"{operation_type} the following `{operated_list_length}` {self.cloud} {resource}(s):\n`{operated_list}`"
+    
+    def scan_instances_with_tag(self, tag_key: str, tag_value: str):
+        vm = self._get_vm(filter_tags={}, exception_tags={}, age={}, custom_age_tag_key=None)
+        if hasattr(vm, "find_instances_with_tag"):
+            return vm.find_instances_with_tag(tag_key,tag_value)
+        raise NotImplementedError(f"{type(vm)} does not implement find_instances_with_tag")
 
     def notify_deleted_nic_via_slack(self, nic: object):
         """
@@ -1007,6 +1016,13 @@ def get_argparser():
         help="Resource group for Azure. Required only for Azure. Example: --resource_group test-rg",
     )
 
+    # Add Argument for scanning instances by tag (read-only)
+    parser.add_argument(
+        "--scan_tag",
+        metavar="KEY=VALUE",
+        help="Scan VMs for a specific tag key/value pair (read-only). Example: --scan_tag auto_clean=false"
+    )
+
     return vars(parser.parse_args())
 
 
@@ -1117,6 +1133,7 @@ def main():
     kms_key_description = args.get("kms_key_description")
     kms_user = args.get("kms_user")
     resource_group = args.get("resource_group")
+    scan_tag = args.get("scan_tag")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
     SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
@@ -1185,6 +1202,110 @@ def main():
     if max_age:
         os.environ["MAX_AGE"] = str(max_age)
         print(f"Set MAX_AGE: {os.environ['MAX_AGE']}")
+
+        # Handle read-only scanning before destructive operations
+    scan_tag = args.get("scan_tag")
+    if scan_tag:
+        if "=" not in scan_tag:
+            raise ValueError("--scan_tag must be in KEY=VALUE format, e.g. auto_clean=false")
+        tag_key, tag_value = scan_tag.split("=", 1)
+
+        # enforce dry_run for safety
+        if not dry_run:
+            print("For safety, scan_tag enforces dry_run. Running in dry_run mode.")
+            dry_run = True
+
+        clouds_to_scan = CLOUDS if clouds == "all" else [c for c in clouds]
+        any_hits = False
+
+        for cloud in clouds_to_scan:
+            print(f"\nScanning {cloud.upper()} for tag {tag_key}={tag_value}...")
+            crc = CRC(
+                cloud,
+                dry_run,
+                notags,
+                slack_client,
+                influxdb_client,
+                project_id,
+                resource_group,
+                slack_channel,
+                influxdb,
+            )
+            try:
+                hits = crc.scan_instances_with_tag(tag_key, tag_value) or []
+            except NotImplementedError as e:
+                print(f"[{cloud}] scan not implemented: {e}")
+                hits = []
+            except Exception as e:
+                print(f"[{cloud}] error scanning: {e}")
+                hits = []
+
+            # Normalize provider result into items (name,id,region/zone,console_url)
+            items = []
+            for h in hits:
+                # h is expected to be a dict from provider: e.g. aws: {'cloud','region','id','name','tags'}
+                name = h.get("name") or h.get("display_name") or ""
+                rid = h.get("id") or h.get("instance_id") or name
+                # region/zone normalization
+                region = h.get("region") or h.get("zone") or h.get("location") or ""
+                state = (h.get("state") or "").upper()
+                launch_time = h.get("launch_time")  # could be datetime or string
+                instance_type = h.get("instance_type")
+                console_url = None
+                try:
+                    if cloud == "aws":
+                        # AWS console instance URL
+                        # ensure we have region and instance id
+                        if region and rid:
+                            console_url = f"https://{region}.console.aws.amazon.com/ec2/v2/home?region={region}#Instances:instanceId={rid}"
+                    elif cloud == "gcp":
+                        project = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT")
+                        if project and region and name:
+                            console_url = f"https://console.cloud.google.com/compute/instancesDetail/zones/{region}/instances/{name}?project={project}"
+                    elif cloud == "azure":
+                        # Azure portal link using resource id if available
+                        resource_id = h.get("id") or h.get("resource_id")
+                        if resource_id:
+                            console_url = f"https://portal.azure.com/#resource{resource_id}"
+                except Exception:
+                    console_url = None
+
+                items.append({
+                    "name": name,
+                    "id": rid,
+                    "region": region,
+                    "console_url": console_url,
+                    "state": state,
+                    "launch_time": launch_time,
+                    "instance_type": instance_type
+                })
+
+            if items:
+                any_hits = True
+                # If slack configured, send slack notification; else print summary
+                if slack_client and slack_channel:
+                    try:
+                        notify_cleanup(slack_client, "#" + slack_channel if not str(slack_channel).startswith("#") else slack_channel, "delete" if operation_type == "delete" else operation_type, cloud, "vm", items, dry_run)
+                        print(f"[{cloud}] Sent Slack notification to {slack_channel} ({len(items)} items).")
+                    except Exception as e:
+                        print(f"[{cloud}] Failed to send Slack notification: {e}")
+                        # still print items on console
+                        for it in items:
+                            print(f" - {it['region']:15} {it['id']:20} {it['name']}")
+                else:
+                    print(f"✅ Found {len(items)} instance(s) in {cloud}:")
+                    for it in items:
+                        print(f"  • {it['region']:15} {it['id']:20} {it['name']} {it['console_url'] or ''}")
+            else:
+                print(f"No instances found in {cloud} with {tag_key}={tag_value}.")
+
+        # exit after scan (read-only)
+        if any_hits:
+            print("\n Instances found with that tag. Review before running cleanup.")
+            sys.exit(1)
+        else:
+            print("\n No matching instances found. Nothing to clean.")
+            sys.exit(0)
 
     # Perform operations
     for cloud in clouds:

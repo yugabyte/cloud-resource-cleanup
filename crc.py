@@ -1302,7 +1302,7 @@ def main():
         # exit after scan (read-only)
         if any_hits:
             print("\n Instances found with that tag. Review before running cleanup.")
-            sys.exit(1)
+            sys.exit(0)
         else:
             print("\n No matching instances found. Nothing to clean.")
             sys.exit(0)

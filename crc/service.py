@@ -97,7 +97,7 @@ class Service:
             - Info logs for debugging resource age and the threshold applied.
         """
         if not age:
-            logging.warning("Age is not specified. Ignoring age threshold check")
+            logging.debug("Age is not specified. Ignoring age threshold check")
             return True
 
         if isinstance(age, int):
@@ -172,7 +172,7 @@ class Service:
             Optional[str]: The value of 'retention_age' if present and valid, otherwise None.
         """
         if not key:
-            logging.warning("No custom_age_tag_key provided to search for.")
+            logging.debug("No custom_age_tag_key provided to search for.")
             return None
 
         if not tags:

@@ -42,6 +42,11 @@ def init_logging(filename: str, log_level: str = "debug"):
     # Add handlers to the logger
     logger.addHandler(fh)
     logger.addHandler(ch)
+
+    # Reduce noise from Azure SDK and HTTP libs (request/response dumps)
+    for name in ("azure", "msrest", "urllib3"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
     logging.info(
         f"Logging initialized with file: {filename} and level: {log_level.upper()}"
     )

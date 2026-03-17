@@ -19,17 +19,19 @@ from crc.aws.vpc import VPC
 from crc.azu.disk import Disk
 from crc.azu.ip import IP as AZU_IP
 from crc.azu.nic import NIC
+from crc.azu.spot_vm import SpotVM as AZU_SpotVM
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
+from crc.aws.snapshot import Snapshot
 
 import sys
 from crc.notifications import notify_cleanup
 
 # List of supported clouds and resources
 CLOUDS = ["aws", "azure", "gcp"]
-RESOURCES = ["disk", "ip", "keypair", "vm", "kms", "nic"]
+RESOURCES = ["disk", "ip", "keypair", "vm", "kms", "nic", "snapshot"]
 
 DELETED = "Deleted"
 STOPPED = "Stopped"
@@ -537,6 +539,40 @@ class CRC:
             if self.cloud == "azure":
                 self.write_influxdb(NICS, vm.get_deleted_nic)
 
+    def delete_azure_spot_instances(
+        self,
+        filter_tags: Dict[str, List[str]],
+        exception_tags: Dict[str, List[str]],
+        age: Dict[str, int],
+        custom_age_tag_key: str,
+    ):
+        """
+        Delete Azure Spot VMs that are stopped or deallocated.
+
+        :param filter_tags: Dictionary of tags to filter the VM.
+        :param exception_tags: Dictionary of tags to exclude the VM.
+        :param age: Dictionary of age conditions to filter the VM.
+        :param custom_age_tag_key: Tag name to overwrite the age condition.
+        """
+        if not self.resource_group:
+            raise ValueError("resource_group is required for Azure Spot VM cleanup")
+        spot_vm = AZU_SpotVM(
+            self.resource_group,
+            self.dry_run,
+            filter_tags,
+            exception_tags,
+            age,
+            custom_age_tag_key,
+            self.notags,
+        )
+        spot_vm.delete()
+
+        if self.slack_client:
+            self.notify_deleted_vm_via_slack(spot_vm)
+        if self.influxdb_client:
+            self.write_influxdb(VMS, spot_vm.get_deleted)
+            self.write_influxdb(NICS, spot_vm.get_deleted_nic)
+
     def delete_spot_instance_requests(
         self,
         filter_tags: Dict[str, List[str]],
@@ -545,7 +581,7 @@ class CRC:
         custom_age_tag_key: str,
     ):
         """
-        Delete virtual machines that match the specified criteria.
+        Delete AWS Spot Instance Requests and associated instances.
 
         :param filter_tags: Dictionary of tags to filter the VM.
         :param exception_tags: Dictionary of tags to exclude the VM.
@@ -827,6 +863,8 @@ def get_argparser():
             "kms",
             "nic",
             "spot_instance_requests",
+            "spot_instances",
+            "snapshot",
             "all",
         ],
         metavar="RESOURCE",
@@ -1371,6 +1409,32 @@ def main():
                 crc.delete_spot_instance_requests(
                     filter_tags, exception_tags, age, custom_age_tag_key
                 )
+            elif resource == "spot_instances":
+                if crc.cloud == "azure":
+                    crc.delete_azure_spot_instances(
+                        filter_tags, exception_tags, age, custom_age_tag_key
+                    )
+                else:
+                    logging.warning(
+                        "spot_instances resource is only supported for Azure; skipped for %s",
+                        crc.cloud,
+                    )
+            elif resource == "snapshot":
+                snapshot = Snapshot(
+                    dry_run=dry_run,
+                    age_days=90,
+                    exception_tags=exception_tags
+                )
+                snapshot.delete()
+                if dry_run:
+                    msg = (
+                        f"DRY RUN: AWS Snapshots eligible for deletion (>{snapshot.age_days} days): "
+                        f"{snapshot.delete_count}"
+                    )
+                else:
+                    msg = crc.get_msg("Snapshot", "Deleted", snapshot.get_deleted)
+                print(msg)
+                    
     if max_age:
         del os.environ["MAX_AGE"]
         print("MAX_AGE reset.")

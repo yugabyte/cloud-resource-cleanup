@@ -2,10 +2,13 @@
 
 import datetime
 import logging
-import time
 from typing import Dict, List
 
 from crc.azu._base import Base
+from crc.azu.vm_delete_helpers import (
+    begin_delete_vm_and_wait,
+    delete_vm_primary_nic,
+)
 from crc.service import Service
 
 
@@ -107,37 +110,24 @@ class SpotVM(Service):
 
     def _delete_vm(self, vm_name: str):
         if not self.dry_run:
-            self.base.get_compute_client().virtual_machines.begin_delete(
-                self.base.resource_group, vm_name
-            )
             logging.info("Deleting Azure Spot VM: %s", vm_name)
-        self.instance_names_to_delete.append(vm_name)
-        self._delete_nic(vm_name)
-
-    def _delete_nic(self, vm_name: str):
-        deleted_nic = False
-        failure_count = 3
-        nic_name = f"{vm_name}-NIC"
-        while not deleted_nic and failure_count:
             try:
-                if not self.dry_run:
-                    logging.info(
-                        f"Sleeping for {60 * failure_count} seconds before deleting NIC"
-                    )
-                    time.sleep(60 * failure_count)
-                    self.base.get_network_client().network_interfaces.begin_delete(
-                        self.base.resource_group, nic_name
-                    )
-                    logging.info(f"Deleted the NIC - {nic_name}")
-                deleted_nic = True
-                self.nics_names_to_delete.append(nic_name)
+                begin_delete_vm_and_wait(
+                    self.base.get_compute_client(),
+                    self.base.resource_group,
+                    vm_name,
+                )
             except Exception as e:
-                failure_count -= 1
-                logging.error(f"Error occurred while processing {nic_name} NIC: {e}")
-                if failure_count:
-                    logging.info(f"Retrying deletion of NIC {nic_name}")
-        if not failure_count:
-            logging.error(f"Failed to delete the NIC - {nic_name}")
+                logging.error("Error deleting Spot VM %s: %s", vm_name, e)
+                raise
+        self.instance_names_to_delete.append(vm_name)
+        delete_vm_primary_nic(
+            self.base.get_network_client(),
+            self.base.resource_group,
+            vm_name,
+            self.dry_run,
+            self.nics_names_to_delete,
+        )
 
     def delete(self) -> None:
         """

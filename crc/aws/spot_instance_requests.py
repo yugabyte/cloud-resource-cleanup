@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Tuple
 
 import boto3
+from botocore.exceptions import ClientError
 
 from crc.aws._base import get_all_regions
 from crc.service import Service
@@ -107,7 +108,7 @@ class SpotInstanceRequests(Service):
         """
         spot_requests = []
         instance_ids = []
-        for request in spot_request_details["SpotInstanceRequests"]:
+        for request in spot_request_details.get("SpotInstanceRequests", []):
             try:
                 if "Tags" not in request:
                     continue
@@ -117,7 +118,8 @@ class SpotInstanceRequests(Service):
                 ):
                     continue
                 request_id = request["SpotInstanceRequestId"]
-                instance_id = request["InstanceId"]
+                # Open / pending requests may not have an instance yet
+                instance_id = request.get("InstanceId")
                 create_time = request["CreateTime"]
 
                 retention_age = self.get_retention_age(tags, self.custom_age_tag_key)
@@ -132,10 +134,12 @@ class SpotInstanceRequests(Service):
                     datetime.datetime.now().astimezone(create_time.tzinfo),
                     create_time,
                 ):
-                    instance_ids.append(instance_id)
                     spot_requests.append(request_id)
+                    if instance_id:
+                        instance_ids.append(instance_id)
                     logging.info(
-                        f"Spot Request {request_id} with Instance ID {instance_id} added to list of requests to be cleaned up."
+                        f"Spot Request {request_id} with Instance ID {instance_id or 'none'} "
+                        "added to list of requests to be cleaned up."
                     )
             except Exception as e:
                 logging.error(
@@ -189,57 +193,104 @@ class SpotInstanceRequests(Service):
         any operations on them if dry_run mode is enabled.
         """
         spot_filter = self._get_filter()
-        for region in get_all_regions(self.service_name, self.default_region_name):
+        try:
+            regions = get_all_regions(self.service_name, self.default_region_name)
+        except Exception as e:
+            logging.error("Failed to list AWS regions for EC2: %s", e)
+            return
+
+        for region in regions:
             client = boto3.client(self.service_name, region_name=region)
-            describe_spot_response = client.describe_spot_instance_requests(
-                Filters=spot_filter
-            )
+            describe_spot_response = None
+            try:
+                describe_spot_response = self._describe_all_spot_requests(
+                    client, spot_filter
+                )
+            except ClientError as e:
+                logging.error(
+                    "Region %s: describe_spot_instance_requests failed (%s): %s",
+                    region,
+                    e.response.get("Error", {}).get("Code", "Unknown"),
+                    e,
+                )
+                continue
+            except Exception as e:
+                logging.error(
+                    "Region %s: describe_spot_instance_requests failed: %s",
+                    region,
+                    e,
+                )
+                continue
 
             (
                 requests_to_operate,
                 instance_id_to_operate,
             ) = self._get_filtered_requests(describe_spot_response)
 
-            if requests_to_operate:
-                try:
-                    finalized_requests = []
-                    finalised_instances = []
-                    if not self.dry_run:
-                        for req in requests_to_operate:
-                            try:
-                                client.cancel_spot_instance_requests(
-                                    SpotInstanceRequestIds=[req]
-                                )
-                                finalized_requests.append(req)
-                            except Exception as e:
-                                logging.error(
-                                    f"Error occured while deleting spot instance request {req}: {e}"
-                                )
-                        for i in range(len(finalized_requests)):
-                            logging.info(
-                                f"Spot Instance Request: {finalized_requests[i]} deleted."
+            if not requests_to_operate:
+                continue
+
+            try:
+                finalized_requests = []
+                finalised_instances = []
+                if not self.dry_run:
+                    for req in requests_to_operate:
+                        try:
+                            client.cancel_spot_instance_requests(
+                                SpotInstanceRequestIds=[req]
                             )
-                        self.spot_requests_to_delete.extend(finalized_requests)
-                        for instance_id in instance_id_to_operate:
-                            try:
-                                client.terminate_instances(InstanceIds=[instance_id])
-                                finalised_instances.append(instance_id)
-                            except Exception as e:
-                                logging.error(
-                                    f"Error occured while deleting spot instance request instance {instance_id}: {e}"
-                                )
-                        for instance in finalised_instances:
-                            logging.info(
-                                f"Spot Instance Request Instance: {instance} deleted."
+                            finalized_requests.append(req)
+                        except ClientError as e:
+                            logging.error(
+                                "Error cancelling spot request %s in %s: %s",
+                                req,
+                                region,
+                                e,
                             )
-                        self.instance_ids_to_delete.extend(finalised_instances)
-                    else:
-                        self.spot_requests_to_delete.extend(requests_to_operate)
-                        self.instance_ids_to_delete.extend(instance_id_to_operate)
-                except Exception as e:
-                    logging.error(
-                        f"Error occurred while deleting spot instance requests: {e}"
-                    )
+                        except Exception as e:
+                            logging.error(
+                                "Error cancelling spot request %s in %s: %s",
+                                req,
+                                region,
+                                e,
+                            )
+                    for i in range(len(finalized_requests)):
+                        logging.info(
+                            f"Spot Instance Request: {finalized_requests[i]} deleted."
+                        )
+                    self.spot_requests_to_delete.extend(finalized_requests)
+                    for instance_id in instance_id_to_operate:
+                        try:
+                            client.terminate_instances(InstanceIds=[instance_id])
+                            finalised_instances.append(instance_id)
+                        except ClientError as e:
+                            logging.error(
+                                "Error terminating instance %s in %s: %s",
+                                instance_id,
+                                region,
+                                e,
+                            )
+                        except Exception as e:
+                            logging.error(
+                                "Error terminating instance %s in %s: %s",
+                                instance_id,
+                                region,
+                                e,
+                            )
+                    for instance in finalised_instances:
+                        logging.info(
+                            f"Spot Instance Request Instance: {instance} deleted."
+                        )
+                    self.instance_ids_to_delete.extend(finalised_instances)
+                else:
+                    self.spot_requests_to_delete.extend(requests_to_operate)
+                    self.instance_ids_to_delete.extend(instance_id_to_operate)
+            except Exception as e:
+                logging.error(
+                    "Region %s: unexpected error while processing spot requests: %s",
+                    region,
+                    e,
+                )
 
         if not self.spot_requests_to_delete:
             logging.warning(f"No SpotInstanceRequest to delete.")
@@ -258,3 +309,26 @@ class SpotInstanceRequests(Service):
             logging.warning(
                 f"List of AWS SpotInstanceRequest Instances (Total: {len(self.instance_ids_to_delete)}) deleted: {self.instance_ids_to_delete}"
             )
+
+    def _describe_all_spot_requests(
+        self, client, spot_filter: List[Dict[str, List[str]]]
+    ) -> dict:
+        """
+        Paginate describe_spot_instance_requests. Omits Filters when empty so AWS
+        does not reject the call.
+        """
+        kwargs = {}
+        if spot_filter:
+            kwargs["Filters"] = spot_filter
+        all_requests = []
+        next_token = None
+        while True:
+            if next_token:
+                kwargs["NextToken"] = next_token
+            resp = client.describe_spot_instance_requests(**kwargs)
+            batch = resp.get("SpotInstanceRequests", [])
+            all_requests.extend(batch)
+            next_token = resp.get("NextToken")
+            if not next_token:
+                break
+        return {"SpotInstanceRequests": all_requests}

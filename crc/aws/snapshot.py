@@ -3,6 +3,7 @@ import datetime
 import logging
 
 from crc.aws._base import get_all_regions
+from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
 
@@ -58,31 +59,35 @@ class Snapshot(Service):
         cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=self.age_days)
 
         for region in get_all_regions(self.service_name, default_region_name="us-west-2"):
-            ec2 = boto3.client("ec2", region_name=region)
+            try:
+                ec2 = boto3.client("ec2", region_name=region)
 
-            snapshots = ec2.describe_snapshots(OwnerIds=["self"])["Snapshots"]
-            used_by_amis = self._get_snapshots_used_by_amis(ec2)
+                snapshots = ec2.describe_snapshots(OwnerIds=["self"])["Snapshots"]
+                used_by_amis = self._get_snapshots_used_by_amis(ec2)
 
-            for snap in snapshots:
-                snap_id = snap["SnapshotId"]
-                start_time = snap["StartTime"]
+                for snap in snapshots:
+                    snap_id = snap["SnapshotId"]
+                    start_time = snap["StartTime"]
 
-                if start_time > cutoff:
-                    continue
+                    if start_time > cutoff:
+                        continue
 
-                if self._is_protected(snap.get("Tags"), snap_id):
-                    continue
+                    if self._is_protected(snap.get("Tags"), snap_id):
+                        continue
 
-                if snap_id in used_by_amis:
-                    logging.info(f"Skipping snapshot {snap_id}, used by AMI")
-                    continue
+                    if snap_id in used_by_amis:
+                        logging.info(f"Skipping snapshot {snap_id}, used by AMI")
+                        continue
 
-                if not self.dry_run:
-                    try:
-                        ec2.delete_snapshot(SnapshotId=snap_id)
-                        logging.info(f"Deleted snapshot {snap_id}")
+                    if not self.dry_run:
+                        try:
+                            ec2.delete_snapshot(SnapshotId=snap_id)
+                            logging.info(f"Deleted snapshot {snap_id}")
+                            self.deleted_snapshots.append(snap_id)
+                        except Exception as e:
+                            logging.error(f"Failed to delete snapshot {snap_id}: {e}")
+                    else:
                         self.deleted_snapshots.append(snap_id)
-                    except Exception as e:
-                        logging.error(f"Failed to delete snapshot {snap_id}: {e}")
-                else:
-                    self.deleted_snapshots.append(snap_id)
+            except CONNECTIVITY_ERRORS as e:
+                log_skipped_region(region, "snapshot cleanup", e)
+                continue

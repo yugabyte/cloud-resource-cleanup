@@ -8,6 +8,7 @@ from typing import Dict, List
 import boto3
 
 from crc.aws._base import get_all_regions
+from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
 
@@ -96,48 +97,52 @@ class KeyPairs(Service):
         else:
             exception_regex = set()
         for region in get_all_regions(self.service_name, self.default_region_name):
-            keypairs_to_delete = set()
-            client = boto3.client(self.service_name, region_name=region)
-            keypairs = client.describe_key_pairs()
-            for keypair in keypairs["KeyPairs"]:
-                if "KeyName" not in keypair or "CreateTime" not in keypair:
-                    continue
-                keypair_name = keypair["KeyName"]
-                keypair_create_time = keypair["CreateTime"]
-                dt = datetime.datetime.now().astimezone(keypair_create_time.tzinfo)
+            try:
+                keypairs_to_delete = set()
+                client = boto3.client(self.service_name, region_name=region)
+                keypairs = client.describe_key_pairs()
+                for keypair in keypairs["KeyPairs"]:
+                    if "KeyName" not in keypair or "CreateTime" not in keypair:
+                        continue
+                    keypair_name = keypair["KeyName"]
+                    keypair_create_time = keypair["CreateTime"]
+                    dt = datetime.datetime.now().astimezone(keypair_create_time.tzinfo)
 
-                # Check if keypair name matches specified regex
-                match_name_regex = not self.name_regex or any(
-                    re.search(kpn, keypair_name) for kpn in self.name_regex
-                )
-                match_exception_regex = self.exception_regex and any(
-                    re.search(kpn, keypair_name) for kpn in exception_regex
-                )
-
-                if match_name_regex and not match_exception_regex:
-                    if self.is_old(
-                        self.age,
-                        dt,
-                        keypair_create_time,
-                    ):
-                        keypairs_to_delete.add(keypair_name)
-                    else:
-                        logging.info(
-                            f"Keypair {keypair_name} is not old enough to be deleted."
-                        )
-                else:
-                    if match_exception_regex:
-                        logging.info(
-                            f"Keypair {keypair_name} is in exception_regex {self.exception_regex}."
-                        )
-
-            for keypair_to_delete in keypairs_to_delete:
-                if not self.dry_run:
-                    response = client.delete_key_pair(KeyName=keypair_to_delete)
-                    logging.info(
-                        f"Deleted keypair: {keypair_to_delete} with response: {response}"
+                    # Check if keypair name matches specified regex
+                    match_name_regex = not self.name_regex or any(
+                        re.search(kpn, keypair_name) for kpn in self.name_regex
                     )
-                self.deleted_keypairs.append(keypair_to_delete)
+                    match_exception_regex = self.exception_regex and any(
+                        re.search(kpn, keypair_name) for kpn in exception_regex
+                    )
+
+                    if match_name_regex and not match_exception_regex:
+                        if self.is_old(
+                            self.age,
+                            dt,
+                            keypair_create_time,
+                        ):
+                            keypairs_to_delete.add(keypair_name)
+                        else:
+                            logging.info(
+                                f"Keypair {keypair_name} is not old enough to be deleted."
+                            )
+                    else:
+                        if match_exception_regex:
+                            logging.info(
+                                f"Keypair {keypair_name} is in exception_regex {self.exception_regex}."
+                            )
+
+                for keypair_to_delete in keypairs_to_delete:
+                    if not self.dry_run:
+                        response = client.delete_key_pair(KeyName=keypair_to_delete)
+                        logging.info(
+                            f"Deleted keypair: {keypair_to_delete} with response: {response}"
+                        )
+                    self.deleted_keypairs.append(keypair_to_delete)
+            except CONNECTIVITY_ERRORS as e:
+                log_skipped_region(region, "keypair cleanup", e)
+                continue
 
         if not self.dry_run:
             logging.warning(

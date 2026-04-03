@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import boto3
 
 from crc.aws._base import get_all_regions
+from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
 
@@ -152,6 +153,8 @@ class VM(Service):
                                     "instance_type": instance_type
                                 }
                             )
+            except CONNECTIVITY_ERRORS as e:
+                log_skipped_region(region, "describe_instances (scan tag)", e)
             except client.exceptions.ClientError as ce:
                 logging.warning(f"[aws:{region}] ClientError while describing instances: {ce}")
             except Exception as e:
@@ -306,64 +309,67 @@ class VM(Service):
         # Renaming filter to instance_filter for better understanding
         instance_filter = self._get_filter(instance_state)
         for region in get_all_regions(self.service_name, self.default_region_name):
-            client = boto3.client(self.service_name, region_name=region)
-            # Renaming instance_details to describe_instances_response for better understanding
-            describe_instances_response = client.describe_instances(
-                Filters=instance_filter
-            )
+            try:
+                client = boto3.client(self.service_name, region_name=region)
+                describe_instances_response = client.describe_instances(
+                    Filters=instance_filter
+                )
 
-            (
-                instances_to_operate,
-                instance_names_to_operate,
-            ) = self._get_filtered_instances(client, describe_instances_response)
+                (
+                    instances_to_operate,
+                    instance_names_to_operate,
+                ) = self._get_filtered_instances(client, describe_instances_response)
 
-            if instances_to_operate:
-                try:
-                    finalized_instances = []
-                    if operation_type == "delete":
-                        if not self.dry_run:
-                            for ind, ins in enumerate(instances_to_operate):
-                                try:
-                                    client.terminate_instances(InstanceIds=[ins])
-                                    finalized_instances.append(
-                                        instance_names_to_operate[ind]
+                if instances_to_operate:
+                    try:
+                        finalized_instances = []
+                        if operation_type == "delete":
+                            if not self.dry_run:
+                                for ind, ins in enumerate(instances_to_operate):
+                                    try:
+                                        client.terminate_instances(InstanceIds=[ins])
+                                        finalized_instances.append(
+                                            instance_names_to_operate[ind]
+                                        )
+                                    except Exception as e:
+                                        logging.error(
+                                            f"Error occured while {operation_type} instance {ins}: {e}"
+                                        )
+                                for i in range(len(finalized_instances)):
+                                    logging.info(
+                                        f"Instance: {finalized_instances[i]} deleted."
                                     )
-                                except Exception as e:
-                                    logging.error(
-                                        f"Error occured while {operation_type} instance {ins}: {e}"
-                                    )
-                            for i in range(len(finalized_instances)):
-                                logging.info(
-                                    f"Instance: {finalized_instances[i]} deleted."
+                                self.instance_names_to_delete.extend(finalized_instances)
+                            else:
+                                self.instance_names_to_delete.extend(
+                                    instance_names_to_operate
                                 )
-                            self.instance_names_to_delete.extend(finalized_instances)
-                        else:
-                            self.instance_names_to_delete.extend(
-                                instance_names_to_operate
-                            )
-                    elif operation_type == "stop":
-                        if not self.dry_run:
-                            for ind, ins in enumerate(instances_to_operate):
-                                try:
-                                    client.stop_instances(InstanceIds=[ins])
-                                    finalized_instances.append(
-                                        instance_names_to_operate[ind]
+                        elif operation_type == "stop":
+                            if not self.dry_run:
+                                for ind, ins in enumerate(instances_to_operate):
+                                    try:
+                                        client.stop_instances(InstanceIds=[ins])
+                                        finalized_instances.append(
+                                            instance_names_to_operate[ind]
+                                        )
+                                    except Exception as e:
+                                        logging.error(
+                                            f"Error occurred while {operation_type} instance {ins}: {e}"
+                                        )
+                                for i in range(len(finalized_instances)):
+                                    logging.info(
+                                        f"Instance {finalized_instances[i]} stopped."
                                     )
-                                except Exception as e:
-                                    logging.error(
-                                        f"Error occurred while {operation_type} instance {ins}: {e}"
-                                    )
-                            for i in range(len(finalized_instances)):
-                                logging.info(
-                                    f"Instance {finalized_instances[i]} stopped."
-                                )
-                            self.instance_names_to_stop.extend(finalized_instances)
-                        else:
-                            self.instance_names_to_stop.extend(instances_to_operate)
-                except Exception as e:
-                    logging.error(
-                        f"Error occurred while {operation_type} instances: {e}"
-                    )
+                                self.instance_names_to_stop.extend(finalized_instances)
+                            else:
+                                self.instance_names_to_stop.extend(instances_to_operate)
+                    except Exception as e:
+                        logging.error(
+                            f"Error occurred while {operation_type} instances: {e}"
+                        )
+            except CONNECTIVITY_ERRORS as e:
+                log_skipped_region(region, f"ec2 vm {operation_type}", e)
+                continue
 
         # Using more descriptive if conditions
         if not self.instance_names_to_delete and not self.instance_names_to_stop:

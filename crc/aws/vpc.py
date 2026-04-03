@@ -6,6 +6,7 @@ from typing import Dict, List
 import boto3
 
 from crc.aws._base import get_all_regions
+from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
 
@@ -152,83 +153,94 @@ class VPC(Service):
         vpc_filter = self._get_filter()
 
         for region in get_all_regions(self.service_name, self.default_region_name):
-            client = boto3.client(self.service_name, region_name=region)
-            ec2 = boto3.resource(self.service_name, region_name=region)
-            vpcs = list(ec2.vpcs.filter(Filters=vpc_filter))
+            try:
+                client = boto3.client(self.service_name, region_name=region)
+                ec2 = boto3.resource(self.service_name, region_name=region)
+                vpcs = list(ec2.vpcs.filter(Filters=vpc_filter))
 
-            self.vpc_ids_to_delete.extend(self.get_vpc_ids(vpcs))
+                self.vpc_ids_to_delete.extend(self.get_vpc_ids(vpcs))
 
-            if self.dry_run:
-                continue
-
-            for vpc in vpcs:
-                if self._should_skip_vpc(vpc):
+                if self.dry_run:
                     continue
 
-                # Detach default dhcp_options if associated with the VPC
-                dhcp_options_default = ec2.DhcpOptions("default")
-                if dhcp_options_default:
-                    dhcp_options_default.associate_with_vpc(VpcId=vpc.id)
+                for vpc in vpcs:
+                    if self._should_skip_vpc(vpc):
+                        continue
 
-                # Detach and delete all gateways associated with the VPC
-                for gw in vpc.internet_gateways.all():
-                    vpc.detach_internet_gateway(InternetGatewayId=gw.id)
-                    gw.delete()
+                    # Detach default dhcp_options if associated with the VPC
+                    dhcp_options_default = ec2.DhcpOptions("default")
+                    if dhcp_options_default:
+                        dhcp_options_default.associate_with_vpc(VpcId=vpc.id)
 
-                # Delete all route table associations
-                for rt in vpc.route_tables.all():
-                    for rta in rt.associations:
-                        if not rta.main:
-                            rta.delete()
-                    if not rt.associations:
-                        rt.delete()
+                    # Detach and delete all gateways associated with the VPC
+                    for gw in vpc.internet_gateways.all():
+                        vpc.detach_internet_gateway(InternetGatewayId=gw.id)
+                        gw.delete()
 
-                # Delete any instances
-                for subnet in vpc.subnets.all():
-                    for instance in subnet.instances.all():
-                        instance.terminate()
+                    # Delete all route table associations
+                    for rt in vpc.route_tables.all():
+                        for rta in rt.associations:
+                            if not rta.main:
+                                rta.delete()
+                        if not rt.associations:
+                            rt.delete()
 
-                # Delete endpoints
-                for ep in client.describe_vpc_endpoints(
-                    Filters=[{"Name": "vpc-id", "Values": [vpc.id]}]
-                )["VpcEndpoints"]:
-                    client.delete_vpc_endpoints(VpcEndpointIds=[ep["VpcEndpointId"]])
+                    # Delete any instances
+                    for subnet in vpc.subnets.all():
+                        for instance in subnet.instances.all():
+                            instance.terminate()
 
-                # Delete security groups
-                for sg in vpc.security_groups.all():
-                    if sg.group_name != "default":
-                        sg.delete()
+                    # Delete endpoints
+                    for ep in client.describe_vpc_endpoints(
+                        Filters=[{"Name": "vpc-id", "Values": [vpc.id]}]
+                    )["VpcEndpoints"]:
+                        client.delete_vpc_endpoints(VpcEndpointIds=[ep["VpcEndpointId"]])
 
-                # Delete VPC peering connections
-                for vpcpeer in client.describe_vpc_peering_connections(
-                    Filters=[{"Name": "requester-vpc-info.vpc-id", "Values": [vpc.id]}]
-                )["VpcPeeringConnections"]:
-                    ec2.VpcPeeringConnection(vpcpeer["VpcPeeringConnectionId"]).delete()
+                    # Delete security groups
+                    for sg in vpc.security_groups.all():
+                        if sg.group_name != "default":
+                            sg.delete()
 
-                # Delete non-default network ACLs
-                for netacl in vpc.network_acls.all():
-                    if not netacl.is_default:
-                        netacl.delete()
+                    # Delete VPC peering connections
+                    for vpcpeer in client.describe_vpc_peering_connections(
+                        Filters=[
+                            {
+                                "Name": "requester-vpc-info.vpc-id",
+                                "Values": [vpc.id],
+                            }
+                        ]
+                    )["VpcPeeringConnections"]:
+                        ec2.VpcPeeringConnection(
+                            vpcpeer["VpcPeeringConnectionId"]
+                        ).delete()
 
-                # Delete network interfaces
-                for subnet in vpc.subnets.all():
-                    for interface in subnet.network_interfaces.all():
-                        interface.delete()
-                    subnet.delete()
+                    # Delete non-default network ACLs
+                    for netacl in vpc.network_acls.all():
+                        if not netacl.is_default:
+                            netacl.delete()
 
-                # Finally, delete the VPC
-                retry = 5
-                for _ in range(retry):
-                    try:
-                        client.delete_vpc(VpcId=vpc.id)
-                        break
-                    except Exception as e:
-                        logging.error(e)
-                        logging.error(f"Failed deleting VPC {vpc.id}. Retrying...")
-                else:
-                    logging.error(
-                        f"Failed to Delete VPC {vpc.id} after {retry} retries"
-                    )
+                    # Delete network interfaces
+                    for subnet in vpc.subnets.all():
+                        for interface in subnet.network_interfaces.all():
+                            interface.delete()
+                        subnet.delete()
+
+                    # Finally, delete the VPC
+                    retry = 5
+                    for _ in range(retry):
+                        try:
+                            client.delete_vpc(VpcId=vpc.id)
+                            break
+                        except Exception as e:
+                            logging.error(e)
+                            logging.error(f"Failed deleting VPC {vpc.id}. Retrying...")
+                    else:
+                        logging.error(
+                            f"Failed to Delete VPC {vpc.id} after {retry} retries"
+                        )
+            except CONNECTIVITY_ERRORS as e:
+                log_skipped_region(region, "VPC cleanup", e)
+                continue
         if self.dry_run:
             logging.warning(
                 f"List of AWS VPCs (Total: {len(self.vpc_ids_to_delete)}) which will be deleted: {self.vpc_ids_to_delete}"

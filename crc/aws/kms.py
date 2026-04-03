@@ -8,6 +8,7 @@ from typing import Dict, List
 import boto3
 
 from crc.aws._base import get_all_regions
+from crc.aws.connectivity import CONNECTIVITY_ERRORS
 from crc.service import Service
 
 
@@ -108,11 +109,20 @@ class Kms(Service):
         skipped_keys = []
         kms_keys = []
         active_keys = []
-        client = boto3.client(self.service_name, region_name=self.default_region_name)
+        try:
+            client = boto3.client(self.service_name, region_name=self.default_region_name)
 
-        paginator = client.get_paginator("list_keys")
-        for page in paginator.paginate():
-            kms_keys.extend(page["Keys"])
+            paginator = client.get_paginator("list_keys")
+            for page in paginator.paginate():
+                kms_keys.extend(page["Keys"])
+        except CONNECTIVITY_ERRORS as e:
+            logging.warning(
+                "KMS cleanup skipped — cannot reach region %s (%s): %s",
+                self.default_region_name,
+                type(e).__name__,
+                e,
+            )
+            return
 
         logging.info(f"Total keys found = {len(kms_keys)}")
 

@@ -6,6 +6,7 @@ from typing import Dict, List
 import boto3
 
 from crc.aws._base import get_all_regions
+from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
 
@@ -116,33 +117,37 @@ class ElasticIPs(Service):
         regions = get_all_regions(self.service_name, self.default_region_name)
 
         for region in regions:
-            eips_to_delete = {}
-            client = boto3.client(self.service_name, region_name=region)
-            addresses = client.describe_addresses()["Addresses"]
-            for eip in addresses:
-                if "NetworkInterfaceId" not in eip and "Tags" in eip:
-                    tags = eip["Tags"]
-                    if self._should_skip_instance(tags):
-                        continue
-                    if not self.filter_tags:
-                        eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
-                        continue
-                    for tag in tags:
-                        key = tag["Key"]
-                        # check for filter_tags match
-                        if key in self.filter_tags and (
-                            not self.filter_tags[key]
-                            or tag["Value"] in self.filter_tags[key]
-                        ):
+            try:
+                eips_to_delete = {}
+                client = boto3.client(self.service_name, region_name=region)
+                addresses = client.describe_addresses()["Addresses"]
+                for eip in addresses:
+                    if "NetworkInterfaceId" not in eip and "Tags" in eip:
+                        tags = eip["Tags"]
+                        if self._should_skip_instance(tags):
+                            continue
+                        if not self.filter_tags:
                             eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
+                            continue
+                        for tag in tags:
+                            key = tag["Key"]
+                            # check for filter_tags match
+                            if key in self.filter_tags and (
+                                not self.filter_tags[key]
+                                or tag["Value"] in self.filter_tags[key]
+                            ):
+                                eips_to_delete[eip["PublicIp"]] = eip["AllocationId"]
 
-            if not self.dry_run:
-                for ip in eips_to_delete:
-                    client.release_address(AllocationId=eips_to_delete[ip])
-                    logging.info(f"Deleted IP: {ip}")
+                if not self.dry_run:
+                    for ip in eips_to_delete:
+                        client.release_address(AllocationId=eips_to_delete[ip])
+                        logging.info(f"Deleted IP: {ip}")
 
-            # Add deleted IPs to deleted_ips list
-            self.deleted_ips.extend(list(eips_to_delete.keys()))
+                # Add deleted IPs to deleted_ips list
+                self.deleted_ips.extend(list(eips_to_delete.keys()))
+            except CONNECTIVITY_ERRORS as e:
+                log_skipped_region(region, "elastic IP cleanup", e)
+                continue
 
         if not self.dry_run:
             logging.warning(

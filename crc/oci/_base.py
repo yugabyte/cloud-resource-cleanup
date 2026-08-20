@@ -7,9 +7,11 @@ import oci
 
 from crc.oci.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 
+HOME_REGION = "us-sanjose-1"
+
 # Static fallback list used only if the tenancy's subscribed regions can't be
 # fetched (e.g. transient IdentityClient failure).
-DEFAULT_REGION_FALLBACK = ["us-ashburn-1"]
+DEFAULT_REGION_FALLBACK = [HOME_REGION]
 
 
 class Base:
@@ -23,7 +25,7 @@ class Base:
         self.tenancy_id = os.environ["OCI_TENANCY_OCID"]
         self.user_id = os.environ["OCI_USER_OCID"]
         self.fingerprint = os.environ["OCI_FINGERPRINT"]
-        self.region = os.environ.get("OCI_REGION", DEFAULT_REGION_FALLBACK[0])
+        self.region = HOME_REGION
 
         key_content = os.environ.get("OCI_PRIVATE_KEY_CONTENT")
         key_file = os.environ.get("OCI_PRIVATE_KEY_FILE")

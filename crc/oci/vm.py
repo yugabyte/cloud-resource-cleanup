@@ -26,7 +26,6 @@ class VM(Service, Base):
     def __init__(
         self,
         dry_run: bool,
-        compartment_id: str,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
         age: Dict[str, int],
@@ -35,7 +34,6 @@ class VM(Service, Base):
     ) -> None:
         """
         :param dry_run: If True, only list matching instances without deleting/stopping them.
-        :param compartment_id: OCID of the OCI compartment to operate on.
         :param filter_tags: Dictionary of freeform tags and their values used to filter VMs for deletion.
         :param exception_tags: Dictionary of freeform tags and their values used to exclude VMs from deletion.
         :param age: Age (days/hours) of VMs that will be deleted.
@@ -47,7 +45,6 @@ class VM(Service, Base):
         self.instance_names_to_delete = []
         self.instance_names_to_stop = []
         self.dry_run = dry_run
-        self.compartment_id = compartment_id
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
         self.age = age

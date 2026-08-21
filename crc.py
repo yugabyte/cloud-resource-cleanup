@@ -63,7 +63,6 @@ class CRC:
         resource_group: str = None,
         slack_channel: str = None,
         influxdb_conn: dict = None,
-        compartment_id: str = None,
     ) -> None:
         """
         Initializes the object with required properties.
@@ -78,13 +77,10 @@ class CRC:
         resource_group (str, optional): the resource group where azure resources reside (mandatory for Azure)
         slack_channel (str, optional): the name of the Slack channel to send messages to
         influxdb_conn (dict, optional): the Influx DB Connection string
-        compartment_id (str, optional): the OCID of the OCI compartment (mandatory for OCI)
         """
         self.cloud = cloud
         if cloud == "gcp" and not project_id:
             raise ValueError("project_id is mandatory Parameter for GCP")
-        if cloud == "oci" and not compartment_id:
-            raise ValueError("compartment_id is mandatory Parameter for OCI")
         self.dry_run = dry_run
         self.project_id = project_id
         self.notags = notags
@@ -92,7 +88,6 @@ class CRC:
         self.influxdb_client = influxdb_client
         self.slack_channel = slack_channel
         self.resource_group = resource_group
-        self.compartment_id = compartment_id
 
         if influxdb_conn:
             self.influxdb_bucket = influxdb_conn.get("bucket")
@@ -158,7 +153,6 @@ class CRC:
         if self.cloud == "oci":
             return OCI_VM(
                 self.dry_run,
-                self.compartment_id,
                 filter_tags,
                 exception_tags,
                 age,
@@ -895,13 +889,6 @@ def get_argparser():
         help="Project ID for GCP. Required only for GCP. Example: --project_id testing",
     )
 
-    # Add Argument for Compartment ID (OCI only)
-    parser.add_argument(
-        "--compartment_id",
-        metavar="COMPARTMENT_ID",
-        help="Compartment OCID for OCI. Required only for OCI. Example: --compartment_id ocid1.compartment.oc1..xxxx",
-    )
-
     # Add Argument for Operation Type
     parser.add_argument(
         "-o",
@@ -1194,7 +1181,6 @@ def main():
     kms_key_description = args.get("kms_key_description")
     kms_user = args.get("kms_user")
     resource_group = args.get("resource_group")
-    compartment_id = args.get("compartment_id")
     scan_tag = args.get("scan_tag")
 
     INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
@@ -1292,7 +1278,6 @@ def main():
                 resource_group,
                 slack_channel,
                 influxdb,
-                compartment_id,
             )
             try:
                 hits = crc.scan_instances_with_tag(tag_key, tag_value) or []
@@ -1382,7 +1367,6 @@ def main():
             resource_group,
             slack_channel,
             influxdb,
-            compartment_id,
         )
         for resource in resources:
             if resource == "disk":

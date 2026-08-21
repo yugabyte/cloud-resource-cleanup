@@ -8,6 +8,9 @@ import oci
 from crc.oci.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 
 HOME_REGION = "us-sanjose-1"
+TENANCY_OCID = "ocid1.tenancy.oc1..aaaaaaaa6w2zfjmzecayfzpuwufo5jsiedlap7hce6chuvess7eu2mofvlva"
+USER_OCID = "ocid1.user.oc1..aaaaaaaahymi5wmb25sh24g6ldpfccgngqzz2gjbnz5coruofn5jfwe2v5aq"
+FINGERPRINT = "bf:15:88:6c:01:e4:53:fd:63:08:d7:83:c3:32:ec:b8"
 
 # Static fallback list used only if the tenancy's subscribed regions can't be
 # fetched (e.g. transient IdentityClient failure).
@@ -22,9 +25,9 @@ class Base:
     """
 
     def __init__(self) -> None:
-        self.tenancy_id = os.environ["OCI_TENANCY_OCID"]
-        self.user_id = os.environ["OCI_USER_OCID"]
-        self.fingerprint = os.environ["OCI_FINGERPRINT"]
+        self.tenancy_id = TENANCY_OCID
+        self.user_id = USER_OCID
+        self.fingerprint = FINGERPRINT
         self.region = HOME_REGION
 
         key_content = os.environ.get("OCI_PRIVATE_KEY_CONTENT")

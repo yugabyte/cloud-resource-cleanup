@@ -24,13 +24,14 @@ from crc.azu.vm import VM as AZU_VM
 from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
+from crc.oci.vm import VM as OCI_VM
 from crc.aws.snapshot import Snapshot
 
 import sys
 from crc.notifications import notify_cleanup
 
 # List of supported clouds and resources
-CLOUDS = ["aws", "azure", "gcp"]
+CLOUDS = ["aws", "azure", "gcp", "oci"]
 RESOURCES = ["disk", "ip", "keypair", "vm", "kms", "nic", "snapshot"]
 
 DELETED = "Deleted"
@@ -67,7 +68,7 @@ class CRC:
         Initializes the object with required properties.
 
         Parameters:
-        cloud (str): the name of the cloud platform ('aws', 'gcp' or 'azure')
+        cloud (str): the name of the cloud platform ('aws', 'gcp', 'azure' or 'oci')
         dry_run (bool): flag to indicate whether the operation is a dry run or not
         notags (dict): a dictionary containing a list of resources that don't have any tags
         slack_client (object): the Slack client instance used to send messages
@@ -143,6 +144,15 @@ class CRC:
             return GCP_VM(
                 self.dry_run,
                 self.project_id,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+            )
+        if self.cloud == "oci":
+            return OCI_VM(
+                self.dry_run,
                 filter_tags,
                 exception_tags,
                 age,
@@ -843,10 +853,10 @@ def get_argparser():
     parser.add_argument(
         "-c",
         "--cloud",
-        choices=["aws", "azure", "gcp", "all"],
+        choices=["aws", "azure", "gcp", "oci", "all"],
         required=True,
         metavar="CLOUD",
-        help="The cloud to operate on. Valid options are: 'aws', 'azure', 'gcp', 'all'. Example: -c or --cloud all",
+        help="The cloud to operate on. Valid options are: 'aws', 'azure', 'gcp', 'oci', 'all'. Example: -c or --cloud all",
     )
 
     # Add Argument for Resource Type

@@ -24,6 +24,7 @@ from crc.azu.vm import VM as AZU_VM
 from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
 from crc.gcp.vm import VM as GCP_VM
+from crc.oci.disk import Disk as OCI_Disk
 from crc.oci.vm import VM as OCI_VM
 from crc.aws.snapshot import Snapshot
 
@@ -744,9 +745,18 @@ class CRC:
         :param slack_notify_users: Bool to ping the users/usergroups in the slack ping.
         :param slack_user_label: String to lookup for the disks by matching disk label.
         """
-        if self.cloud not in ["azure", "gcp"]:
+        if self.cloud not in ["azure", "gcp", "oci"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE and GCP. AWS cleans the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported only on AZURE, GCP and OCI. AWS cleans the NICs, Disks along with VM"
+            )
+        if self.cloud == "oci":
+            disk = OCI_Disk(
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
             )
         if self.cloud == "azure":
             disk = Disk(

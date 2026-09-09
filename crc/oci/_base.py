@@ -51,6 +51,7 @@ class Base:
             self.config["key_file"] = key_file
 
         self._compute_clients = {}  # region -> ComputeClient, singleton per region
+        self._blockstorage_clients = {}  # region -> BlockstorageClient, singleton per region
         self._identity_client = None
 
     def get_identity_client(self):
@@ -89,4 +90,15 @@ class Base:
         region_config = dict(self.config, region=region)
         client = oci.core.ComputeClient(region_config)
         self._compute_clients[region] = client
+        return client
+
+    def get_blockstorage_client(self, region: str):
+        """
+        Return a cached BlockstorageClient for the given region, creating one if needed.
+        """
+        if region in self._blockstorage_clients:
+            return self._blockstorage_clients[region]
+        region_config = dict(self.config, region=region)
+        client = oci.core.BlockstorageClient(region_config)
+        self._blockstorage_clients[region] = client
         return client

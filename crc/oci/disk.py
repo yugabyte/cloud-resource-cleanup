@@ -10,12 +10,17 @@ from crc.oci._base import Base
 from crc.oci.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
+# Attachment lifecycle states that mean the volume/boot volume is still in use and
+# must not be deleted. ATTACHING is included alongside ATTACHED since an
+# in-progress attachment is not yet reflected as a running instance's dependency
+# but the volume is still claimed.
+IN_USE_ATTACHMENT_STATES = ("ATTACHED", "ATTACHING")
+
 
 class Disk(Service, Base):
     """
-    This class provides an implementation of the Service class for managing OCI block
-    volumes. Only standalone (non-boot) block volumes are handled; boot volumes are a
-    separate OCI resource type and are left untouched.
+    This class provides an implementation of the Service class for managing OCI
+    storage volumes: both standalone block volumes and instance boot volumes.
     """
 
     def __init__(
@@ -68,10 +73,30 @@ class Disk(Service, Base):
                 compartment_id=self.compartment_id,
             ).data
             for attachment in attachments:
-                if attachment.lifecycle_state == "ATTACHED":
+                if attachment.lifecycle_state in IN_USE_ATTACHMENT_STATES:
                     attached_ids.add(attachment.volume_id)
         except CONNECTIVITY_ERRORS as e:
             log_skipped_region(region, "list_volume_attachments", e)
+        return attached_ids
+
+    def _get_attached_boot_volume_ids(self, compute_client, region: str) -> set:
+        """
+        Boot volume attachments are scoped per availability domain, unlike regular
+        volume attachments which are scoped per compartment/region.
+        """
+        attached_ids = set()
+        try:
+            for ad in self.get_availability_domains(region):
+                attachments = oci.pagination.list_call_get_all_results(
+                    compute_client.list_boot_volume_attachments,
+                    availability_domain=ad,
+                    compartment_id=self.compartment_id,
+                ).data
+                for attachment in attachments:
+                    if attachment.lifecycle_state in IN_USE_ATTACHMENT_STATES:
+                        attached_ids.add(attachment.boot_volume_id)
+        except CONNECTIVITY_ERRORS as e:
+            log_skipped_region(region, "list_boot_volume_attachments", e)
         return attached_ids
 
     def _should_skip_volume(self, volume) -> bool:
@@ -123,11 +148,40 @@ class Disk(Service, Base):
             logging.info(f"Updating age for volume: {volume.display_name}")
         return self.is_old(retention_age or self.age, now, created_time)
 
+    def _process_volumes(
+        self, volumes, attached_ids: set, delete_fn, kind: str
+    ) -> None:
+        """
+        Applies the state/tag/age checks common to both block volumes and boot
+        volumes, deleting (or listing, in dry_run mode) the ones that qualify.
+        """
+        for volume in volumes:
+            if volume.lifecycle_state != "AVAILABLE":
+                continue
+            if volume.id in attached_ids:
+                continue
+            if self._should_skip_volume(volume):
+                continue
+            if not self._has_matching_filter_tags(volume):
+                continue
+            if not self._is_old_volume(volume):
+                continue
+            try:
+                if not self.dry_run:
+                    delete_fn(volume.id)
+                    logging.info(f"Deleting {kind} {volume.display_name}")
+                self.disk_names_to_delete.append(volume.display_name)
+            except Exception as e:
+                logging.error(
+                    f"Error occurred while deleting {kind} {volume.display_name}: {e}"
+                )
+
     def delete(self) -> None:
         """
-        Delete unattached block volumes that match the specified filter_tags and are
-        older than the specified age, excluding exception_tags/notags matches. In
-        dry_run mode, only lists matching volumes without deleting them.
+        Delete unattached block volumes and boot volumes that match the specified
+        filter_tags and are older than the specified age, excluding
+        exception_tags/notags matches. In dry_run mode, only lists matching volumes
+        without deleting them.
         """
         for region in self.get_all_regions():
             try:
@@ -137,32 +191,31 @@ class Disk(Service, Base):
                     blockstorage_client.list_volumes,
                     compartment_id=self.compartment_id,
                 ).data
+                boot_volumes = oci.pagination.list_call_get_all_results(
+                    blockstorage_client.list_boot_volumes,
+                    compartment_id=self.compartment_id,
+                ).data
             except CONNECTIVITY_ERRORS as e:
-                log_skipped_region(region, "list_volumes disk delete", e)
+                log_skipped_region(region, "list volumes/boot volumes disk delete", e)
                 continue
 
             attached_volume_ids = self._get_attached_volume_ids(compute_client, region)
+            self._process_volumes(
+                volumes,
+                attached_volume_ids,
+                blockstorage_client.delete_volume,
+                "disk",
+            )
 
-            for volume in volumes:
-                if volume.lifecycle_state != "AVAILABLE":
-                    continue
-                if volume.id in attached_volume_ids:
-                    continue
-                if self._should_skip_volume(volume):
-                    continue
-                if not self._has_matching_filter_tags(volume):
-                    continue
-                if not self._is_old_volume(volume):
-                    continue
-                try:
-                    if not self.dry_run:
-                        blockstorage_client.delete_volume(volume.id)
-                        logging.info(f"Deleting disk {volume.display_name}")
-                    self.disk_names_to_delete.append(volume.display_name)
-                except Exception as e:
-                    logging.error(
-                        f"Error occurred while deleting disk {volume.display_name}: {e}"
-                    )
+            attached_boot_volume_ids = self._get_attached_boot_volume_ids(
+                compute_client, region
+            )
+            self._process_volumes(
+                boot_volumes,
+                attached_boot_volume_ids,
+                blockstorage_client.delete_boot_volume,
+                "boot disk",
+            )
 
         if not self.disk_names_to_delete:
             logging.warning("No OCI disk to delete.")

@@ -51,6 +51,9 @@ class Base:
             self.config["key_file"] = key_file
 
         self._compute_clients = {}  # region -> ComputeClient, singleton per region
+        self._blockstorage_clients = {}  # region -> BlockstorageClient, singleton per region
+        self._regional_identity_clients = {}  # region -> IdentityClient, singleton per region
+        self._availability_domains = {}  # region -> [ad names], cached per region
         self._identity_client = None
 
     def get_identity_client(self):
@@ -90,3 +93,41 @@ class Base:
         client = oci.core.ComputeClient(region_config)
         self._compute_clients[region] = client
         return client
+
+    def get_blockstorage_client(self, region: str):
+        """
+        Return a cached BlockstorageClient for the given region, creating one if needed.
+        """
+        if region in self._blockstorage_clients:
+            return self._blockstorage_clients[region]
+        region_config = dict(self.config, region=region)
+        client = oci.core.BlockstorageClient(region_config)
+        self._blockstorage_clients[region] = client
+        return client
+
+    def get_regional_identity_client(self, region: str):
+        """
+        Return a cached IdentityClient scoped to the given region, creating one if needed.
+        """
+        if region in self._regional_identity_clients:
+            return self._regional_identity_clients[region]
+        region_config = dict(self.config, region=region)
+        client = oci.identity.IdentityClient(region_config)
+        self._regional_identity_clients[region] = client
+        return client
+
+    def get_availability_domains(self, region: str):
+        """
+        Returns the availability domain names present in the given region. Needed
+        because list_boot_volume_attachments (unlike list_volume_attachments) is
+        scoped per availability domain, not per region.
+        """
+        if region in self._availability_domains:
+            return self._availability_domains[region]
+        identity_client = self.get_regional_identity_client(region)
+        ads = identity_client.list_availability_domains(
+            compartment_id=self.tenancy_id
+        ).data
+        ad_names = [ad.name for ad in ads]
+        self._availability_domains[region] = ad_names
+        return ad_names

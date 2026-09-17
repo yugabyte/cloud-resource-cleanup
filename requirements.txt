@@ -8,6 +8,7 @@ azure.identity
 azure.mgmt.network
 google-cloud-compute
 google-api-python-client
+oci
 slack_sdk
 influxdb-client[ciso]
 python-dateutil

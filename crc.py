@@ -10,6 +10,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from slack_sdk import WebClient
 
 # Import classes for interacting with different resources across different clouds
+from crc.aws.disk import Disk as AWS_Disk
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
 from crc.aws.kms import Kms
@@ -722,7 +723,7 @@ class CRC:
     ):
         """
         Delete Disks that match the specified criteria.
-        This method is only supported on AZURE.
+        Supported on Azure, GCP, and AWS (AWS: available/unattached EBS only).
 
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
@@ -734,11 +735,22 @@ class CRC:
         :param slack_notify_users: Bool to ping the users/usergroups in the slack ping.
         :param slack_user_label: String to lookup for the disks by matching disk label.
         """
-        if self.cloud not in ["azure", "gcp"]:
+        if self.cloud not in ["azure", "gcp", "aws"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE and GCP. AWS cleans the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported on AWS, Azure, and GCP."
             )
-        if self.cloud == "azure":
+        if self.cloud == "aws":
+            disk = AWS_Disk(
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+                name_regex,
+                exception_regex,
+            )
+        elif self.cloud == "azure":
             disk = Disk(
                 self.resource_group,
                 self.dry_run,
@@ -748,7 +760,7 @@ class CRC:
                 custom_age_tag_key,
                 self.notags,
             )
-        if self.cloud == "gcp":
+        elif self.cloud == "gcp":
             disk = GCP_Disk(
                 dry_run=self.dry_run,
                 project_id=self.project_id,

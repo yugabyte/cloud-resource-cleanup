@@ -10,6 +10,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from slack_sdk import WebClient
 
 # Import classes for interacting with different resources across different clouds
+from crc.aws.disk import Disk as AWS_Disk
 from crc.aws.elastic_ips import ElasticIPs
 from crc.aws.keypairs import KeyPairs
 from crc.aws.kms import Kms
@@ -733,7 +734,7 @@ class CRC:
     ):
         """
         Delete Disks that match the specified criteria.
-        This method is only supported on AZURE.
+        Supported on AWS (available/unattached EBS), Azure, GCP, and OCI.
 
         :param filter_tags: Dictionary of tags to filter the disks.
         :param exception_tags: Dictionary of tags to exclude the disks.
@@ -745,11 +746,23 @@ class CRC:
         :param slack_notify_users: Bool to ping the users/usergroups in the slack ping.
         :param slack_user_label: String to lookup for the disks by matching disk label.
         """
-        if self.cloud not in ["azure", "gcp", "oci"]:
+        if self.cloud not in ["azure", "gcp", "aws", "oci"]:
             raise ValueError(
-                "Incorrect Cloud Provided. Disks operation is supported only on AZURE, GCP and OCI. AWS cleans the NICs, Disks along with VM"
+                "Incorrect Cloud Provided. Disks operation is supported on AWS, Azure, GCP, and OCI."
             )
-        if self.cloud == "oci":
+        if self.cloud == "aws":
+            disk = AWS_Disk(
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+                name_regex,
+                exception_regex,
+                detach_age,
+            )
+        elif self.cloud == "oci":
             disk = OCI_Disk(
                 self.dry_run,
                 filter_tags,
@@ -758,7 +771,7 @@ class CRC:
                 custom_age_tag_key,
                 self.notags,
             )
-        if self.cloud == "azure":
+        elif self.cloud == "azure":
             disk = Disk(
                 self.resource_group,
                 self.dry_run,
@@ -768,7 +781,7 @@ class CRC:
                 custom_age_tag_key,
                 self.notags,
             )
-        if self.cloud == "gcp":
+        elif self.cloud == "gcp":
             disk = GCP_Disk(
                 dry_run=self.dry_run,
                 project_id=self.project_id,
@@ -1234,6 +1247,7 @@ def main():
     clouds = CLOUDS if clouds == "all" else [clouds]
 
     # Process Resources
+    resource_is_explicit = resources != "all"
     resources = RESOURCES if resources == "all" else [resources]
 
     # Validate Input Values
@@ -1380,6 +1394,13 @@ def main():
         )
         for resource in resources:
             if resource == "disk":
+                if cloud == "aws" and not resource_is_explicit:
+                    # -r all used to abort here with a ValueError, so existing
+                    # callers never opted into account-wide EBS deletion.
+                    logging.warning(
+                        "Skipping AWS EBS volume cleanup: pass '--resource disk' to opt in."
+                    )
+                    continue
                 crc.delete_disks(
                     filter_tags,
                     exception_tags,

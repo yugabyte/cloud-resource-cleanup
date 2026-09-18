@@ -25,6 +25,18 @@ class Disk(Service):
     """
     Delete unattached (available) EBS volumes that match filter/age rules.
 
+    Two independent age gates, at least one of which must be supplied:
+
+    * ``age`` is measured from ``CreateTime``, i.e. how long ago the volume
+      was *created*. It says nothing about how long it has been unattached.
+    * ``detach_age`` is measured from the last time the volume was attached,
+      inferred from the presence of AWS/EBS CloudWatch metrics, which are only
+      published while a volume is attached. Use this to avoid deleting a
+      long-lived volume that was detached moments ago by an instance
+      replacement or a snapshot/restore swap.
+
+    When both are given, a volume must clear both gates.
+
     Attached volumes are never listed or deleted. Infra/prod/vpn yb_task
     values and Kubernetes CSI volumes are skipped unless the caller
     explicitly filter_tags on a kubernetes key.
@@ -33,8 +45,14 @@ class Disk(Service):
     service_name = "ec2"
     default_region_name = "us-west-2"
 
-    # Defensive skips even if Jenkins forgets --exception_tags.
-    # yb_task=dev / yb_dept=eng are not skipped: unattached age is the guard.
+    # CloudWatch retains EBS metrics for 455 days. Past that, "no datapoints"
+    # and "detached longer than the window" are the same answer, so clamping
+    # the lookback is safe.
+    CW_MAX_LOOKBACK = datetime.timedelta(days=455)
+    CW_BATCH_SIZE = 100
+
+    # Defensive skips even if Jenkins forgets --exception_tags. Compared
+    # casefolded, since tag values are not normalized in practice.
     SENSITIVE_YB_TASK = {
         "infrastructure",
         "infra",
@@ -54,6 +72,7 @@ class Disk(Service):
         notags: Optional[Dict[str, List[str]]],
         name_regex: Optional[List[str]] = None,
         exception_regex: Optional[List[str]] = None,
+        detach_age: Optional[Dict[str, int]] = None,
     ) -> None:
         super().__init__()
         self.disks_to_delete: List[str] = []
@@ -61,10 +80,19 @@ class Disk(Service):
         self.filter_tags = filter_tags or {}
         self.exception_tags = exception_tags or {}
         self.age = age or {}
+        self.detach_age = detach_age or {}
         self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags or {}
         self.name_regex = name_regex or []
         self.exception_regex = exception_regex or []
+
+        # Service.is_old() returns True for an empty age, so without this an
+        # age-less run would delete every available volume in every region.
+        if not self.age and not self.detach_age:
+            raise ValueError(
+                "AWS disk cleanup requires an age gate: pass --age (measured from "
+                "volume creation) and/or --detach_age (measured from last attachment)."
+            )
 
     @property
     def get_deleted(self):
@@ -117,9 +145,9 @@ class Disk(Service):
         return any(re.search(pattern, name or "") for pattern in self.exception_regex)
 
     def _should_skip(self, tag_map: Dict[str, str], name: str, volume_id: str) -> bool:
-        yb_task = tag_map.get("yb_task") or tag_map.get("yb-task") or ""
+        yb_task = (tag_map.get("yb_task") or tag_map.get("yb-task") or "").strip()
 
-        if yb_task in self.SENSITIVE_YB_TASK:
+        if yb_task.casefold() in self.SENSITIVE_YB_TASK:
             logging.info(
                 "Skipping volume %s: sensitive yb_task=%s", volume_id, yb_task
             )
@@ -165,7 +193,7 @@ class Disk(Service):
 
     def delete(self) -> None:
         """
-        Delete available EBS volumes matching filter_tags / age.
+        Delete available EBS volumes matching filter_tags / age / detach_age.
         dry_run only records candidates.
         """
         for region in get_all_regions(self.service_name, self.default_region_name):
@@ -173,10 +201,15 @@ class Disk(Service):
                 client = boto3.client(
                     self.service_name, region_name=region, config=_BOTO_CFG
                 )
+                candidates = []
                 paginator = client.get_paginator("describe_volumes")
                 for page in paginator.paginate(Filters=self._volume_filters()):
                     for volume in page.get("Volumes") or []:
-                        self._consider_volume(client, region, volume)
+                        if self._is_candidate(volume):
+                            candidates.append(volume)
+
+                for volume in self._drop_recently_attached(region, candidates):
+                    self._delete_volume(client, region, volume)
             except CONNECTIVITY_ERRORS as e:
                 log_skipped_region(region, "EBS disk cleanup", e)
             except ClientError as e:
@@ -207,36 +240,122 @@ class Disk(Service):
                 self.disks_to_delete,
             )
 
-    def _consider_volume(self, client, region: str, volume: dict) -> None:
+    def _is_candidate(self, volume: dict) -> bool:
+        """Tag, name and creation-age checks. Detach age is applied separately."""
         volume_id = volume.get("VolumeId")
         if volume.get("State") != "available":
-            return
+            return False
         if volume.get("Attachments"):
             logging.info("Skipping volume %s: still has attachments", volume_id)
-            return
+            return False
 
         tag_map = self._tag_map(volume.get("Tags"))
         name = tag_map.get("Name") or volume_id
 
         if not self._matches_filter_tags(tag_map):
-            return
+            return False
         if not self._matches_name_regex(name):
-            return
+            return False
         if self._should_skip(tag_map, name, volume_id):
-            return
+            return False
 
         created = volume.get("CreateTime")
         if created is None:
             logging.warning("Skipping volume %s: missing CreateTime", volume_id)
-            return
+            return False
 
         retention_age = self.get_retention_age(volume.get("Tags") or [], self.custom_age_tag_key)
         if retention_age:
             logging.info("Updating age for volume: %s", volume_id)
 
-        now = datetime.datetime.now().astimezone(created.tzinfo)
-        if not self.is_old(retention_age or self.age, now, created):
-            return
+        age = retention_age or self.age
+        if age:
+            now = datetime.datetime.now().astimezone(created.tzinfo)
+            if not self.is_old(age, now, created):
+                return False
+
+        return True
+
+    def _age_to_timedelta(self, age) -> datetime.timedelta:
+        if isinstance(age, int):
+            age = {"days": age}
+        return datetime.timedelta(
+            days=int(age.get("days", 0)), hours=int(age.get("hours", 0))
+        )
+
+    def _drop_recently_attached(self, region: str, volumes: List[dict]) -> List[dict]:
+        """
+        Keep only volumes with no AWS/EBS CloudWatch datapoints inside the
+        detach_age window. Those metrics are published only while a volume is
+        attached, so their absence means the volume has been detached for at
+        least that long. Volumes we cannot get an answer for are dropped.
+        """
+        if not self.detach_age or not volumes:
+            return volumes
+
+        window = min(self._age_to_timedelta(self.detach_age), self.CW_MAX_LOOKBACK)
+        if not window:
+            return volumes
+
+        end = datetime.datetime.now(datetime.timezone.utc)
+        start = end - window
+        cloudwatch = boto3.client("cloudwatch", region_name=region, config=_BOTO_CFG)
+
+        kept = []
+        for index in range(0, len(volumes), self.CW_BATCH_SIZE):
+            batch = volumes[index : index + self.CW_BATCH_SIZE]
+            by_query_id = {f"m{i}": volume for i, volume in enumerate(batch)}
+            queries = [
+                {
+                    "Id": query_id,
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/EBS",
+                            "MetricName": "VolumeIdleTime",
+                            "Dimensions": [
+                                {"Name": "VolumeId", "Value": volume["VolumeId"]}
+                            ],
+                        },
+                        "Period": 3600,
+                        "Stat": "Sum",
+                    },
+                }
+                for query_id, volume in by_query_id.items()
+            ]
+
+            try:
+                results = cloudwatch.get_metric_data(
+                    MetricDataQueries=queries, StartTime=start, EndTime=end
+                ).get("MetricDataResults") or []
+            except (ClientError, *CONNECTIVITY_ERRORS) as e:
+                logging.warning(
+                    "Region %s: CloudWatch detach-age lookup failed, skipping %s "
+                    "volume(s): %s",
+                    region,
+                    len(batch),
+                    e,
+                )
+                continue
+
+            attached_recently = {
+                result["Id"] for result in results if result.get("Values")
+            }
+            for query_id, volume in by_query_id.items():
+                if query_id in attached_recently:
+                    logging.info(
+                        "Skipping volume %s: attached within the last %s",
+                        volume["VolumeId"],
+                        window,
+                    )
+                else:
+                    kept.append(volume)
+
+        return kept
+
+    def _delete_volume(self, client, region: str, volume: dict) -> None:
+        volume_id = volume.get("VolumeId")
+        tag_map = self._tag_map(volume.get("Tags"))
+        name = tag_map.get("Name") or volume_id
 
         label = f"{region}/{volume_id}"
         if tag_map.get("yb_task"):

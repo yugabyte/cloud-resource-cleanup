@@ -760,6 +760,7 @@ class CRC:
                 self.notags,
                 name_regex,
                 exception_regex,
+                detach_age,
             )
         elif self.cloud == "oci":
             disk = OCI_Disk(
@@ -1246,6 +1247,7 @@ def main():
     clouds = CLOUDS if clouds == "all" else [clouds]
 
     # Process Resources
+    resource_is_explicit = resources != "all"
     resources = RESOURCES if resources == "all" else [resources]
 
     # Validate Input Values
@@ -1392,6 +1394,13 @@ def main():
         )
         for resource in resources:
             if resource == "disk":
+                if cloud == "aws" and not resource_is_explicit:
+                    # -r all used to abort here with a ValueError, so existing
+                    # callers never opted into account-wide EBS deletion.
+                    logging.warning(
+                        "Skipping AWS EBS volume cleanup: pass '--resource disk' to opt in."
+                    )
+                    continue
                 crc.delete_disks(
                     filter_tags,
                     exception_tags,

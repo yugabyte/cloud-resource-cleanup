@@ -115,7 +115,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 ```
 * `cloud`: Specify the cloud name (aws, azure, gcp or all). Required.
 * `project_id`: Required for gcp
-* `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair, spot_instance_requests) or specify "all" to target all types of resources. Default: 'all'
+* `resource`: Indicate the type of resource you want to target (e.g. vm, disk, ip, keypair, spot_instance_requests) or specify "all" to target all types of resources. Default: 'all'. AWS EBS volume deletion is opt-in and is skipped under "all", so it needs an explicit `--resource disk`.
 * `resource_group`: Use this option to specify the resource group for Azure. If this flag is provided, the script will only operate on resources within the specified resource group. This allows for more precise targeting of resources in your Azure environment.
 * `operation_type`: Specify the type of operation to perform on the resource (delete or stop). Default: 'delete'
 * `dry_run`: Enabling this option will only list resources that match the specified criteria without performing any operations on them. Use the `-d` or `--dry_run` flag to enable this feature. If this option is not specified, the script will perform the operation specified by the `operation_type` argument.
@@ -129,7 +129,7 @@ python crc.py --cloud <cloud_name> --operation_type <operation_type> --resource 
 * `max_age`: Specify the maximum age threshold for resources. This value will override the value of the tag specified by `custom_age_tag_key` (e.g. {'days': 14, 'hours': 12}).
 * `notags`: Use this option to filter resources based on tags that are not present. Leave the value of Key empty to indicate `any` value. Resources will be excluded if `all` of the key-value pair match. This option can be used independently of the `filter_tags` option. **This option does not apply to AWS keypairs and GCP IPs**. Format: -t or --notags {'test_task': ['test'], 'test_owner': []}
 * `slack_channel`: Use this option to specify a Slack channel to receive notifications about the execution of the script. Only works if specified.
-* `detach_age`: Use this option to specify the detached age for filtering GCP Disks. This option only works for GCP disks deletions.
+* `detach_age`: Use this option to specify the detached age for filtering disks. This option only works for GCP and AWS disk deletions. For AWS, the detached age is inferred from the absence of AWS/EBS CloudWatch metrics, which are published only while a volume is attached, so the caller needs `cloudwatch:GetMetricData`. An AWS disk deletion requires `age` (measured from volume creation), `detach_age`, or both; a volume must clear every gate supplied.
 * `slack_notify_users`: Use this option to tag the user in the Slack notification. It is mandatory to pass `--slack_user_label` with this flag. This option only works for GCP disks deletions.
 * `slack_user_label`: Use this option to specify the label to look up in the GCP disks. This option only works for GCP disks deletions.
 * `influxdb`: Use this option to specify InfluxDB connection details. The argument takes a dictionary value, with keys 'url', 'org', 'bucket', and an optional key 'resource_suffix'. Example usage: -i or --influxdb {'url': 'http://localhost:8086', 'org': 'Test', 'bucket': 'CRC', 'resource_suffix': 'test'}. Only works if specified.

@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import logging
 import os
 from typing import Dict, List, Union
 
@@ -1244,10 +1245,13 @@ def main():
             )
 
     # Process Cloud
+    # AWS EBS deletion is opt-in: it used to raise on aws+disk, which aborted
+    # the whole --cloud all / --resource all run. Require both flags explicitly
+    # so a multi-cloud disk job cannot sweep every EBS volume as a side effect.
+    aws_disk_opt_in = clouds == "aws" and resources == "disk"
     clouds = CLOUDS if clouds == "all" else [clouds]
 
     # Process Resources
-    resource_is_explicit = resources != "all"
     resources = RESOURCES if resources == "all" else [resources]
 
     # Validate Input Values
@@ -1394,11 +1398,9 @@ def main():
         )
         for resource in resources:
             if resource == "disk":
-                if cloud == "aws" and not resource_is_explicit:
-                    # -r all used to abort here with a ValueError, so existing
-                    # callers never opted into account-wide EBS deletion.
+                if cloud == "aws" and not aws_disk_opt_in:
                     logging.warning(
-                        "Skipping AWS EBS volume cleanup: pass '--resource disk' to opt in."
+                        "Skipping AWS EBS volume cleanup: pass '--cloud aws --resource disk' to opt in."
                     )
                     continue
                 crc.delete_disks(

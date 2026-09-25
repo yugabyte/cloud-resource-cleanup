@@ -278,6 +278,40 @@ class AwsDiskDeletePathTests(unittest.TestCase):
 
         ec2.delete_volume.assert_called_once_with(VolumeId="vol-1")
 
+    def test_had_errors_raises_after_recording_deletes(self):
+        """Partial success must still leave get_deleted populated before raise."""
+        d = _disk(dry_run=False, age={"days": 1})
+        good = _volume(VolumeId="vol-ok")
+        bad = _volume(VolumeId="vol-bad")
+        ec2 = mock.MagicMock()
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [{"Volumes": [good, bad]}]
+        ec2.get_paginator.return_value = paginator
+
+        def delete_volume(VolumeId):
+            if VolumeId == "vol-bad":
+                raise ClientError(
+                    {"Error": {"Code": "VolumeInUse", "Message": "in use"}},
+                    "DeleteVolume",
+                )
+
+        ec2.delete_volume.side_effect = delete_volume
+
+        with mock.patch("crc.aws.disk.boto3.client", return_value=ec2), mock.patch(
+            "crc.aws.disk.get_all_regions", return_value=["us-west-2"]
+        ):
+            with self.assertRaises(RuntimeError):
+                d.delete()
+
+        self.assertEqual(d.get_deleted, ["us-west-2/vol-ok yb_task=itest"])
+
+    def test_age_gate_message_does_not_claim_last_detach(self):
+        with self.assertRaises(ValueError) as ctx:
+            _disk(age=None, detach_age=None)
+        msg = str(ctx.exception)
+        self.assertNotIn("measured from last attachment", msg)
+        self.assertIn("running instance", msg)
+
     def test_invalid_name_regex_raises_at_init(self):
         with self.assertRaises(ValueError):
             _disk(name_regex=["test-*("])

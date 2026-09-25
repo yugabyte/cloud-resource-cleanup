@@ -29,13 +29,18 @@ class Disk(Service):
     Two independent age gates, at least one of which must be supplied:
 
     * ``age`` is measured from ``CreateTime``.
-    * ``detach_age`` skips a volume if AWS/EBS CloudWatch metrics show it was
-      attached inside that window. Metrics are published only while a volume
-      is attached to a *running* instance. Incomplete CloudWatch answers fail
-      closed (the volume is kept).
+    * ``detach_age`` skips a volume if AWS/EBS CloudWatch metrics show activity
+      inside that window. Those metrics are published only while a volume is
+      attached to a *running* instance — not while it is attached to a stopped
+      instance, and not a true last-detach timestamp. Incomplete CloudWatch
+      answers fail closed (the volume is kept). An empty Complete series only
+      means "no running-instance attachment activity in the window"; a volume
+      that sat on a stopped instance and was detached moments ago can look the
+      same as one detached for the whole window.
 
     CreateTime is always applied: when ``age`` is omitted, ``detach_age`` is
     used as the creation floor so a volume created seconds ago cannot pass.
+    CreateTime alone cannot close the stopped-instance hole above.
 
     Attached and Multi-Attach volumes are never deleted. Infra/prod/vpn
     yb_task values and Kubernetes CSI volumes are skipped unless the caller
@@ -99,7 +104,9 @@ class Disk(Service):
         if not self.age and not self.detach_age:
             raise ValueError(
                 "AWS disk cleanup requires an age gate: pass --age (measured from "
-                "volume creation) and/or --detach_age (measured from last attachment)."
+                "volume creation) and/or --detach_age (CloudWatch activity while "
+                "attached to a running instance — not a last-detach timestamp, and "
+                "blind to attachments on stopped instances)."
             )
 
         if self.detach_age:
@@ -441,7 +448,8 @@ class Disk(Service):
         """
         Drop volumes with AWS/EBS datapoints inside the detach_age window, or
         whose CloudWatch answer is incomplete. Empty Complete series means no
-        metric in the window (treated as detached for that window).
+        running-instance attachment activity in the window — not proof of a
+        long detach (stopped-instance attachments leave the same empty series).
         """
         if not self.detach_age or not volumes:
             return volumes

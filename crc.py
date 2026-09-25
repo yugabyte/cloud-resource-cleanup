@@ -798,13 +798,22 @@ class CRC:
                 slack_user_label=slack_user_label,
             )
 
-        disk.delete()
+        # Report first, then fail: AWS Disk.delete() may raise after some
+        # volumes are already gone; Slack/InfluxDB must still see get_deleted.
+        delete_error = None
+        try:
+            disk.delete()
+        except Exception as e:
+            delete_error = e
 
         if self.slack_client:
             self.notify_deleted_disk_via_slack(disk)
 
         if self.influxdb_client:
             self.write_influxdb(DISKS, disk.get_deleted)
+
+        if delete_error is not None:
+            raise delete_error
 
     def delete_vpc(
         self, filter_tags: Dict[str, List[str]], exception_tags: Dict[str, List[str]]
@@ -1245,9 +1254,11 @@ def main():
             )
 
     # Process Cloud
-    # AWS EBS deletion is opt-in: it used to raise on aws+disk, which aborted
-    # the whole --cloud all / --resource all run. Require both flags explicitly
-    # so a multi-cloud disk job cannot sweep every EBS volume as a side effect.
+    # AWS EBS is opt-in: require both --cloud aws and --resource disk. When those
+    # are not both set, raise on the aws+disk iteration (same circuit breaker as
+    # before this PR) so --cloud all / --resource all cannot skip EBS and then
+    # continue into destructive AWS ip/keypair/vm/kms cleanup, and so
+    # --cloud all --resource disk cannot reach Azure/GCP/OCI disk paths.
     aws_disk_opt_in = clouds == "aws" and resources == "disk"
     clouds = CLOUDS if clouds == "all" else [clouds]
 
@@ -1399,10 +1410,12 @@ def main():
         for resource in resources:
             if resource == "disk":
                 if cloud == "aws" and not aws_disk_opt_in:
-                    logging.warning(
-                        "Skipping AWS EBS volume cleanup: pass '--cloud aws --resource disk' to opt in."
+                    raise ValueError(
+                        "AWS EBS volume cleanup requires '--cloud aws --resource disk'. "
+                        "Refusing to continue so --cloud all / --resource all does not "
+                        "skip EBS and then delete other AWS resources, and so "
+                        "--cloud all --resource disk does not reach other clouds' disks."
                     )
-                    continue
                 crc.delete_disks(
                     filter_tags,
                     exception_tags,

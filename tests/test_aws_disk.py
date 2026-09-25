@@ -241,6 +241,36 @@ class AwsDiskDetachAgeTests(unittest.TestCase):
         self.assertEqual(client.return_value.get_metric_data.call_count, 2)
         self.assertEqual([v["VolumeId"] for v in kept], ["vol-idle", "vol-busy"])
 
+    def test_zero_detach_window_keeps_volumes(self):
+        d = _disk(detach_age={"days": 3})
+        with mock.patch.object(d, "_age_to_timedelta", return_value=datetime.timedelta(0)):
+            kept = d._drop_recently_attached("us-west-2", self.volumes)
+        self.assertEqual(kept, self.volumes)
+
+    def test_merge_metric_pages_keeps_earlier_values(self):
+        d = _disk(detach_age={"days": 3})
+        qid = self._ids_for(1)[0]  # busy volume's first metric
+        page1 = {
+            "MetricDataResults": [
+                {"Id": qid, "StatusCode": "Complete", "Values": [1.0]}
+            ],
+            "NextToken": "t1",
+        }
+        # Final page Complete with empty Values would delete if last-wins.
+        page2 = {
+            "MetricDataResults": [
+                {"Id": qid, "StatusCode": "Complete", "Values": []},
+                *[
+                    self._complete(other)
+                    for other in self._ids_for(0) + self._ids_for(1)[1:]
+                ],
+            ],
+        }
+        with mock.patch("crc.aws.disk.boto3.client") as client:
+            client.return_value.get_metric_data.side_effect = [page1, page2]
+            kept = d._drop_recently_attached("us-west-2", self.volumes)
+        self.assertEqual([v["VolumeId"] for v in kept], ["vol-idle"])
+
 
 class AwsDiskDeletePathTests(unittest.TestCase):
     def test_dry_run_never_calls_delete_volume(self):
@@ -278,8 +308,8 @@ class AwsDiskDeletePathTests(unittest.TestCase):
 
         ec2.delete_volume.assert_called_once_with(VolumeId="vol-1")
 
-    def test_had_errors_raises_after_recording_deletes(self):
-        """Partial success must still leave get_deleted populated before raise."""
+    def test_had_errors_logs_without_raising(self):
+        """Partial success records deletes and must not fail the pipeline."""
         d = _disk(dry_run=False, age={"days": 1})
         good = _volume(VolumeId="vol-ok")
         bad = _volume(VolumeId="vol-bad")
@@ -300,9 +330,9 @@ class AwsDiskDeletePathTests(unittest.TestCase):
         with mock.patch("crc.aws.disk.boto3.client", return_value=ec2), mock.patch(
             "crc.aws.disk.get_all_regions", return_value=["us-west-2"]
         ):
-            with self.assertRaises(RuntimeError):
-                d.delete()
+            d.delete()
 
+        self.assertTrue(d._had_errors)
         self.assertEqual(d.get_deleted, ["us-west-2/vol-ok yb_task=itest"])
 
     def test_age_gate_message_does_not_claim_last_detach(self):
@@ -320,6 +350,49 @@ class AwsDiskDeletePathTests(unittest.TestCase):
         d = _disk()
         volume = _volume(Tags=[{"Key": "Name"}])
         self.assertTrue(d._is_candidate(volume))
+
+
+class AwsDiskCreationFloorTests(unittest.TestCase):
+    def test_detach_age_only_uses_max_of_retention_and_detach(self):
+        d = _disk(
+            age=None,
+            detach_age={"days": 7},
+            custom_age_tag_key="max_retention_age",
+        )
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # retention tag of 1 day must not beat detach_age of 7 days
+        young = _volume(
+            CreateTime=now - datetime.timedelta(days=3),
+            Tags=[
+                {"Key": "yb_task", "Value": "itest"},
+                {"Key": "max_retention_age", "Value": "{'days': 1}"},
+            ],
+        )
+        old = _volume(
+            CreateTime=now - datetime.timedelta(days=10),
+            Tags=[
+                {"Key": "yb_task", "Value": "itest"},
+                {"Key": "max_retention_age", "Value": "{'days': 1}"},
+            ],
+        )
+        self.assertFalse(d._is_candidate(young))
+        self.assertTrue(d._is_candidate(old))
+
+    def test_zero_custom_age_tag_skips_volume(self):
+        d = _disk(
+            age=None,
+            detach_age={"days": 7},
+            custom_age_tag_key="max_retention_age",
+        )
+        now = datetime.datetime.now(datetime.timezone.utc)
+        volume = _volume(
+            CreateTime=now - datetime.timedelta(days=30),
+            Tags=[
+                {"Key": "yb_task", "Value": "itest"},
+                {"Key": "max_retention_age", "Value": "{'days': 0}"},
+            ],
+        )
+        self.assertFalse(d._is_candidate(volume))
 
 
 if __name__ == "__main__":

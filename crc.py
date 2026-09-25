@@ -798,8 +798,8 @@ class CRC:
                 slack_user_label=slack_user_label,
             )
 
-        # Report first, then fail: AWS Disk.delete() may raise after some
-        # volumes are already gone; Slack/InfluxDB must still see get_deleted.
+        # Report even if delete() raises unexpectedly; AWS Disk.delete() no
+        # longer raises on partial sweep errors (logs instead).
         delete_error = None
         try:
             disk.delete()

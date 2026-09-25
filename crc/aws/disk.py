@@ -293,6 +293,8 @@ class Disk(Service):
                         try:
                             if self._is_candidate(volume):
                                 candidates.append(volume)
+                        except CONNECTIVITY_ERRORS:
+                            raise
                         except Exception as e:
                             self._had_errors = True
                             logging.error(
@@ -305,6 +307,8 @@ class Disk(Service):
                 for volume in self._drop_recently_attached(region, candidates):
                     try:
                         self._delete_volume(client, region, volume)
+                    except CONNECTIVITY_ERRORS:
+                        raise
                     except Exception as e:
                         self._had_errors = True
                         logging.error(
@@ -346,9 +350,14 @@ class Disk(Service):
             )
 
         if self._had_errors:
-            raise RuntimeError(
+            # Do not raise: other AWS resource modules log and continue so the
+            # Jenkins job can exit 0 (see connectivity.py and sys.exit(0)).
+            # Slack/InfluxDB still see whatever landed in disks_to_delete.
+            logging.error(
                 "AWS EBS disk cleanup did not complete for every volume; "
-                "see errors above. Deleted/dry-run list is incomplete."
+                "see errors above. Deleted/dry-run list may be incomplete "
+                "(count=%s).",
+                len(self.disks_to_delete),
             )
 
     def _is_candidate(self, volume: dict) -> bool:
@@ -384,19 +393,48 @@ class Disk(Service):
             logging.warning("Skipping volume %s: missing CreateTime", volume_id)
             return False
 
-        retention_age = self.get_retention_age(volume.get("Tags") or [], self.custom_age_tag_key)
+        retention_age = self.get_retention_age(
+            volume.get("Tags") or [], self.custom_age_tag_key
+        )
         if retention_age:
+            try:
+                retention_age = self._normalize_age(retention_age, "custom age tag")
+            except ValueError as e:
+                logging.warning(
+                    "Skipping volume %s: invalid custom age tag: %s", volume_id, e
+                )
+                return False
             logging.info("Updating age for volume: %s", volume_id)
 
-        # Always apply a CreateTime floor. detach_age-only mode still uses
-        # detach_age here so a never-attached volume created seconds ago
-        # cannot pass.
-        age = retention_age or self.age or self.detach_age
+        # Always apply a CreateTime floor. Prefer the most restrictive window
+        # so a zero/short custom tag cannot disable detach_age-only mode.
+        age = self._creation_age_floor(retention_age)
+        if not age:
+            logging.warning("Skipping volume %s: no usable CreateTime age floor", volume_id)
+            return False
         now = datetime.datetime.now().astimezone(created.tzinfo)
         if not self.is_old(age, now, created):
             return False
 
         return True
+
+    def _creation_age_floor(self, retention_age: Optional[Dict[str, int]]) -> Dict[str, int]:
+        """
+        CreateTime floor for deletion. In detach_age-only mode, use the larger
+        of the custom retention tag and detach_age so a short/zero tag cannot
+        open the gate. When --age is set, retention overrides age if present
+        (same as other CRC resources), after validation.
+        """
+        if self.age:
+            return retention_age or self.age
+        floors = []
+        if retention_age:
+            floors.append(retention_age)
+        if self.detach_age:
+            floors.append(self.detach_age)
+        if not floors:
+            return {}
+        return max(floors, key=self._age_to_timedelta)
 
     def _age_to_timedelta(self, age) -> datetime.timedelta:
         if isinstance(age, int):
@@ -426,6 +464,32 @@ class Disk(Service):
             next_token = response.get("NextToken")
             if not next_token:
                 return results
+
+    def _merge_metric_results(self, results: List[dict]) -> Dict[str, dict]:
+        """
+        Merge GetMetricData pages per query Id. Last-page-wins would drop
+        Values from earlier PartialData pages and treat a final empty Complete
+        as "no activity". Concatenate Values and keep any non-Complete status.
+        """
+        merged: Dict[str, dict] = {}
+        for result in results:
+            query_id = result.get("Id")
+            if not query_id:
+                continue
+            status = result.get("StatusCode") or "Complete"
+            values = list(result.get("Values") or [])
+            existing = merged.get(query_id)
+            if not existing:
+                merged[query_id] = {
+                    "Id": query_id,
+                    "StatusCode": status,
+                    "Values": values,
+                }
+                continue
+            existing["Values"].extend(values)
+            if status != "Complete":
+                existing["StatusCode"] = status
+        return merged
 
     def _volume_recently_attached(
         self, volume_id: str, query_ids: List[str], results_by_id: Dict[str, dict]
@@ -461,7 +525,7 @@ class Disk(Service):
                 region,
                 len(volumes),
             )
-            return []
+            return volumes
 
         end = datetime.datetime.now(datetime.timezone.utc)
         start = end - window
@@ -511,7 +575,7 @@ class Disk(Service):
                 )
                 continue
 
-            results_by_id = {result["Id"]: result for result in results if result.get("Id")}
+            results_by_id = self._merge_metric_results(results)
             for volume in batch:
                 skip, reason = self._volume_recently_attached(
                     volume["VolumeId"],

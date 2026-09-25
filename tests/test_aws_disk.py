@@ -225,7 +225,7 @@ class AwsDiskDetachAgeTests(unittest.TestCase):
                 {"Error": {"Code": "AccessDenied"}}, "GetMetricData"
             )
             self.assertEqual(d._drop_recently_attached("us-west-2", self.volumes), [])
-
+        self.assertTrue(d._had_errors)
     def test_paginates_next_token(self):
         d = _disk(detach_age={"days": 3})
         page1 = {
@@ -241,22 +241,22 @@ class AwsDiskDetachAgeTests(unittest.TestCase):
         self.assertEqual(client.return_value.get_metric_data.call_count, 2)
         self.assertEqual([v["VolumeId"] for v in kept], ["vol-idle", "vol-busy"])
 
-    def test_zero_detach_window_keeps_volumes(self):
+    def test_zero_detach_window_deletes_nothing(self):
         d = _disk(detach_age={"days": 3})
         with mock.patch.object(d, "_age_to_timedelta", return_value=datetime.timedelta(0)):
             kept = d._drop_recently_attached("us-west-2", self.volumes)
-        self.assertEqual(kept, self.volumes)
+        self.assertEqual(kept, [])
 
     def test_merge_metric_pages_keeps_earlier_values(self):
         d = _disk(detach_age={"days": 3})
         qid = self._ids_for(1)[0]  # busy volume's first metric
+        # Realistic paging: non-final PartialData, then Complete (possibly empty).
         page1 = {
             "MetricDataResults": [
-                {"Id": qid, "StatusCode": "Complete", "Values": [1.0]}
+                {"Id": qid, "StatusCode": "PartialData", "Values": [1.0]}
             ],
             "NextToken": "t1",
         }
-        # Final page Complete with empty Values would delete if last-wins.
         page2 = {
             "MetricDataResults": [
                 {"Id": qid, "StatusCode": "Complete", "Values": []},
@@ -269,6 +269,7 @@ class AwsDiskDetachAgeTests(unittest.TestCase):
         with mock.patch("crc.aws.disk.boto3.client") as client:
             client.return_value.get_metric_data.side_effect = [page1, page2]
             kept = d._drop_recently_attached("us-west-2", self.volumes)
+        # Merged Values=[1.0] + status Complete from last page → busy skipped.
         self.assertEqual([v["VolumeId"] for v in kept], ["vol-idle"])
 
 
@@ -393,6 +394,15 @@ class AwsDiskCreationFloorTests(unittest.TestCase):
             ],
         )
         self.assertFalse(d._is_candidate(volume))
+
+    def test_max_age_env_cannot_shorten_detach_floor(self):
+        d = _disk(age=None, detach_age={"days": 7})
+        now = datetime.datetime.now(datetime.timezone.utc)
+        volume = _volume(CreateTime=now - datetime.timedelta(days=2))
+        with mock.patch.dict("os.environ", {"MAX_AGE": "{'hours': 1}"}):
+            # 2-day-old volume must still fail the 7-day detach floor even if
+            # MAX_AGE would make Service.is_old return True.
+            self.assertFalse(d._is_candidate(volume))
 
 
 if __name__ == "__main__":

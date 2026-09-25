@@ -21,6 +21,10 @@ from crc.aws._base import get_all_regions
 from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.service import Service
 
+# ClientError + connectivity failures for CloudWatch lookups. Built as a plain
+# tuple so except clauses stay valid on every supported Python (no * unpacking).
+_CLOUDWATCH_ERRORS = (ClientError,) + tuple(CONNECTIVITY_ERRORS)
+
 
 class Disk(Service):
     """
@@ -408,15 +412,26 @@ class Disk(Service):
 
         # Always apply a CreateTime floor. Prefer the most restrictive window
         # so a zero/short custom tag cannot disable detach_age-only mode.
+        # Compare timedelta directly so Service.is_old's MAX_AGE env override
+        # cannot shorten the floor below detach_age / validated retention.
         age = self._creation_age_floor(retention_age)
         if not age:
             logging.warning("Skipping volume %s: no usable CreateTime age floor", volume_id)
             return False
-        now = datetime.datetime.now().astimezone(created.tzinfo)
-        if not self.is_old(age, now, created):
+        if not self._is_older_than_floor(created, age):
             return False
 
         return True
+
+    def _is_older_than_floor(
+        self, created: datetime.datetime, age: Dict[str, int]
+    ) -> bool:
+        """True if CreateTime is at least ``age`` old, ignoring MAX_AGE."""
+        floor = self._age_to_timedelta(age)
+        if not floor:
+            return False
+        now = datetime.datetime.now().astimezone(created.tzinfo)
+        return (now - created) >= floor
 
     def _creation_age_floor(self, retention_age: Optional[Dict[str, int]]) -> Dict[str, int]:
         """
@@ -467,9 +482,11 @@ class Disk(Service):
 
     def _merge_metric_results(self, results: List[dict]) -> Dict[str, dict]:
         """
-        Merge GetMetricData pages per query Id. Last-page-wins would drop
-        Values from earlier PartialData pages and treat a final empty Complete
-        as "no activity". Concatenate Values and keep any non-Complete status.
+        Merge GetMetricData pages per query Id. Concatenate Values across
+        pages and take StatusCode from the last page (non-final pages are
+        PartialData; the final page is Complete). Last-page-wins on status
+        alone would drop earlier Values; first-non-Complete forever would
+        never delete after a real page split.
         """
         merged: Dict[str, dict] = {}
         for result in results:
@@ -486,9 +503,10 @@ class Disk(Service):
                     "Values": values,
                 }
                 continue
+            # Concatenate Values across pages; status comes from the last page
+            # (CloudWatch marks non-final pages PartialData, final Complete).
             existing["Values"].extend(values)
-            if status != "Complete":
-                existing["StatusCode"] = status
+            existing["StatusCode"] = status
         return merged
 
     def _volume_recently_attached(
@@ -520,12 +538,14 @@ class Disk(Service):
 
         window = self._age_to_timedelta(self.detach_age)
         if not window:
+            # Return value is "candidates to delete". Empty = delete nothing.
             logging.warning(
-                "Region %s: detach_age window is zero, keeping all %s volume(s)",
+                "Region %s: detach_age window is zero, not deleting any of %s "
+                "volume(s)",
                 region,
                 len(volumes),
             )
-            return volumes
+            return []
 
         end = datetime.datetime.now(datetime.timezone.utc)
         start = end - window
@@ -565,7 +585,8 @@ class Disk(Service):
 
             try:
                 results = self._get_metric_data(cloudwatch, queries, start, end)
-            except (ClientError, *CONNECTIVITY_ERRORS) as e:
+            except _CLOUDWATCH_ERRORS as e:
+                self._had_errors = True
                 logging.warning(
                     "Region %s: CloudWatch detach-age lookup failed, skipping %s "
                     "volume(s): %s",
@@ -583,12 +604,21 @@ class Disk(Service):
                     results_by_id,
                 )
                 if skip:
-                    logging.info(
-                        "Skipping volume %s: %s (detach_age window %s)",
-                        volume["VolumeId"],
-                        reason,
-                        window,
-                    )
+                    if reason and "StatusCode=" in reason:
+                        self._had_errors = True
+                        logging.warning(
+                            "Skipping volume %s: %s (detach_age window %s)",
+                            volume["VolumeId"],
+                            reason,
+                            window,
+                        )
+                    else:
+                        logging.info(
+                            "Skipping volume %s: %s (detach_age window %s)",
+                            volume["VolumeId"],
+                            reason,
+                            window,
+                        )
                 else:
                     kept.append(volume)
 

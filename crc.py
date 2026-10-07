@@ -1013,7 +1013,12 @@ def get_argparser():
         "--detach_age",
         type=ast.literal_eval,
         metavar="{'days': value1, 'hours': value2}",
-        help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach_age {'days': 3, 'hours': 12}",
+        help=(
+            "AWS EBS only: minimum time since CloudWatch last saw the volume "
+            "attached to a *running* instance (not a true last-detach timestamp; "
+            "blind to stopped-instance attachments). Requires --age as a CreateTime "
+            "floor. Not used for VMs or IPs. Example: --detach_age {'days': 3, 'hours': 12}"
+        ),
     )
 
     # Add Argument for Dry Run Mode

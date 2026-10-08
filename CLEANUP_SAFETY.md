@@ -12,8 +12,9 @@ facts change.
 - CRC deletes or stops leftover **test / itest** cloud resources so accounts do
   not accumulate cost.
 - Callers usually pass explicit `--cloud`, `--resource`, `--filter_tags` /
-  `--notags`, and an age gate. Broad `--cloud all --resource all` can unlock
-  many destructive paths at once.
+  `--notags`, and an age gate. `--cloud all --resource all` is not a working
+  mode on main: the loop hits aws+disk first and the opt-in circuit breaker
+  raises before any delete runs.
 
 ---
 
@@ -22,12 +23,14 @@ facts change.
 - Unreachable AWS regions are logged and skipped in `crc/aws/connectivity.py`.
 - The only explicit `sys.exit(0)` in this repository is the read-only
   `--scan_tag` path in `crc.py`.
-- `AWS_Disk.delete` catches per-region / per-volume errors, sets `_had_errors`,
-  and finishes with an error log rather than raising. An uncaught exception
-  would exit non-zero and fail the Jenkins build; Slack / Influx still see
-  whatever landed in `disks_to_delete`.
-- `CRC.delete_disks` re-raises only if the cloud `disk.delete()` raises. For
-  AWS that almost never happens because of the behaviour above.
+- Inside the per-region loop, `AWS_Disk.delete` catches per-volume errors, sets
+  `_had_errors`, and finishes with an error log rather than raising. An
+  uncaught exception would exit non-zero and fail the Jenkins build; Slack /
+  Influx still see whatever landed in `disks_to_delete`.
+- That “log rather than raise” path does not cover region listing:
+  `get_all_regions` runs outside the per-region `try` and only catches
+  `CONNECTIVITY_ERRORS`. Auth / credential failures on `describe_regions`
+  still raise out of `AWS_Disk.delete`, and `CRC.delete_disks` re-raises them.
 - Azure `SpotVM.delete` re-raises when the **list** call fails. Per-VM delete
   failures are logged and skipped (`_delete_vm` may raise; the loop catches it).
 
@@ -113,16 +116,16 @@ facts change.
 
 - Tags for YBA fleets often live on the spot request; filtering is on the
   request.
-- Cleanup attempts cancel then terminate, but a failed cancel is only dropped
-  from a “finalized” list; the terminate loop still walks every instance in
-  `instance_id_to_operate`. Cancel-fail does not reliably skip terminate.
+- `delete()` already runs cancel before terminate. A failed cancel is only
+  dropped from a “finalized” list; the terminate loop still walks every
+  instance in `instance_id_to_operate`, so cancel-fail does not skip terminate.
 - The module does not read request `Type`, does not inspect
-  `DeleteOnTermination`, and does not delete leftover EBS volumes.
+  `DeleteOnTermination`, and does not delete leftover EBS volumes. For
+  `Type=persistent`, terminate-without-successful-cancel can leave the request
+  open so AWS launches a replacement.
 
 **Not implemented**
 
-- Cancel request, then terminate instance. For `Type=persistent`,
-  terminate-first leaves the request open and AWS can launch a replacement.
 - Skip terminate when cancel fails.
 - After terminate, delete EBS volumes with `DeleteOnTermination=false`.
 
@@ -159,7 +162,7 @@ cleanup under `crc/`.
 |------|--------|
 | `crc.py` | CLI wiring, opt-in gates, cloud/resource loop |
 | `crc/service.py` | Shared `is_old` / retention tag parsing — empty age is True; zero-age not rejected |
-| `crc/aws/disk.py` | AWS EBS; `_normalize_age`; detach_age via CloudWatch; age and/or detach_age; logs errors, does not raise |
+| `crc/aws/disk.py` | AWS EBS; `_normalize_age`; detach_age via CloudWatch; per-region errors logged (region-list auth failures still raise) |
 | `crc/gcp/disk.py` | GCP disks; `detach_age` via `last_detach_timestamp`; `--age` ignored; custom label replaces detach_age |
 | `crc/aws/spot_instance_requests.py` | On main: cancel then terminate (cancel-fail still terminates). Gap: persistent `Type`; leftover DoT=false EBS |
 | `crc/aws/connectivity.py` | Skip unreachable regions |

@@ -1019,7 +1019,11 @@ def get_argparser():
             "*running* instance — not a true last-detach timestamp, and blind to "
             "stopped-instance attachments. On AWS, --age is optional; if omitted, "
             "detach_age itself is also used as the CreateTime floor. "
-            "GCP: uses the disk's last_detach_timestamp (a real last-detach time). "
+            "GCP: uses disk.last_detach_timestamp (a real last-detach time). "
+            "On GCP, --age is ignored for disks; --detach_age is the only age gate, "
+            "and omitting it (with no custom age label) deletes every matching "
+            "detached disk. A custom age label, if present, replaces detach_age "
+            "on GCP (it does not take the max the way AWS does). "
             "Example: --detach_age {'days': 3, 'hours': 12}"
         ),
     )

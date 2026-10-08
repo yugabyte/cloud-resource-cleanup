@@ -354,9 +354,11 @@ class Disk(Service):
             )
 
         if self._had_errors:
-            # Do not raise: other AWS resource modules log and continue so the
-            # Jenkins job can exit 0 (see connectivity.py and sys.exit(0)).
-            # Slack/InfluxDB still see whatever landed in disks_to_delete.
+            # Do not raise: match other AWS modules that log and continue so one
+            # bad volume/region does not abort the rest of the cloud pass.
+            # (In-repo sys.exit(0) is only used by --scan_tag in crc.py; do not
+            # treat that as this method's contract.) Slack/InfluxDB still see
+            # whatever landed in disks_to_delete.
             logging.error(
                 "AWS EBS disk cleanup did not complete for every volume; "
                 "see errors above. Deleted/dry-run list may be incomplete "

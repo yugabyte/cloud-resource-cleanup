@@ -1014,10 +1014,13 @@ def get_argparser():
         type=ast.literal_eval,
         metavar="{'days': value1, 'hours': value2}",
         help=(
-            "AWS EBS only: minimum time since CloudWatch last saw the volume "
-            "attached to a *running* instance (not a true last-detach timestamp; "
-            "blind to stopped-instance attachments). Requires --age as a CreateTime "
-            "floor. Not used for VMs or IPs. Example: --detach_age {'days': 3, 'hours': 12}"
+            "Detached-age gate for disk cleanup (AWS and GCP; not used for VMs/IPs). "
+            "AWS: inferred from AWS/EBS CloudWatch metrics while attached to a "
+            "*running* instance — not a true last-detach timestamp, and blind to "
+            "stopped-instance attachments. On AWS, --age is optional; if omitted, "
+            "detach_age itself is also used as the CreateTime floor. "
+            "GCP: uses the disk's last_detach_timestamp (a real last-detach time). "
+            "Example: --detach_age {'days': 3, 'hours': 12}"
         ),
     )
 

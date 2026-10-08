@@ -72,15 +72,22 @@ Label claims carefully:
 - Name return values carefully. A helper that returns “candidates to delete”
   must not log “keeping” when it returns that list (and vice versa).
 
-### AWS EBS detach age (`--detach_age`)
+### Disk detach age (`--detach_age`)
 
-- **Current:** inferred from AWS/EBS CloudWatch metrics published only while
-  attached to a **running** instance. It is **not** a last-detach timestamp
-  and is blind to attachments on stopped instances. `disk.py` error strings
-  and README must keep saying that; CLI `--help` for `--detach_age` must match
-  (not “last detached”).
-- Empty Complete series ≠ proof of long detach; CreateTime floor is still
-  required.
+- **Current (AWS):** inferred from AWS/EBS CloudWatch metrics published only
+  while attached to a **running** instance. It is **not** a last-detach
+  timestamp and is blind to attachments on stopped instances. `crc/aws/disk.py`
+  error strings, README, and CLI `--help` must keep that distinction — do not
+  call it “last detached” for AWS.
+- **Current (AWS CreateTime floor):** `AWS_Disk` requires `--age` and/or
+  `--detach_age`. When `--age` is omitted, `detach_age` itself is used as the
+  CreateTime floor (`test_detach_age_alone_is_enough`). Do not document
+  `--age` as required alongside `detach_age`.
+- **Current (GCP):** `CRC.delete_disks` passes `detach_age` to `GCP_Disk`, which
+  uses `disk.last_detach_timestamp` — a real last-detach timestamp. CLI help
+  and docs must not say “AWS EBS only.”
+- Empty Complete CloudWatch series ≠ proof of long detach; CreateTime floor is
+  still applied on AWS.
 - Merge multi-page `GetMetricData` by concatenating `Values` and taking
   **last-page** `StatusCode` (non-final pages are often `PartialData`).
 
@@ -92,7 +99,7 @@ Label claims carefully:
   Filter on the request.
 - Cleanup attempts cancel then terminate, but a failed cancel is only dropped
   from a “finalized” list; the terminate loop still walks every instance in
-  `instance_ids_to_operate`. So cancel-fail does **not** reliably skip
+  `instance_id_to_operate`. So cancel-fail does **not** reliably skip
   terminate today.
 - The module does **not** read request `Type`, does **not** inspect
   `DeleteOnTermination`, and does **not** delete leftover EBS volumes.
@@ -170,7 +177,8 @@ When reviewing a PR, check:
 |------|--------|
 | `crc.py` | CLI wiring, opt-in gates, cloud/resource loop |
 | `crc/service.py` | Shared `is_old` / retention tag parsing — empty age is True; zero-age not rejected |
-| `crc/aws/disk.py` | AWS EBS; `_normalize_age`; detach_age via CloudWatch; sensitive tag skips |
+| `crc/aws/disk.py` | AWS EBS; `_normalize_age`; detach_age via CloudWatch; age and/or detach_age required |
+| `crc/gcp/disk.py` | GCP disks; `detach_age` via `last_detach_timestamp` |
 | `crc/aws/spot_instance_requests.py` | **Current:** cancel then terminate (cancel-fail still terminates). **Gap:** persistent `Type`; leftover DoT=false EBS |
 | `crc/aws/connectivity.py` | Skip unreachable regions; do not fail the whole AWS pass |
 | `crc/azu/spot_vm.py` | **Current:** Spot VM + primary NIC. **Gap:** leftover Detach disks |

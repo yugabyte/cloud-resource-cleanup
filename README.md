@@ -200,7 +200,7 @@ python crc.py --cloud aws --resource spot_instance_requests --filter_tags "{'tes
 
 As an an open-source project with a strong focus on the user community, we welcome contributions as GitHub pull requests. See our [Contributor Guides](https://docs.yugabyte.com/preview/contribute/) to get going. Discussions and RFCs for features happen on the design discussions section of our [Forum](https://forum.yugabyte.com).
 
-Destructive-cleanup safety rules for reviewers (including automated review) live in [REVIEW.md](REVIEW.md). Update that file when a PR changes those contracts.
+Destructive-cleanup safety notes for this repo live in [REVIEW.md](REVIEW.md). Update that file when a PR changes those contracts.
 
 # License
 

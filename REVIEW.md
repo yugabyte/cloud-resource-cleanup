@@ -1,19 +1,17 @@
-# REVIEW.md — guidance for automated and human review of CRC
+# REVIEW.md — CRC destructive-cleanup safety notes
 
 This repository is a **destructive multi-cloud cleanup tool** used from Jenkins.
-Reviewers (including AgentK) should treat every change as potentially able to
-delete account-wide resources. Prefer **fail-closed** over clever cleanup.
+Changes can delete account-wide resources. The notes below record how cleanup
+is meant to behave on `main` versus what is still an open gap, so contributors
+and reviewers share the same factual context.
 
-When this file conflicts with a local comment that would widen deletion, follow
-this file unless the PR explicitly changes the contract and updates this file.
+Status labels used below:
 
-Label claims carefully:
-
-- **Current** — true of code on `main` today; do not regress.
-- **Required for new work** — must hold for any PR that adds or widens a
+- **Current** — true of code on `main` today; regressions are bugs.
+- **Required for new work** — expected of any PR that adds or widens a
   destructive path, even if older modules are not there yet.
-- **Open gap / intended** — documented target behaviour that is **not**
-  implemented yet; do not treat as an existing safety guarantee.
+- **Open gap / intended** — target behaviour that is **not** implemented yet;
+  not an existing safety guarantee.
 
 ---
 
@@ -157,9 +155,9 @@ in the same PR.
 
 ---
 
-## Review focus checklist
+## Useful questions for a safety review
 
-When reviewing a PR, check:
+These are prompts for humans; they do not suppress other findings.
 
 1. Can an empty age / bad age dict delete everything?
 2. Does `-c all` / `-r all` newly enable a destructive path without opt-in?
@@ -174,13 +172,15 @@ When reviewing a PR, check:
 
 ---
 
-## What not to bike-shed
+## Lower-priority nits (context only)
+
+Historically noisy, not forbidden topics:
 
 - Style-only renames in unrelated modules.
-- Requiring full multi-cloud e2e tests without a CI credential story.
+- Demanding full multi-cloud e2e tests when CI has no cloud credentials.
 - Reverting region-skip / connectivity continue-on-error without an
   incident-driven reason.
-- Asking for CloudTrail (or equivalent) on every detach-age design unless the
+- Requiring CloudTrail (or equivalent) on every detach-age design unless the
   PR claims a true last-detach timestamp.
 
 ---

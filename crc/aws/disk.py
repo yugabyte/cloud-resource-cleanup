@@ -354,11 +354,12 @@ class Disk(Service):
             )
 
         if self._had_errors:
-            # Do not raise: match other AWS modules that log and continue so one
-            # bad volume/region does not abort the rest of the cloud pass.
-            # (In-repo sys.exit(0) is only used by --scan_tag in crc.py; do not
-            # treat that as this method's contract.) Slack/InfluxDB still see
-            # whatever landed in disks_to_delete.
+            # Do not raise: an uncaught exception makes the process exit
+            # non-zero and fails the Jenkins build. By this point the region
+            # loop has finished, so raising would not protect other volumes —
+            # it would only flip the exit status. (crc.py's sys.exit(0) is
+            # --scan_tag only; do not cite that call here.) Slack/InfluxDB
+            # still see whatever landed in disks_to_delete.
             logging.error(
                 "AWS EBS disk cleanup did not complete for every volume; "
                 "see errors above. Deleted/dry-run list may be incomplete "

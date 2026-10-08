@@ -1023,7 +1023,10 @@ def get_argparser():
             "On GCP, --age is ignored for disks; --detach_age is the only age gate, "
             "and omitting it (with no custom age label) deletes every matching "
             "detached disk. A custom age label, if present, replaces detach_age "
-            "on GCP (it does not take the max the way AWS does). "
+            "on GCP. On AWS the custom tag never changes the CloudWatch "
+            "detach_age window; it only affects the CreateTime floor, and "
+            "max(tag, detach_age) applies only in detach_age-only mode "
+            "(when --age is omitted). "
             "Example: --detach_age {'days': 3, 'hours': 12}"
         ),
     )

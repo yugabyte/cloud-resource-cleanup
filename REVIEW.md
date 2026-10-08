@@ -23,21 +23,22 @@ Status labels used below:
   `--notags`, and an age gate. Broad `--cloud all --resource all` is dangerous
   and must not silently unlock new destructive paths.
 - **Current (failure behaviour):** unreachable AWS regions are logged and
-  skipped via `crc/aws/connectivity.py`. The only `sys.exit(0)` in this repo is
-  on the read-only `--scan_tag` path in `crc.py` — it is **not** the cleanup-loop
-  contract. Cleanup itself mostly **logs and continues**:
+  skipped via `crc/aws/connectivity.py`. Cleanup mostly **logs and continues**
+  so Jenkins sees exit 0 (an uncaught exception fails the build). The only
+  explicit `sys.exit(0)` call in this repo is the read-only `--scan_tag` path
+  in `crc.py` — do not cite that call as the cleanup contract, but do keep
+  the “don’t raise at end of a partial sweep” behaviour unless the pipeline
+  impact is documented:
   - `AWS_Disk.delete` catches per-region / per-volume errors, sets
-    `_had_errors`, and **does not raise** at the end (only an error log). So
-    hard EBS/CloudWatch failures do **not** fail the Python process; Slack /
-    Influx still see whatever landed in `disks_to_delete`.
+    `_had_errors`, and **does not raise** at the end (only an error log).
+    Raising there would not un-delete volumes; it would make the process exit
+    non-zero and fail Jenkins. Slack / Influx still see whatever landed in
+    `disks_to_delete`.
   - `CRC.delete_disks` only re-raises if the cloud `disk.delete()` itself
     raises; for AWS that almost never happens because of the above.
   - Azure `SpotVM.delete` re-raises only when the **list** call fails. Per-VM
     delete failures are logged and dropped (`_delete_vm` may raise, but the
     loop catches it).
-  - Do not cite in-repo `sys.exit(0)` from comments in `disk.py` (or elsewhere)
-    as proof that cleanup exits 0 — that call site is `--scan_tag` only. Do not
-    change AWS disk / connectivity continue-on-error without documenting why.
 
 ---
 
@@ -95,9 +96,13 @@ Status labels used below:
   - Omitting `--detach_age` (and with no custom age label) leaves that age
     argument empty/`None`, so `Service.is_old` returns True and every matching
     unattached disk with a `last_detach_timestamp` is deleted.
-  - A custom age **label replaces** `detach_age` outright on GCP (unlike AWS,
-    where `_creation_floor` takes the larger of retention tag and
-    `detach_age`). CLI help and docs must state this; do not say “AWS EBS only.”
+  - A custom age **label replaces** `detach_age` outright on GCP. On AWS, a
+    custom tag never changes the CloudWatch `detach_age` window
+    (`_drop_recently_attached` uses only `self.detach_age`). For the CreateTime
+    floor, `_creation_age_floor` takes `max(retention_tag, detach_age)` only in
+    **detach_age-only** mode (`--age` omitted); when `--age` is set it returns
+    `retention_age or self.age` (tag replaces `--age`, no max vs `detach_age`).
+    CLI help and docs must keep that qualifier; do not say “AWS EBS only.”
 - Empty Complete CloudWatch series ≠ proof of long detach; CreateTime floor is
   still applied on AWS.
 - Merge multi-page `GetMetricData` by concatenating `Values` and taking

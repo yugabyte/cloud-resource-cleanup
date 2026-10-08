@@ -354,12 +354,9 @@ class Disk(Service):
             )
 
         if self._had_errors:
-            # Do not raise: an uncaught exception makes the process exit
-            # non-zero and fails the Jenkins build. By this point the region
-            # loop has finished, so raising would not protect other volumes —
-            # it would only flip the exit status. (crc.py's sys.exit(0) is
-            # --scan_tag only; do not cite that call here.) Slack/InfluxDB
-            # still see whatever landed in disks_to_delete.
+            # Log only: raising after the region loop would exit non-zero and
+            # fail the Jenkins build without undoing work already done.
+            # Slack/InfluxDB still see whatever landed in disks_to_delete.
             logging.error(
                 "AWS EBS disk cleanup did not complete for every volume; "
                 "see errors above. Deleted/dry-run list may be incomplete "

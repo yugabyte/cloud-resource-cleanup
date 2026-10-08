@@ -1013,7 +1013,22 @@ def get_argparser():
         "--detach_age",
         type=ast.literal_eval,
         metavar="{'days': value1, 'hours': value2}",
-        help="Age Threshold for last detached disk resources. Age is not respected for VM's & IPs. Example: --detach_age {'days': 3, 'hours': 12}",
+        help=(
+            "Detached-age gate for disk cleanup (AWS and GCP; not used for VMs/IPs). "
+            "AWS: inferred from AWS/EBS CloudWatch metrics while attached to a "
+            "*running* instance — not a true last-detach timestamp, and blind to "
+            "stopped-instance attachments. On AWS, --age is optional; if omitted, "
+            "detach_age itself is also used as the CreateTime floor. "
+            "GCP: uses disk.last_detach_timestamp (a real last-detach time). "
+            "On GCP, --age is ignored for disks; --detach_age is the only age gate, "
+            "and omitting it (with no custom age label) deletes every matching "
+            "detached disk. A custom age label, if present, replaces detach_age "
+            "on GCP. On AWS the custom tag never changes the CloudWatch "
+            "detach_age window; it only affects the CreateTime floor, and "
+            "max(tag, detach_age) applies only in detach_age-only mode "
+            "(when --age is omitted). "
+            "Example: --detach_age {'days': 3, 'hours': 12}"
+        ),
     )
 
     # Add Argument for Dry Run Mode

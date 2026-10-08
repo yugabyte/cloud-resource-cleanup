@@ -354,8 +354,8 @@ class Disk(Service):
             )
 
         if self._had_errors:
-            # Do not raise: other AWS resource modules log and continue so the
-            # Jenkins job can exit 0 (see connectivity.py and sys.exit(0)).
+            # Log only: raising after the region loop would exit non-zero and
+            # fail the Jenkins build without undoing work already done.
             # Slack/InfluxDB still see whatever landed in disks_to_delete.
             logging.error(
                 "AWS EBS disk cleanup did not complete for every volume; "

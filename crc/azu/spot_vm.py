@@ -162,35 +162,38 @@ class SpotVM(Service):
             delete_option = str(getattr(os_disk, "delete_option", "") or "").lower()
             managed = getattr(os_disk, "managed_disk", None)
             disk_id = getattr(managed, "id", None) if managed else None
-            ref = self._disk_ref_from_id(disk_id, getattr(os_disk, "name", None))
-            # Empty/unset delete_option defaults to Detach in Azure (except
-            # ephemeral OS disks) — those disks survive VM delete and must go.
-            if ref and delete_option != "delete":
-                refs.append(ref)
-                logging.info(
-                    "Spot VM %s OS disk %s/%s has delete_option=%s "
-                    "(will delete after VM)",
-                    vm.name,
-                    ref[0],
-                    ref[1],
-                    delete_option or "Detach(default)",
-                )
+            # Ephemeral OS disks have no managed_disk — do not fall back to
+            # os_disk.name (could match an unrelated managed disk in the RG).
+            if disk_id and delete_option != "delete":
+                ref = self._disk_ref_from_id(disk_id)
+                if ref:
+                    refs.append(ref)
+                    logging.info(
+                        "Spot VM %s OS disk %s/%s has delete_option=%s "
+                        "(will delete after VM)",
+                        vm.name,
+                        ref[0],
+                        ref[1],
+                        delete_option or "Detach(default)",
+                    )
 
         for data_disk in getattr(profile, "data_disks", None) or []:
             delete_option = str(getattr(data_disk, "delete_option", "") or "").lower()
             managed = getattr(data_disk, "managed_disk", None)
             disk_id = getattr(managed, "id", None) if managed else None
-            ref = self._disk_ref_from_id(disk_id, getattr(data_disk, "name", None))
-            if ref and delete_option != "delete":
-                refs.append(ref)
-                logging.info(
-                    "Spot VM %s data disk %s/%s has delete_option=%s "
-                    "(will delete after VM)",
-                    vm.name,
-                    ref[0],
-                    ref[1],
-                    delete_option or "Detach(default)",
-                )
+            # Only managed disks with an ARM id — name-only fallback is unsafe.
+            if disk_id and delete_option != "delete":
+                ref = self._disk_ref_from_id(disk_id)
+                if ref:
+                    refs.append(ref)
+                    logging.info(
+                        "Spot VM %s data disk %s/%s has delete_option=%s "
+                        "(will delete after VM)",
+                        vm.name,
+                        ref[0],
+                        ref[1],
+                        delete_option or "Detach(default)",
+                    )
         return refs
 
     # Back-compat alias used by unit tests

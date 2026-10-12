@@ -134,7 +134,8 @@ facts change.
   keys from the request. Later runs rediscover available orphans via
   `describe_volumes` (per-request and a gated region sweep). The sweep skips
   in-use volumes and re-checks filters (live request tags when present). If
-  terminate fails after tagging, the leftover marker is cleared. Already
+  terminate fails after tagging, the leftover marker is cleared (DeleteTags, or
+  overwritten to `terminate-failed` if DeleteTags is denied). Already
   terminated instances with no leftover volumes are skipped (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 
@@ -150,7 +151,13 @@ facts change.
 
 Requires a positive `--age`. Custom age tags are validated the same way
 (invalid/zero → fall back to `--age`). Azure skips untagged Spot VMs
-(same as `crc.azu.vm.VM`).
+(same as `crc.azu.vm.VM`). Only managed disks with an ARM id are queued
+(ephemeral OS disks are skipped).
+
+**Gap:** leftover disk refs are taken from the VM before delete. If
+`_delete_disk` fails after the VM is gone, the disk is not rediscovered on a
+later `spot_instances` run (no Azure equivalent of `crc_leftover_of` yet). A
+separate `--resource disk` run may still catch it if the disk's own tags match.
 
 ---
 

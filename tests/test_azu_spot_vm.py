@@ -54,8 +54,18 @@ class AzureDetachedDiskTests(unittest.TestCase):
                 delete_option="Detach",
             ),
             data_disks=[
-                _disk(name="data-1", disk_id=None, delete_option="Detach"),
-                _disk(name="data-dot", disk_id=None, delete_option="Delete"),
+                _disk(
+                    name="data-1",
+                    disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/data-1",
+                    delete_option="Detach",
+                ),
+                _disk(
+                    name="data-dot",
+                    disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/data-dot",
+                    delete_option="Delete",
+                ),
+                # No managed disk id (ephemeral / unmanaged) — skipped
+                _disk(name="ephemeral-name", disk_id=None, delete_option="Detach"),
             ],
         )
         self.assertEqual(s._detached_disk_names(vm), ["os-disk", "data-1"])
@@ -63,11 +73,26 @@ class AzureDetachedDiskTests(unittest.TestCase):
     def test_delete_option_empty_is_detach_default(self):
         s = _azu_spot()
         vm = _vm(
-            os_disk=_disk(name="os", delete_option=""),
-            data_disks=[_disk(name="d1", delete_option="Delete")],
+            os_disk=_disk(
+                name="os",
+                disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/os",
+                delete_option="",
+            ),
+            data_disks=[
+                _disk(
+                    name="d1",
+                    disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/d1",
+                    delete_option="Delete",
+                )
+            ],
         )
         # Empty/unset => Azure Detach default; only explicit Delete is skipped.
         self.assertEqual(s._detached_disk_names(vm), ["os"])
+
+    def test_ephemeral_os_disk_without_managed_id_skipped(self):
+        s = _azu_spot()
+        vm = _vm(os_disk=_disk(name="os-local", disk_id=None, delete_option=""))
+        self.assertEqual(s._detached_disk_names(vm), [])
 
     def test_disk_name_from_managed_id(self):
         s = _azu_spot()
@@ -103,7 +128,11 @@ class AzureDeleteOrderTests(unittest.TestCase):
     def test_delete_vm_removes_leftover_disks_after_vm(self):
         s = _azu_spot(dry_run=False)
         vm = _vm(
-            os_disk=_disk(name="os-detach", delete_option="Detach"),
+            os_disk=_disk(
+                name="os-detach",
+                disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/os-detach",
+                delete_option="Detach",
+            ),
             data_disks=[],
         )
         call_order = []
@@ -120,12 +149,18 @@ class AzureDeleteOrderTests(unittest.TestCase):
         ), mock.patch.object(s, "_delete_disk", side_effect=track_disk):
             s._delete_vm(vm)
 
-        self.assertEqual(call_order, ["vm", ("disk", "rg", "os-detach", False)])
+        self.assertEqual(call_order, ["vm", ("disk", "rg", "os-detach", True)])
         self.assertEqual(s.instance_names_to_delete, ["spot-1"])
 
     def test_dry_run_records_leftover_disks_without_deleting_vm(self):
         s = _azu_spot(dry_run=True)
-        vm = _vm(os_disk=_disk(name="os-detach", delete_option="Detach"))
+        vm = _vm(
+            os_disk=_disk(
+                name="os-detach",
+                disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/os-detach",
+                delete_option="Detach",
+            )
+        )
         with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait") as delete_vm, mock.patch(
             "crc.azu.spot_vm.delete_vm_primary_nic"
         ):

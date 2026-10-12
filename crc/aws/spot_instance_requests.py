@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from crc.aws._base import get_all_regions
 from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
@@ -46,6 +46,9 @@ class SpotInstanceRequests(Service):
     # dropped by AWS ~4h after cancel+terminate, so the volume itself must
     # carry the marker for a later run to find orphans via describe_volumes.
     LEFTOVER_FROM_TAG = "crc_leftover_of"
+    # Written when we cannot clear LEFTOVER_FROM_TAG after a failed terminate;
+    # sweep rejects this value so an attached volume is never deleted later.
+    LEFTOVER_INVALID_VALUE = "terminate-failed"
     # How long to wait for a volume to leave 'in-use' after terminate.
     VOLUME_AVAILABLE_WAIT_SEC = 180
     VOLUME_POLL_INTERVAL_SEC = 5
@@ -243,13 +246,36 @@ class SpotInstanceRequests(Service):
                         )
         return state, volume_ids
 
+    def _volume_tag_keys(self, client, volume_id: str) -> Optional[set]:
+        """Return existing tag keys on a volume, or None if describe fails."""
+        try:
+            desc = client.describe_volumes(VolumeIds=[volume_id])
+            volumes = desc.get("Volumes") or []
+            if not volumes:
+                return set()
+            return {
+                t["Key"]
+                for t in (volumes[0].get("Tags") or [])
+                if t.get("Key")
+            }
+        except ClientError as e:
+            logging.error(
+                "describe_volumes failed for %s while preparing leftover tags: %s",
+                volume_id,
+                e,
+            )
+            return None
+
     def _scope_tags_for_volume(
-        self, request_id: str, request_tags: Optional[List[Dict[str, str]]]
+        self,
+        request_id: str,
+        request_tags: Optional[List[Dict[str, str]]],
+        existing_keys: Optional[set] = None,
     ) -> List[Dict[str, str]]:
         """
         Tags written onto each leftover volume: crc_leftover_of plus any
-        filter/exception/notags keys from the spot request so a later sweep
-        can apply the same gates after AWS drops the request.
+        filter/exception/notags keys from the spot request that the volume
+        does not already have (never overwrites the volume's own values).
         """
         tags: List[Dict[str, str]] = [
             {"Key": self.LEFTOVER_FROM_TAG, "Value": request_id}
@@ -262,22 +288,53 @@ class SpotInstanceRequests(Service):
         tag_map = {
             t["Key"]: t.get("Value", "") for t in (request_tags or []) if t.get("Key")
         }
+        already = existing_keys or set()
         for key in sorted(keys_needed):
-            if key in tag_map:
+            if key in tag_map and key not in already:
                 tags.append({"Key": key, "Value": tag_map[key]})
         return tags
 
-    def _untag_leftover_marker(self, client, volume_ids: List[str]) -> None:
-        """Remove crc_leftover_of so a failed terminate cannot be swept later."""
+    def _invalidate_leftover_marker(self, client, volume_ids: List[str]) -> None:
+        """
+        Stop a volume from being swept after a failed terminate/tag.
+
+        Prefer DeleteTags. If that fails (e.g. missing ec2:DeleteTags), overwrite
+        the marker with LEFTOVER_INVALID_VALUE via CreateTags (same permission
+        used to set the marker) so the sweep rejects it.
+        """
         for volume_id in volume_ids:
             try:
                 client.delete_tags(
                     Resources=[volume_id],
                     Tags=[{"Key": self.LEFTOVER_FROM_TAG}],
                 )
+                continue
             except ClientError as e:
                 logging.error(
-                    "Failed to clear %s from volume %s: %s",
+                    "Failed to clear %s from volume %s: %s — trying sentinel",
+                    self.LEFTOVER_FROM_TAG,
+                    volume_id,
+                    e,
+                )
+            try:
+                client.create_tags(
+                    Resources=[volume_id],
+                    Tags=[
+                        {
+                            "Key": self.LEFTOVER_FROM_TAG,
+                            "Value": self.LEFTOVER_INVALID_VALUE,
+                        }
+                    ],
+                )
+                logging.info(
+                    "Marked volume %s as %s=%s (sweep will skip)",
+                    volume_id,
+                    self.LEFTOVER_FROM_TAG,
+                    self.LEFTOVER_INVALID_VALUE,
+                )
+            except (ClientError, BotoCoreError) as e:
+                logging.error(
+                    "Failed to invalidate %s on volume %s: %s",
                     self.LEFTOVER_FROM_TAG,
                     volume_id,
                     e,
@@ -293,13 +350,19 @@ class SpotInstanceRequests(Service):
         """
         Mark each DoT=false volume so a later run can find it even after the
         spot request object is gone. Returns False if any CreateTags fails
-        (partial tags are cleared first).
+        (partial markers are invalidated first).
         """
         if not volume_ids:
             return True
-        tags = self._scope_tags_for_volume(request_id, request_tags)
         tagged: List[str] = []
         for volume_id in volume_ids:
+            existing = self._volume_tag_keys(client, volume_id)
+            if existing is None:
+                self._invalidate_leftover_marker(client, tagged)
+                return False
+            tags = self._scope_tags_for_volume(
+                request_id, request_tags, existing_keys=existing
+            )
             try:
                 client.create_tags(Resources=[volume_id], Tags=tags)
                 tagged.append(volume_id)
@@ -310,10 +373,10 @@ class SpotInstanceRequests(Service):
                     request_id,
                     e,
                 )
-                self._untag_leftover_marker(client, tagged)
+                self._invalidate_leftover_marker(client, tagged)
                 return False
         logging.info(
-            "Tagged leftover volumes %s with %s=%s (plus scope tags)",
+            "Tagged leftover volumes %s with %s=%s (plus missing scope tags)",
             volume_ids,
             self.LEFTOVER_FROM_TAG,
             request_id,
@@ -404,7 +467,7 @@ class SpotInstanceRequests(Service):
             if t.get("Key")
         }
         request_id = tag_map.get(self.LEFTOVER_FROM_TAG)
-        if not request_id:
+        if not request_id or request_id == self.LEFTOVER_INVALID_VALUE:
             return False
         status, live_tags = self._live_spot_request_tags(client, request_id)
         if status == "error":
@@ -565,8 +628,8 @@ class SpotInstanceRequests(Service):
             return
 
         # Tag BDM volumes whenever we still have them (including shutting-down)
-        # so a timed-out wait remains findable after BDMs disappear. Clear the
-        # marker if terminate then fails so an attached volume is not swept.
+        # so a timed-out wait remains findable after BDMs disappear. Invalidate
+        # the marker if terminate then fails so an attached volume is not swept.
         tagged_for_retry = False
         if leftover_volumes and volumes_from_bdm:
             if not self._tag_volumes_as_leftover(
@@ -582,6 +645,7 @@ class SpotInstanceRequests(Service):
             tagged_for_retry = True
 
         if not instance_done:
+            terminate_ok = False
             try:
                 client.terminate_instances(InstanceIds=[instance_id])
                 self.instance_ids_to_delete.append(instance_id)
@@ -590,26 +654,38 @@ class SpotInstanceRequests(Service):
                     instance_id,
                     request_id,
                 )
+                terminate_ok = True
             except ClientError as e:
                 code = (e.response.get("Error") or {}).get("Code")
-                if code not in {
+                if code in {
                     "InvalidInstanceID.NotFound",
                     "InvalidInstanceID.Malformed",
                 }:
+                    logging.info(
+                        "Instance %s already gone for spot request %s",
+                        instance_id,
+                        request_id,
+                    )
+                    terminate_ok = True
+                else:
                     logging.error(
                         "Failed to terminate instance %s after cancelling %s: %s",
                         instance_id,
                         request_id,
                         e,
                     )
-                    if tagged_for_retry:
-                        self._untag_leftover_marker(client, leftover_volumes)
-                    return
-                logging.info(
-                    "Instance %s already gone for spot request %s",
+            except (BotoCoreError, Exception) as e:
+                # Transport timeouts etc. are not ClientError — still invalidate.
+                logging.error(
+                    "Failed to terminate instance %s after cancelling %s: %s",
                     instance_id,
                     request_id,
+                    e,
                 )
+            if not terminate_ok:
+                if tagged_for_retry:
+                    self._invalidate_leftover_marker(client, leftover_volumes)
+                return
         else:
             logging.info(
                 "Instance %s already %s for spot request %s; only leftover "

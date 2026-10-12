@@ -30,9 +30,10 @@ class SpotInstanceRequests(Service):
 
     After terminate, any EBS volume whose BlockDeviceMapping had
     DeleteOnTermination=false is deleted explicitly. Those volumes are tagged
-    ``crc_leftover_of=<spot-request-id>`` before terminate so a later run can
-    still find them via ``describe_volumes`` after AWS drops the spot request
-    (~4h).
+    ``crc_leftover_of=<spot-request-id>`` (plus filter/exception/notags keys)
+    before terminate so a later run can still find *available* orphans via
+    ``describe_volumes`` after AWS drops the spot request (~4h). The region
+    sweep re-applies those gates; in-use volumes are not swept.
 
     Matching cancelled requests that still have an InstanceId are cleaned up
     too (CRC retry after a partial run, or a hand-cancelled request whose
@@ -92,10 +93,10 @@ class SpotInstanceRequests(Service):
 
     def _get_filtered_requests(
         self, spot_request_details: dict
-    ) -> List[Tuple[str, Optional[str], str, bool]]:
+    ) -> List[Tuple[str, Optional[str], str, bool, List[Dict[str, str]]]]:
         """
         Returns list of
-        (request_id, instance_id|None, type, already_cancelled).
+        (request_id, instance_id|None, type, already_cancelled, tags).
         Type is one-time or persistent (AWS SpotInstanceRequests.Type).
 
         Cancelled requests with an InstanceId are also queued. That covers a
@@ -144,7 +145,7 @@ class SpotInstanceRequests(Service):
                     continue
 
                 matches.append(
-                    (request_id, instance_id, request_type, already_cancelled)
+                    (request_id, instance_id, request_type, already_cancelled, tags)
                 )
                 logging.info(
                     "Spot request %s (type=%s, cancelled=%s) instance=%s queued",
@@ -242,23 +243,66 @@ class SpotInstanceRequests(Service):
                         )
         return state, volume_ids
 
+    def _scope_tags_for_volume(
+        self, request_id: str, request_tags: Optional[List[Dict[str, str]]]
+    ) -> List[Dict[str, str]]:
+        """
+        Tags written onto each leftover volume: crc_leftover_of plus any
+        filter/exception/notags keys from the spot request so a later sweep
+        can apply the same gates after AWS drops the request.
+        """
+        tags: List[Dict[str, str]] = [
+            {"Key": self.LEFTOVER_FROM_TAG, "Value": request_id}
+        ]
+        keys_needed = set(self.filter_tags)
+        keys_needed.update(self.exception_tags)
+        keys_needed.update(self.notags)
+        if not keys_needed:
+            return tags
+        tag_map = {
+            t["Key"]: t.get("Value", "") for t in (request_tags or []) if t.get("Key")
+        }
+        for key in sorted(keys_needed):
+            if key in tag_map:
+                tags.append({"Key": key, "Value": tag_map[key]})
+        return tags
+
+    def _untag_leftover_marker(self, client, volume_ids: List[str]) -> None:
+        """Remove crc_leftover_of so a failed terminate cannot be swept later."""
+        for volume_id in volume_ids:
+            try:
+                client.delete_tags(
+                    Resources=[volume_id],
+                    Tags=[{"Key": self.LEFTOVER_FROM_TAG}],
+                )
+            except ClientError as e:
+                logging.error(
+                    "Failed to clear %s from volume %s: %s",
+                    self.LEFTOVER_FROM_TAG,
+                    volume_id,
+                    e,
+                )
+
     def _tag_volumes_as_leftover(
-        self, client, request_id: str, volume_ids: List[str]
+        self,
+        client,
+        request_id: str,
+        volume_ids: List[str],
+        request_tags: Optional[List[Dict[str, str]]] = None,
     ) -> bool:
         """
         Mark each DoT=false volume so a later run can find it even after the
-        spot request object is gone. Returns False if any CreateTags fails.
+        spot request object is gone. Returns False if any CreateTags fails
+        (partial tags are cleared first).
         """
         if not volume_ids:
             return True
+        tags = self._scope_tags_for_volume(request_id, request_tags)
+        tagged: List[str] = []
         for volume_id in volume_ids:
             try:
-                client.create_tags(
-                    Resources=[volume_id],
-                    Tags=[
-                        {"Key": self.LEFTOVER_FROM_TAG, "Value": request_id},
-                    ],
-                )
+                client.create_tags(Resources=[volume_id], Tags=tags)
+                tagged.append(volume_id)
             except ClientError as e:
                 logging.error(
                     "Failed to tag leftover volume %s for spot request %s: %s",
@@ -266,9 +310,10 @@ class SpotInstanceRequests(Service):
                     request_id,
                     e,
                 )
+                self._untag_leftover_marker(client, tagged)
                 return False
         logging.info(
-            "Tagged leftover volumes %s with %s=%s",
+            "Tagged leftover volumes %s with %s=%s (plus scope tags)",
             volume_ids,
             self.LEFTOVER_FROM_TAG,
             request_id,
@@ -278,29 +323,105 @@ class SpotInstanceRequests(Service):
     def _volumes_tagged_leftover(
         self, client, request_id: Optional[str] = None
     ) -> List[str]:
-        """Find volumes previously marked with crc_leftover_of."""
-        filters = [{"Name": "status", "Values": ["available", "in-use"]}]
+        """Find volumes previously marked with crc_leftover_of (any state)."""
+        return [
+            vol["VolumeId"]
+            for vol in self._describe_tagged_leftover_volumes(
+                client, request_id=request_id, statuses=["available", "in-use"]
+            )
+            if vol.get("VolumeId")
+        ]
+
+    def _describe_tagged_leftover_volumes(
+        self,
+        client,
+        request_id: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+    ) -> List[dict]:
+        """describe_volumes for crc_leftover_of, optional request id / states."""
+        filters = [{"Name": "status", "Values": statuses or ["available", "in-use"]}]
         if request_id:
             filters.append(
                 {"Name": f"tag:{self.LEFTOVER_FROM_TAG}", "Values": [request_id]}
             )
         else:
             filters.append({"Name": "tag-key", "Values": [self.LEFTOVER_FROM_TAG]})
-        volume_ids: List[str] = []
+        volumes: List[dict] = []
         try:
             paginator = client.get_paginator("describe_volumes")
             for page in paginator.paginate(Filters=filters):
-                for vol in page.get("Volumes") or []:
-                    vid = vol.get("VolumeId")
-                    if vid:
-                        volume_ids.append(vid)
+                volumes.extend(page.get("Volumes") or [])
         except ClientError as e:
             logging.error(
                 "describe_volumes for %s leftovers failed: %s",
                 self.LEFTOVER_FROM_TAG,
                 e,
             )
-        return volume_ids
+        return volumes
+
+    def _live_spot_request_tags(
+        self, client, request_id: str
+    ) -> Tuple[str, Optional[List[Dict[str, str]]]]:
+        """
+        Look up tags for a spot request during sweep.
+
+        Returns ``(\"live\", tags)``, ``(\"gone\", None)`` when AWS no longer
+        lists the request, or ``(\"error\", None)`` on other API failures
+        (caller must fail closed and skip the volume).
+        """
+        try:
+            resp = client.describe_spot_instance_requests(
+                SpotInstanceRequestIds=[request_id]
+            )
+        except ClientError as e:
+            code = (e.response.get("Error") or {}).get("Code")
+            if code in {
+                "InvalidSpotInstanceRequestID.NotFound",
+                "InvalidSpotInstanceRequestID.Malformed",
+            }:
+                return "gone", None
+            logging.error(
+                "describe_spot_instance_requests for %s failed during sweep: %s",
+                request_id,
+                e,
+            )
+            return "error", None
+        reqs = resp.get("SpotInstanceRequests") or []
+        if not reqs:
+            return "gone", None
+        return "live", reqs[0].get("Tags") or []
+
+    def _volume_passes_sweep_gates(self, client, volume: dict) -> bool:
+        """
+        Apply the same filter/exception/notags gates as spot requests.
+        Prefer live request tags when the request still exists (so a newly
+        added exception tag still protects the volume); otherwise use the
+        scope tags copied onto the volume at tag time.
+        """
+        tag_map = {
+            t["Key"]: t.get("Value", "")
+            for t in (volume.get("Tags") or [])
+            if t.get("Key")
+        }
+        request_id = tag_map.get(self.LEFTOVER_FROM_TAG)
+        if not request_id:
+            return False
+        status, live_tags = self._live_spot_request_tags(client, request_id)
+        if status == "error":
+            return False
+        if status == "live":
+            if self._should_skip_spot_request(live_tags or []):
+                return False
+            if self.filter_tags and not self._matches_filter_tags(live_tags or []):
+                return False
+            return True
+        # Request gone (~4h): gate on tags copied onto the volume.
+        vol_tags = volume.get("Tags") or []
+        if self._should_skip_spot_request(vol_tags):
+            return False
+        if self.filter_tags and not self._matches_filter_tags(vol_tags):
+            return False
+        return True
 
     def _wait_volume_available_then_delete(
         self, client, volume_id: str
@@ -352,6 +473,7 @@ class SpotInstanceRequests(Service):
         instance_id: Optional[str],
         request_type: str,
         already_cancelled: bool = False,
+        request_tags: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """
         Cancel the spot request first, then terminate its instance, then delete
@@ -365,6 +487,7 @@ class SpotInstanceRequests(Service):
         """
         instance_state: Optional[str] = None
         leftover_volumes: List[str] = []
+        volumes_from_bdm = False
         if instance_id:
             instance_state, leftover_volumes = (
                 self._instance_state_and_dot_false_volumes(client, instance_id)
@@ -379,6 +502,7 @@ class SpotInstanceRequests(Service):
                     instance_id,
                 )
                 return
+            volumes_from_bdm = bool(leftover_volumes)
         if not leftover_volumes:
             leftover_volumes = self._volumes_tagged_leftover(client, request_id)
 
@@ -440,12 +564,13 @@ class SpotInstanceRequests(Service):
         if not instance_id:
             return
 
-        # Tag each volume before terminate so a later run can find them via
-        # describe_volumes even after the spot request object is gone. If
-        # tagging fails, do not terminate.
-        if leftover_volumes and not instance_done:
+        # Tag BDM volumes whenever we still have them (including shutting-down)
+        # so a timed-out wait remains findable after BDMs disappear. Clear the
+        # marker if terminate then fails so an attached volume is not swept.
+        tagged_for_retry = False
+        if leftover_volumes and volumes_from_bdm:
             if not self._tag_volumes_as_leftover(
-                client, request_id, leftover_volumes
+                client, request_id, leftover_volumes, request_tags=request_tags
             ):
                 logging.error(
                     "Not terminating instance %s for spot request %s — "
@@ -454,6 +579,7 @@ class SpotInstanceRequests(Service):
                     request_id,
                 )
                 return
+            tagged_for_retry = True
 
         if not instance_done:
             try:
@@ -476,6 +602,8 @@ class SpotInstanceRequests(Service):
                         request_id,
                         e,
                     )
+                    if tagged_for_retry:
+                        self._untag_leftover_marker(client, leftover_volumes)
                     return
                 logging.info(
                     "Instance %s already gone for spot request %s",
@@ -509,10 +637,24 @@ class SpotInstanceRequests(Service):
 
     def _sweep_tagged_leftover_volumes(self, client, region: str) -> None:
         """
-        Delete available volumes tagged crc_leftover_of from a prior run.
-        Covers the case where the spot request object is already gone (~4h).
+        Delete *available* volumes tagged crc_leftover_of from a prior run,
+        only when filter/exception/notags still allow it. Skips in-use volumes
+        (still attached — not leftovers yet). Covers AWS dropping the spot
+        request after ~4h.
         """
-        for volume_id in self._volumes_tagged_leftover(client):
+        for volume in self._describe_tagged_leftover_volumes(
+            client, statuses=["available"]
+        ):
+            volume_id = volume.get("VolumeId")
+            if not volume_id:
+                continue
+            if not self._volume_passes_sweep_gates(client, volume):
+                logging.info(
+                    "Skipping tagged leftover volume %s in %s (filters/exceptions)",
+                    volume_id,
+                    region,
+                )
+                continue
             if self.dry_run:
                 if volume_id not in self.volumes_to_delete:
                     self.volumes_to_delete.append(volume_id)
@@ -563,6 +705,7 @@ class SpotInstanceRequests(Service):
                     instance_id,
                     request_type,
                     already_cancelled,
+                    request_tags,
                 ) in matches:
                     try:
                         self._cleanup_one(
@@ -572,6 +715,7 @@ class SpotInstanceRequests(Service):
                             instance_id,
                             request_type,
                             already_cancelled=already_cancelled,
+                            request_tags=request_tags,
                         )
                     except Exception as e:
                         logging.error(

@@ -128,11 +128,14 @@ facts change.
   cancelled but failed later steps, **and** also cleans hand-cancelled
   requests whose instance AWS left running. Untagged cancelled requests stay
   skipped.
-- Before terminate, each `DeleteOnTermination=false` volume is tagged
-  `crc_leftover_of=<spot-request-id>`. Later runs rediscover those volumes via
-  `describe_volumes` (per-request and a region sweep), so orphans are still
-  found after AWS drops the spot request (~4h). Already terminated instances
-  with no leftover volumes are skipped (not re-reported).
+- Before terminate (and when BDMs are still visible on a shutting-down
+  instance), each `DeleteOnTermination=false` volume is tagged
+  `crc_leftover_of=<spot-request-id>` plus the run's filter/exception/notags
+  keys from the request. Later runs rediscover available orphans via
+  `describe_volumes` (per-request and a gated region sweep). The sweep skips
+  in-use volumes and re-checks filters (live request tags when present). If
+  terminate fails after tagging, the leftover marker is cleared. Already
+  terminated instances with no leftover volumes are skipped (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 - GCP/OCI `--resource spot_instances` require explicit `--cloud gcp` /
   `--cloud oci`. Under `--cloud all`, only Azure spot_instances runs.

@@ -112,44 +112,103 @@ class SpotVM(Service):
         return self.is_old(retention_age or self.age, now, created)
 
     def _disk_name_from_source(self, source: Optional[str]) -> Optional[str]:
+        ref = self._disk_ref_from_source(source)
+        return ref["name"] if ref else None
+
+    def _disk_ref_from_source(self, source: Optional[str]) -> Optional[Dict[str, str]]:
+        """
+        Parse a disk source URL into project / scope / location / name.
+
+        Supports:
+          projects/P/zones/Z/disks/NAME
+          projects/P/regions/R/disks/NAME
+        """
         if not source:
             return None
-        # projects/.../zones/.../disks/NAME or full URL
-        return source.rstrip("/").split("/")[-1]
+        parts = source.rstrip("/").split("/")
+        try:
+            p_idx = parts.index("projects")
+            project = parts[p_idx + 1]
+            name = parts[-1]
+            if "zones" in parts:
+                z_idx = parts.index("zones")
+                return {
+                    "project": project,
+                    "scope": "zone",
+                    "location": parts[z_idx + 1],
+                    "name": name,
+                }
+            if "regions" in parts:
+                r_idx = parts.index("regions")
+                return {
+                    "project": project,
+                    "scope": "region",
+                    "location": parts[r_idx + 1],
+                    "name": name,
+                }
+        except (ValueError, IndexError):
+            pass
+        # Fallback: name only in the caller's project/zone
+        name = parts[-1] if parts else None
+        if not name:
+            return None
+        return {
+            "project": self.project_id,
+            "scope": "zone",
+            "location": "",
+            "name": name,
+        }
 
-    def _non_autodelete_disks(self, instance) -> List[str]:
-        names = []
+    def _non_autodelete_disks(self, instance) -> List[Dict[str, str]]:
+        refs = []
         for disk in getattr(instance, "disks", None) or []:
             if getattr(disk, "auto_delete", True):
                 continue
-            name = self._disk_name_from_source(getattr(disk, "source", None))
-            if name:
-                names.append(name)
+            ref = self._disk_ref_from_source(getattr(disk, "source", None))
+            if ref:
+                refs.append(ref)
                 logging.info(
-                    "Spot VM %s disk %s has autoDelete=false (will delete after VM)",
+                    "Spot VM %s disk %s/%s/%s has autoDelete=false "
+                    "(will delete after VM)",
                     instance.name,
-                    name,
+                    ref["project"],
+                    ref["location"] or "?",
+                    ref["name"],
                 )
-        return names
+        return refs
 
-    def _wait_zone_operation(self, service, zone: str, operation_name: str) -> bool:
-        """Wait until a zonal operation reaches DONE (instance delete)."""
+    def _wait_compute_operation(
+        self, service, scope: str, location: str, operation_name: str
+    ) -> bool:
+        """Wait until a zone or region operation reaches DONE."""
         deadline = time.time() + self.INSTANCE_DELETE_WAIT_SEC
         while time.time() < deadline:
             try:
-                op = (
-                    service.zoneOperations()
-                    .get(
-                        project=self.project_id,
-                        zone=zone,
-                        operation=operation_name,
+                if scope == "region":
+                    op = (
+                        service.regionOperations()
+                        .get(
+                            project=self.project_id,
+                            region=location,
+                            operation=operation_name,
+                        )
+                        .execute()
                     )
-                    .execute()
-                )
+                else:
+                    op = (
+                        service.zoneOperations()
+                        .get(
+                            project=self.project_id,
+                            zone=location,
+                            operation=operation_name,
+                        )
+                        .execute()
+                    )
             except Exception as e:
                 logging.error(
-                    "Error polling GCP zone operation %s/%s: %s",
-                    zone,
+                    "Error polling GCP %s operation %s/%s: %s",
+                    scope,
+                    location,
                     operation_name,
                     e,
                 )
@@ -158,49 +217,70 @@ class SpotVM(Service):
             if status == "DONE":
                 if op.get("error"):
                     logging.error(
-                        "GCP zone operation %s/%s failed: %s",
-                        zone,
+                        "GCP %s operation %s/%s failed: %s",
+                        scope,
+                        location,
                         operation_name,
                         op.get("error"),
                     )
                     return False
                 return True
             logging.info(
-                "Waiting for GCP zone operation %s/%s (status=%s)",
-                zone,
+                "Waiting for GCP %s operation %s/%s (status=%s)",
+                scope,
+                location,
                 operation_name,
                 status,
             )
             time.sleep(self.INSTANCE_POLL_INTERVAL_SEC)
         logging.error(
-            "Timed out waiting for GCP zone operation %s/%s", zone, operation_name
+            "Timed out waiting for GCP %s operation %s/%s",
+            scope,
+            location,
+            operation_name,
         )
         return False
 
-    def _delete_disk(self, service, zone: str, disk_name: str) -> None:
+    def _wait_zone_operation(self, service, zone: str, operation_name: str) -> bool:
+        return self._wait_compute_operation(service, "zone", zone, operation_name)
+
+    def _delete_disk(
+        self, service, disk_ref: Dict[str, str], fallback_zone: str
+    ) -> None:
+        project = disk_ref.get("project") or self.project_id
+        scope = disk_ref.get("scope") or "zone"
+        location = disk_ref.get("location") or fallback_zone
+        disk_name = disk_ref["name"]
+        label = f"{project}/{location}/{disk_name}"
         if self.dry_run:
-            self.disks_to_delete.append(f"{zone}/{disk_name}")
+            self.disks_to_delete.append(label)
             return
         try:
-            op = (
-                service.disks()
-                .delete(project=self.project_id, zone=zone, disk=disk_name)
-                .execute()
-            )
+            if scope == "region":
+                op = (
+                    service.regionDisks()
+                    .delete(project=project, region=location, disk=disk_name)
+                    .execute()
+                )
+            else:
+                op = (
+                    service.disks()
+                    .delete(project=project, zone=location, disk=disk_name)
+                    .execute()
+                )
             op_name = op.get("name")
-            if op_name and not self._wait_zone_operation(service, zone, op_name):
+            if op_name and not self._wait_compute_operation(
+                service, scope, location, op_name
+            ):
                 logging.error(
-                    "Disk delete operation failed/incomplete for %s/%s; not counted",
-                    zone,
-                    disk_name,
+                    "Disk delete operation failed/incomplete for %s; not counted",
+                    label,
                 )
                 return
-            logging.info("Deleted leftover Spot VM disk %s/%s", zone, disk_name)
-            self.disks_to_delete.append(f"{zone}/{disk_name}")
+            logging.info("Deleted leftover Spot VM disk %s", label)
+            self.disks_to_delete.append(label)
         except Exception as e:
-            logging.error(
-                "Failed to delete leftover disk %s/%s: %s", zone, disk_name, e
-            )
+            logging.error("Failed to delete leftover disk %s: %s", label, e)
 
     def delete(self) -> None:
         with discovery.build(self.service_name, self.service_version) as service:
@@ -250,8 +330,8 @@ class SpotVM(Service):
                                 )
                                 continue
                         self.instance_names_to_delete.append(instance.name)
-                        for disk_name in leftover:
-                            self._delete_disk(service, zone, disk_name)
+                        for disk_ref in leftover:
+                            self._delete_disk(service, disk_ref, zone)
                     except Exception as e:
                         logging.error(
                             "Error deleting GCP Spot VM %s: %s", instance.name, e

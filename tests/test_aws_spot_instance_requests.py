@@ -324,6 +324,57 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
         self.assertEqual(s.volumes_to_delete, ["vol-keep"])
         self.assertEqual(s.spot_requests_to_delete, ["sir-1"])
+        client.delete_tags.assert_called()
+
+    def test_retry_already_gone_volume_not_recounted(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {"Reservations": []}
+        client.describe_volumes.return_value = {"Volumes": []}
+        with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
+            s._cleanup_one(
+                client,
+                "us-west-2",
+                "sir-1",
+                "i-1",
+                "one-time",
+                already_cancelled=True,
+                request_tags=[
+                    {"Key": "yb_owner", "Value": "qa"},
+                    {"Key": s.LEFTOVER_VOLUMES_TAG, "Value": "vol-keep"},
+                ],
+            )
+        client.delete_volume.assert_not_called()
+        self.assertEqual(s.volumes_to_delete, [])
+        self.assertEqual(s.spot_requests_to_delete, [])
+        client.delete_tags.assert_called()
+
+    def test_abort_when_describe_instances_fails(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.side_effect = ClientError(
+            {"Error": {"Code": "UnauthorizedOperation", "Message": "nope"}},
+            "DescribeInstances",
+        )
+        s._cleanup_one(client, "us-west-2", "sir-1", "i-1", "persistent")
+        client.cancel_spot_instance_requests.assert_not_called()
+        client.terminate_instances.assert_not_called()
+
+    def test_filter_tags_glob_match(self):
+        s = _spot(filter_tags={"yb_task": ["itest*"]})
+        matches = s._get_filtered_requests(
+            {
+                "SpotInstanceRequests": [
+                    _request(
+                        tags=[
+                            {"Key": "yb_owner", "Value": "qa"},
+                            {"Key": "yb_task", "Value": "itest-123"},
+                        ]
+                    )
+                ]
+            }
+        )
+        self.assertEqual(len(matches), 1)
 
 
 if __name__ == "__main__":

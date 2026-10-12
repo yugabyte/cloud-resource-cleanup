@@ -140,7 +140,7 @@ facts change.
 | Cloud | “Won’t auto-delete” signal | Cleanup |
 |-------|----------------------------|---------|
 | Azure Spot | `delete_option` is Detach (not Delete) | Delete managed disk after `begin_delete_vm_and_wait` |
-| GCP Spot / preemptible | `autoDelete=false` | Wait for instance-delete zone op, then delete disk |
+| GCP Spot / preemptible | `autoDelete=false` | Wait for instance-delete zone op, then delete disk (zonal or regional) |
 | OCI preemptible | Attached block volume | Wait for instance `TERMINATED` (best-effort), then delete volume |
 
 All three require a positive `--age`. Custom age tags are validated the same
@@ -148,6 +148,11 @@ way (invalid/zero → fall back to `--age`). Azure skips untagged Spot VMs
 (same as `crc.azu.vm.VM`). GCP/OCI match their regular VM label/tag helpers;
 empty filter still needs the age gate. GCP/OCI paths are opt-in via explicit
 `--cloud` (not `--cloud all`).
+
+**Gap:** if the GCP instance-delete wait or OCI TERMINATED wait times out,
+leftover disk/volume deletes are skipped (GCP) or may fail while still attached
+(OCI). Unlike AWS (`crc_leftover_ebs` tag), those IDs are not persisted, so a
+later run will not rediscover them after the instance is gone.
 
 ---
 

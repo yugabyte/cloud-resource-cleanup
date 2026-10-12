@@ -1,6 +1,7 @@
 # Copyright (c) Yugabyte, Inc.
 
 import datetime
+import fnmatch
 import logging
 import time
 from typing import Dict, List, Optional, Tuple
@@ -150,11 +151,14 @@ class SpotInstanceRequests(Service):
         if not self.filter_tags:
             return True
         tag_map = {t["Key"]: t.get("Value", "") for t in tags if t.get("Key")}
-        # AND across keys (same as other AWS resources that re-check client-side)
+        # Match EC2 tag-filter glob semantics (* and ?) on the client too
+        # (same as crc/aws/disk.py).
         for key, values in self.filter_tags.items():
             if key not in tag_map:
                 return False
-            if values and tag_map[key] not in values:
+            if values and not any(
+                fnmatch.fnmatchcase(tag_map[key], pattern) for pattern in values
+            ):
                 return False
         return True
 
@@ -237,9 +241,10 @@ class SpotInstanceRequests(Service):
 
     def _tag_leftover_volumes_on_request(
         self, client, request_id: str, volume_ids: List[str]
-    ) -> None:
+    ) -> bool:
+        """Persist leftover volume IDs. Returns False if tagging failed."""
         if not volume_ids:
-            return
+            return True
         try:
             client.create_tags(
                 Resources=[request_id],
@@ -255,14 +260,42 @@ class SpotInstanceRequests(Service):
                 request_id,
                 volume_ids,
             )
+            return True
         except ClientError as e:
             logging.error(
                 "Failed to tag leftover volumes on spot request %s: %s",
                 request_id,
                 e,
             )
+            return False
 
-    def _wait_volume_available_then_delete(self, client, volume_id: str) -> bool:
+    def _clear_leftover_volumes_tag(self, client, request_id: str) -> None:
+        try:
+            client.delete_tags(
+                Resources=[request_id],
+                Tags=[{"Key": self.LEFTOVER_VOLUMES_TAG}],
+            )
+            logging.info(
+                "Cleared %s tag on spot request %s",
+                self.LEFTOVER_VOLUMES_TAG,
+                request_id,
+            )
+        except ClientError as e:
+            logging.error(
+                "Failed to clear %s on spot request %s: %s",
+                self.LEFTOVER_VOLUMES_TAG,
+                request_id,
+                e,
+            )
+
+    def _wait_volume_available_then_delete(
+        self, client, volume_id: str
+    ) -> Optional[str]:
+        """
+        Wait for available and delete. Returns ``\"deleted\"`` when this run
+        issued delete_volume, ``\"already_gone\"`` when the volume is already
+        missing/deleted (do not count as a new deletion), or None on failure.
+        """
         deadline = time.time() + self.VOLUME_AVAILABLE_WAIT_SEC
         while time.time() < deadline:
             try:
@@ -270,14 +303,14 @@ class SpotInstanceRequests(Service):
                 volumes = desc.get("Volumes") or []
                 if not volumes:
                     logging.info("Volume %s already gone", volume_id)
-                    return True
+                    return "already_gone"
                 state = volumes[0].get("State")
                 if state == "available":
                     client.delete_volume(VolumeId=volume_id)
                     logging.info("Deleted leftover volume %s", volume_id)
-                    return True
+                    return "deleted"
                 if state == "deleted":
-                    return True
+                    return "already_gone"
                 logging.info(
                     "Waiting for volume %s to become available (state=%s)",
                     volume_id,
@@ -286,16 +319,16 @@ class SpotInstanceRequests(Service):
             except ClientError as e:
                 code = (e.response.get("Error") or {}).get("Code")
                 if code in {"InvalidVolume.NotFound"}:
-                    return True
+                    return "already_gone"
                 logging.error("Error waiting/deleting volume %s: %s", volume_id, e)
-                return False
+                return None
             time.sleep(self.VOLUME_POLL_INTERVAL_SEC)
 
         logging.error(
             "Timed out waiting for volume %s to become available; not deleted",
             volume_id,
         )
-        return False
+        return None
 
     def _cleanup_one(
         self,
@@ -323,6 +356,16 @@ class SpotInstanceRequests(Service):
             instance_state, leftover_volumes = (
                 self._instance_state_and_dot_false_volumes(client, instance_id)
             )
+            # Fail closed: if describe failed, do not cancel/terminate — we
+            # would lose DeleteOnTermination=false volume IDs permanently.
+            if instance_state == "unknown":
+                logging.error(
+                    "Aborting cleanup of spot request %s: describe_instances "
+                    "failed for %s (volume list unreliable)",
+                    request_id,
+                    instance_id,
+                )
+                return
         if not leftover_volumes:
             leftover_volumes = self._leftover_volumes_from_request_tags(request_tags)
 
@@ -385,9 +428,19 @@ class SpotInstanceRequests(Service):
             return
 
         # Persist volume ids before terminate so a later retry can find them
-        # after BlockDeviceMappings disappear.
-        if leftover_volumes:
-            self._tag_leftover_volumes_on_request(client, request_id, leftover_volumes)
+        # after BlockDeviceMappings disappear. If tagging fails, do not
+        # terminate — a timed-out volume wait would then orphan them.
+        if leftover_volumes and not instance_done:
+            if not self._tag_leftover_volumes_on_request(
+                client, request_id, leftover_volumes
+            ):
+                logging.error(
+                    "Not terminating instance %s for spot request %s — "
+                    "failed to persist leftover volume IDs",
+                    instance_id,
+                    request_id,
+                )
+                return
 
         if not instance_done:
             try:
@@ -426,19 +479,30 @@ class SpotInstanceRequests(Service):
             )
 
         deleted_any_volume = False
+        still_pending: List[str] = []
         for volume_id in leftover_volumes:
-            if self._wait_volume_available_then_delete(client, volume_id):
+            result = self._wait_volume_available_then_delete(client, volume_id)
+            if result == "deleted":
                 self.volumes_to_delete.append(volume_id)
                 deleted_any_volume = True
+            elif result == "already_gone":
+                continue
+            else:
+                still_pending.append(volume_id)
+
+        # Keep the tag only for volumes that still need work; clear when done
+        # so later runs do not re-report already-deleted volumes.
+        if still_pending:
+            self._tag_leftover_volumes_on_request(client, request_id, still_pending)
+        elif leftover_volumes:
+            self._clear_leftover_volumes_tag(client, request_id)
 
         # Count the cancelled request only when this run did real work (first
         # cancel, a terminate, or a leftover volume delete) — avoids re-reporting
         # already-finished retries in Slack/Influx.
         if not already_cancelled:
             return
-        if deleted_any_volume or (
-            instance_id in self.instance_ids_to_delete
-        ):
+        if deleted_any_volume or (instance_id in self.instance_ids_to_delete):
             self.spot_requests_to_delete.append(request_id)
 
     def delete(self) -> None:

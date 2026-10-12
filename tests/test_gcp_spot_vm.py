@@ -108,7 +108,9 @@ class GcpNonAutodeleteDiskTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual(s._non_autodelete_disks(inst), ["keep-me"])
+        refs = s._non_autodelete_disks(inst)
+        self.assertEqual([r["name"] for r in refs], ["keep-me"])
+        self.assertEqual(refs[0]["scope"], "zone")
 
     def test_disk_name_from_source(self):
         s = _gcp_spot()
@@ -118,12 +120,34 @@ class GcpNonAutodeleteDiskTests(unittest.TestCase):
         )
         self.assertIsNone(s._disk_name_from_source(None))
 
+    def test_disk_ref_parses_regional(self):
+        s = _gcp_spot()
+        ref = s._disk_ref_from_source("projects/p/regions/us-central1/disks/rd1")
+        self.assertEqual(
+            ref,
+            {
+                "project": "p",
+                "scope": "region",
+                "location": "us-central1",
+                "name": "rd1",
+            },
+        )
+
     def test_dry_run_delete_disk_records_without_api(self):
         s = _gcp_spot(dry_run=True)
         service = mock.MagicMock()
-        s._delete_disk(service, "us-central1-a", "keep-me")
+        s._delete_disk(
+            service,
+            {
+                "project": "proj",
+                "scope": "zone",
+                "location": "us-central1-a",
+                "name": "keep-me",
+            },
+            "us-central1-a",
+        )
         service.disks.assert_not_called()
-        self.assertEqual(s.disks_to_delete, ["us-central1-a/keep-me"])
+        self.assertEqual(s.disks_to_delete, ["proj/us-central1-a/keep-me"])
 
 
 class GcpDeleteOrderTests(unittest.TestCase):
@@ -172,7 +196,7 @@ class GcpDeleteOrderTests(unittest.TestCase):
 
         self.assertEqual(call_order, ["instance", "disk"])
         zone_ops.get.assert_called()
-        self.assertEqual(s.disks_to_delete, ["us-central1-a/keep-me"])
+        self.assertEqual(s.disks_to_delete, ["p/z/keep-me"])
 
 
 if __name__ == "__main__":

@@ -94,7 +94,7 @@ class AzureDetachedDiskTests(unittest.TestCase):
             s._disk_ref_from_id(
                 "/subscriptions/x/resourceGroups/other-rg/providers/Microsoft.Compute/disks/vol-a"
             ),
-            ("other-rg", "vol-a"),
+            ("other-rg", "vol-a", True),
         )
 
 
@@ -110,8 +110,8 @@ class AzureDeleteOrderTests(unittest.TestCase):
         def track_vm_delete(*args, **kwargs):
             call_order.append("vm")
 
-        def track_disk(resource_group, disk_name):
-            call_order.append(("disk", resource_group, disk_name))
+        def track_disk(resource_group, disk_name, rg_from_id=False):
+            call_order.append(("disk", resource_group, disk_name, rg_from_id))
             s.disks_names_to_delete.append(f"{resource_group}/{disk_name}")
 
         with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait", side_effect=track_vm_delete), mock.patch(
@@ -119,7 +119,7 @@ class AzureDeleteOrderTests(unittest.TestCase):
         ), mock.patch.object(s, "_delete_disk", side_effect=track_disk):
             s._delete_vm(vm)
 
-        self.assertEqual(call_order, ["vm", ("disk", "rg", "os-detach")])
+        self.assertEqual(call_order, ["vm", ("disk", "rg", "os-detach", False)])
         self.assertEqual(s.instance_names_to_delete, ["spot-1"])
 
     def test_dry_run_records_leftover_disks_without_deleting_vm(self):

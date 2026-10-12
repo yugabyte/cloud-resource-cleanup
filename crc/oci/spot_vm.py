@@ -19,8 +19,11 @@ class SpotVM(Service, Base):
 
     OCI has no separate spot-request object — terminate_instance is the cancel.
     Boot volume is deleted with the instance by default (preserve_boot_volume=False).
-    Attached block volumes that are not deleted with the instance are detached
-    and deleted afterwards (same idea as AWS DeleteOnTermination=false).
+    Attached block volumes are deleted after terminate: the module waits for
+    instance TERMINATED (which detaches them) then calls delete_volume. It does
+    not call detach_volume itself. If the TERMINATED wait times out, delete_volume
+    is still attempted and may fail while the volume remains attached; those
+    leftovers are not rediscovered on later runs (instance is TERMINATED).
     """
 
     default_instance_state = ["RUNNING", "STOPPED"]

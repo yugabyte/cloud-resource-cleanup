@@ -128,25 +128,28 @@ class SpotVM(Service):
         self, disk_id: Optional[str], fallback_name: Optional[str] = None
     ) -> Optional[tuple]:
         """
-        Return (resource_group, disk_name) from a managed disk ARM id.
-        Falls back to the VM resource group when the id has no RG segment.
+        Return (resource_group, disk_name, rg_from_id) from a managed disk ARM id.
+        ``rg_from_id`` is True only when the RG was parsed from the id (not a
+        fallback to the VM resource group).
         """
         name = self._disk_name_from_id(disk_id) or fallback_name
         if not name:
             return None
         rg = self.base.resource_group
+        rg_from_id = False
         if disk_id:
             parts = disk_id.strip("/").split("/")
             for i, part in enumerate(parts):
                 if part.lower() == "resourcegroups" and i + 1 < len(parts):
                     rg = parts[i + 1]
+                    rg_from_id = True
                     break
-        return rg, name
+        return rg, name, rg_from_id
 
     def _detached_disk_refs(self, vm) -> List[tuple]:
         """
         Disks that will survive VM delete (delete_option=Detach / not Delete).
-        Each entry is (resource_group, disk_name).
+        Each entry is (resource_group, disk_name, rg_from_id).
         """
         refs = []
         profile = getattr(vm, "storage_profile", None)
@@ -189,9 +192,11 @@ class SpotVM(Service):
 
     # Back-compat alias used by unit tests
     def _detached_disk_names(self, vm) -> List[str]:
-        return [name for _, name in self._detached_disk_refs(vm)]
+        return [name for _, name, _ in self._detached_disk_refs(vm)]
 
-    def _delete_disk(self, resource_group: str, disk_name: str) -> None:
+    def _delete_disk(
+        self, resource_group: str, disk_name: str, rg_from_id: bool = False
+    ) -> None:
         label = f"{resource_group}/{disk_name}"
         if self.dry_run:
             self.disks_names_to_delete.append(label)
@@ -204,13 +209,26 @@ class SpotVM(Service):
             logging.info("Deleted leftover Spot VM disk %s", label)
             self.disks_names_to_delete.append(label)
         except ResourceNotFoundError:
-            # Only treat as gone when we targeted the RG from the disk id.
-            logging.info("Disk %s already removed", label)
-            self.disks_names_to_delete.append(label)
-        except HttpResponseError as e:
-            if getattr(e, "status_code", None) == 404:
+            if rg_from_id:
                 logging.info("Disk %s already removed", label)
                 self.disks_names_to_delete.append(label)
+            else:
+                logging.error(
+                    "Disk %s not found (RG was not taken from disk id; "
+                    "not counting as deleted)",
+                    label,
+                )
+        except HttpResponseError as e:
+            if getattr(e, "status_code", None) == 404:
+                if rg_from_id:
+                    logging.info("Disk %s already removed", label)
+                    self.disks_names_to_delete.append(label)
+                else:
+                    logging.error(
+                        "Disk %s not found (RG was not taken from disk id; "
+                        "not counting as deleted)",
+                        label,
+                    )
                 return
             logging.error("Failed to delete disk %s: %s", label, e)
         except Exception as e:
@@ -233,8 +251,8 @@ class SpotVM(Service):
                 raise
         self.instance_names_to_delete.append(vm_name)
 
-        for resource_group, disk_name in leftover_disks:
-            self._delete_disk(resource_group, disk_name)
+        for resource_group, disk_name, rg_from_id in leftover_disks:
+            self._delete_disk(resource_group, disk_name, rg_from_id)
 
         delete_vm_primary_nic(
             self.base.get_network_client(),

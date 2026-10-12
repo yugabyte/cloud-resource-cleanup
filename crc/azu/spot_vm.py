@@ -23,8 +23,9 @@ class SpotVM(Service):
     Deletes Azure Spot VMs that are in stopped or deallocated state.
 
     Azure has no separate "spot request" object — deleting the VM is the cancel.
-    Disks whose delete_option is Detach (not Delete) are removed after the VM
-    so they are not left orphaned (same idea as AWS DeleteOnTermination=false).
+    Disks whose delete_option is Detach, or unset (Azure's Detach default), are
+    removed after the VM so they are not left orphaned (same idea as AWS
+    DeleteOnTermination=false). Explicit Delete is left to Azure.
     """
 
     def __init__(
@@ -162,7 +163,9 @@ class SpotVM(Service):
             managed = getattr(os_disk, "managed_disk", None)
             disk_id = getattr(managed, "id", None) if managed else None
             ref = self._disk_ref_from_id(disk_id, getattr(os_disk, "name", None))
-            if ref and delete_option not in ("", "delete"):
+            # Empty/unset delete_option defaults to Detach in Azure (except
+            # ephemeral OS disks) — those disks survive VM delete and must go.
+            if ref and delete_option != "delete":
                 refs.append(ref)
                 logging.info(
                     "Spot VM %s OS disk %s/%s has delete_option=%s "
@@ -170,7 +173,7 @@ class SpotVM(Service):
                     vm.name,
                     ref[0],
                     ref[1],
-                    delete_option or "unset",
+                    delete_option or "Detach(default)",
                 )
 
         for data_disk in getattr(profile, "data_disks", None) or []:
@@ -178,7 +181,7 @@ class SpotVM(Service):
             managed = getattr(data_disk, "managed_disk", None)
             disk_id = getattr(managed, "id", None) if managed else None
             ref = self._disk_ref_from_id(disk_id, getattr(data_disk, "name", None))
-            if ref and delete_option not in ("", "delete"):
+            if ref and delete_option != "delete":
                 refs.append(ref)
                 logging.info(
                     "Spot VM %s data disk %s/%s has delete_option=%s "
@@ -186,7 +189,7 @@ class SpotVM(Service):
                     vm.name,
                     ref[0],
                     ref[1],
-                    delete_option or "unset",
+                    delete_option or "Detach(default)",
                 )
         return refs
 

@@ -65,7 +65,6 @@ class SpotFilterTests(unittest.TestCase):
         self.assertEqual(matches[0][1], "i-untagged")
         self.assertEqual(matches[0][2], "persistent")
         self.assertEqual(matches[0][3], False)
-        self.assertTrue(matches[0][4])  # tags present
 
     def test_includes_persistent_and_one_time(self):
         s = _spot()
@@ -164,9 +163,13 @@ class SpotCleanupOrderTests(unittest.TestCase):
         def track_delete_volume(**kwargs):
             call_order.append(("delete_volume", kwargs["VolumeId"]))
 
+        def track_create_tags(**kwargs):
+            call_order.append(("create_tags", kwargs["Resources"], kwargs["Tags"]))
+
         client.cancel_spot_instance_requests.side_effect = track_cancel
         client.terminate_instances.side_effect = track_terminate
         client.delete_volume.side_effect = track_delete_volume
+        client.create_tags.side_effect = track_create_tags
 
         with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
             s._cleanup_one(client, "us-west-2", "sir-1", "i-1", "persistent")
@@ -175,6 +178,11 @@ class SpotCleanupOrderTests(unittest.TestCase):
             call_order,
             [
                 ("cancel", ["sir-1"]),
+                (
+                    "create_tags",
+                    ["vol-keep"],
+                    [{"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-1"}],
+                ),
                 ("terminate", ["i-1"]),
                 ("delete_volume", "vol-keep"),
             ],
@@ -292,7 +300,6 @@ class SpotCleanupOrderTests(unittest.TestCase):
             "i-1",
             "one-time",
             already_cancelled=True,
-            request_tags=[{"Key": "yb_owner", "Value": "qa"}],
         )
         client.terminate_instances.assert_not_called()
         client.delete_volume.assert_not_called()
@@ -302,8 +309,20 @@ class SpotCleanupOrderTests(unittest.TestCase):
     def test_retry_uses_tagged_leftover_volumes(self):
         s = _spot(dry_run=False)
         client = mock.MagicMock()
-        # Instance gone — BDM empty / not found path via empty reservations
+        # Instance gone — BDM empty; rediscover via crc_leftover_of on the volume
         client.describe_instances.return_value = {"Reservations": []}
+        page = {
+            "Volumes": [
+                {
+                    "VolumeId": "vol-keep",
+                    "State": "available",
+                    "Tags": [{"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-1"}],
+                }
+            ]
+        }
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [page]
+        client.get_paginator.return_value = paginator
         client.describe_volumes.return_value = {
             "Volumes": [{"State": "available", "VolumeId": "vol-keep"}]
         }
@@ -315,22 +334,20 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 "i-1",
                 "one-time",
                 already_cancelled=True,
-                request_tags=[
-                    {"Key": "yb_owner", "Value": "qa"},
-                    {"Key": s.LEFTOVER_VOLUMES_TAG, "Value": "vol-keep"},
-                ],
             )
         client.terminate_instances.assert_not_called()
         client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
         self.assertEqual(s.volumes_to_delete, ["vol-keep"])
         self.assertEqual(s.spot_requests_to_delete, ["sir-1"])
-        client.delete_tags.assert_called()
 
     def test_retry_already_gone_volume_not_recounted(self):
         s = _spot(dry_run=False)
         client = mock.MagicMock()
         client.describe_instances.return_value = {"Reservations": []}
-        client.describe_volumes.return_value = {"Volumes": []}
+        # No volumes still carry crc_leftover_of — prior run finished cleanup
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [{"Volumes": []}]
+        client.get_paginator.return_value = paginator
         with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
             s._cleanup_one(
                 client,
@@ -339,15 +356,60 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 "i-1",
                 "one-time",
                 already_cancelled=True,
-                request_tags=[
-                    {"Key": "yb_owner", "Value": "qa"},
-                    {"Key": s.LEFTOVER_VOLUMES_TAG, "Value": "vol-keep"},
-                ],
             )
         client.delete_volume.assert_not_called()
         self.assertEqual(s.volumes_to_delete, [])
         self.assertEqual(s.spot_requests_to_delete, [])
-        client.delete_tags.assert_called()
+
+    def test_failed_volume_tag_does_not_terminate(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "running"},
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-keep",
+                                        "DeleteOnTermination": False,
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.create_tags.side_effect = ClientError(
+            {"Error": {"Code": "UnauthorizedOperation", "Message": "nope"}},
+            "CreateTags",
+        )
+        s._cleanup_one(client, "us-west-2", "sir-1", "i-1", "persistent")
+        client.cancel_spot_instance_requests.assert_called_once()
+        client.terminate_instances.assert_not_called()
+        client.delete_volume.assert_not_called()
+
+    def test_sweep_tagged_leftover_volumes(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        page = {
+            "Volumes": [
+                {"VolumeId": "vol-orphan", "State": "available"},
+            ]
+        }
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [page]
+        client.get_paginator.return_value = paginator
+        client.describe_volumes.return_value = {
+            "Volumes": [{"State": "available", "VolumeId": "vol-orphan"}]
+        }
+        with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
+            s._sweep_tagged_leftover_volumes(client, "us-west-2")
+        client.delete_volume.assert_called_once_with(VolumeId="vol-orphan")
+        self.assertEqual(s.volumes_to_delete, ["vol-orphan"])
 
     def test_abort_when_describe_instances_fails(self):
         s = _spot(dry_run=False)

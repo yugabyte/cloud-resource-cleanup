@@ -128,12 +128,11 @@ facts change.
   cancelled but failed later steps, **and** also cleans hand-cancelled
   requests whose instance AWS left running. Untagged cancelled requests stay
   skipped.
-- Leftover volume IDs are tagged on the spot request (`crc_leftover_ebs`)
-  before terminate so a later retry can still delete them after
-  BlockDeviceMappings are gone. The tag is cleared when volumes are gone; if
-  `delete_tags` fails, a later run sees `already_gone` and does not re-count
-  deletions. Already terminated instances with no leftover volumes are
-  skipped (not re-reported).
+- Before terminate, each `DeleteOnTermination=false` volume is tagged
+  `crc_leftover_of=<spot-request-id>`. Later runs rediscover those volumes via
+  `describe_volumes` (per-request and a region sweep), so orphans are still
+  found after AWS drops the spot request (~4h). Already terminated instances
+  with no leftover volumes are skipped (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 - GCP/OCI `--resource spot_instances` require explicit `--cloud gcp` /
   `--cloud oci`. Under `--cloud all`, only Azure spot_instances runs.
@@ -146,7 +145,7 @@ facts change.
 
 | Cloud | “Won’t auto-delete” signal | Cleanup |
 |-------|----------------------------|---------|
-| Azure Spot | `delete_option` is Detach (not Delete) | Delete managed disk after `begin_delete_vm_and_wait` |
+| Azure Spot | `delete_option` is Detach or unset (Azure default) | Delete managed disk after `begin_delete_vm_and_wait` |
 | GCP Spot / preemptible | `autoDelete=false` | Wait for instance-delete zone op, then delete disk (zonal or regional) |
 | OCI preemptible | Attached block volume | Wait for instance `TERMINATED` (best-effort), then delete volume |
 
@@ -158,8 +157,8 @@ empty filter still needs the age gate. GCP/OCI paths are opt-in via explicit
 
 **Gap:** if the GCP instance-delete wait or OCI TERMINATED wait times out,
 leftover disk/volume deletes are skipped (GCP) or may fail while still attached
-(OCI). Unlike AWS (`crc_leftover_ebs` tag), those IDs are not persisted, so a
-later run will not rediscover them after the instance is gone.
+(OCI). Unlike AWS (`crc_leftover_of` on the volume), those IDs are not
+persisted, so a later run will not rediscover them after the instance is gone.
 
 ---
 

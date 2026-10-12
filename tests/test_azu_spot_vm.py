@@ -60,13 +60,14 @@ class AzureDetachedDiskTests(unittest.TestCase):
         )
         self.assertEqual(s._detached_disk_names(vm), ["os-disk", "data-1"])
 
-    def test_delete_option_skips_empty_and_delete(self):
+    def test_delete_option_empty_is_detach_default(self):
         s = _azu_spot()
         vm = _vm(
             os_disk=_disk(name="os", delete_option=""),
             data_disks=[_disk(name="d1", delete_option="Delete")],
         )
-        self.assertEqual(s._detached_disk_names(vm), [])
+        # Empty/unset => Azure Detach default; only explicit Delete is skipped.
+        self.assertEqual(s._detached_disk_names(vm), ["os"])
 
     def test_disk_name_from_managed_id(self):
         s = _azu_spot()

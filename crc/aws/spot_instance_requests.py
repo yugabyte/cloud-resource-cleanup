@@ -34,7 +34,7 @@ class SpotInstanceRequests(Service):
     service_name = "ec2"
     default_region_name = "us-west-2"
     # How long to wait for a volume to leave 'in-use' after terminate.
-    VOLUME_AVAILABLE_WAIT_SEC = 120
+    VOLUME_AVAILABLE_WAIT_SEC = 180
     VOLUME_POLL_INTERVAL_SEC = 5
 
     def __init__(
@@ -53,21 +53,18 @@ class SpotInstanceRequests(Service):
         self.dry_run = dry_run
         self.filter_tags = filter_tags or {}
         self.exception_tags = exception_tags or {}
-        self.age = age or {}
+        self.age = self.require_positive_age(age)
         self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags or {}
 
     @property
     def get_deleted(self):
-        return (
-            self.spot_requests_to_delete
-            + self.instance_ids_to_delete
-            + self.volumes_to_delete
-        )
+        # Requests + instances only; leftover EBS reported via volumes_to_delete.
+        return self.spot_requests_to_delete + self.instance_ids_to_delete
 
     @property
     def delete_count(self):
-        count = len(self.get_deleted)
+        count = len(self.get_deleted) + len(self.volumes_to_delete)
         logging.info(
             "count of spot requests+instances+leftover volumes to delete: %s", count
         )
@@ -83,28 +80,34 @@ class SpotInstanceRequests(Service):
 
     def _get_filtered_requests(
         self, spot_request_details: dict
-    ) -> List[Tuple[str, Optional[str], str]]:
+    ) -> List[Tuple[str, Optional[str], str, bool]]:
         """
-        Returns list of (request_id, instance_id|None, type) for matching requests.
+        Returns list of (request_id, instance_id|None, type, already_cancelled).
         Type is one-time or persistent (AWS SpotInstanceRequests.Type).
+
+        Cancelled requests with an InstanceId are kept so a prior run that
+        cancelled but failed terminate / leftover-volume delete can finish.
         """
         matches = []
         for request in spot_request_details.get("SpotInstanceRequests", []):
             try:
                 tags = request.get("Tags") or []
-                # Untagged requests cannot match filter_tags / exception / notags
-                # semantics used by Jenkins; skip unless no tag filters at all.
-                if not tags and (self.filter_tags or self.exception_tags or self.notags):
+                # Untagged requests are never cleaned (fail-closed), same as the
+                # original module guard — Jenkins always tags spot requests.
+                if not tags:
                     continue
-                if request.get("State") == "cancelled":
+
+                already_cancelled = request.get("State") == "cancelled"
+                instance_id = request.get("InstanceId") or None
+                if already_cancelled and not instance_id:
                     continue
+
                 if self._should_skip_spot_request(tags):
                     continue
                 if self.filter_tags and not self._matches_filter_tags(tags):
                     continue
 
                 request_id = request["SpotInstanceRequestId"]
-                instance_id = request.get("InstanceId") or None
                 create_time = request["CreateTime"]
                 request_type = (request.get("Type") or "one-time").lower()
 
@@ -121,11 +124,14 @@ class SpotInstanceRequests(Service):
                 ):
                     continue
 
-                matches.append((request_id, instance_id, request_type))
+                matches.append(
+                    (request_id, instance_id, request_type, already_cancelled)
+                )
                 logging.info(
-                    "Spot request %s (type=%s) instance=%s queued for cleanup",
+                    "Spot request %s (type=%s, cancelled=%s) instance=%s queued",
                     request_id,
                     request_type,
+                    already_cancelled,
                     instance_id or "none",
                 )
             except Exception as e:
@@ -244,10 +250,14 @@ class SpotInstanceRequests(Service):
         request_id: str,
         instance_id: Optional[str],
         request_type: str,
+        already_cancelled: bool = False,
     ) -> None:
         """
         Cancel the spot request first, then terminate its instance, then delete
         any volumes left behind by DeleteOnTermination=false.
+
+        When ``already_cancelled`` is True (retry after a prior cancel), skip
+        cancel and finish terminate + leftover volume deletes.
         """
         leftover_volumes: List[str] = []
         if instance_id:
@@ -261,8 +271,9 @@ class SpotInstanceRequests(Service):
                 self.instance_ids_to_delete.append(instance_id)
             self.volumes_to_delete.extend(leftover_volumes)
             logging.info(
-                "Dry run: would cancel spot request %s (type=%s), terminate %s, "
+                "Dry run: would %s spot request %s (type=%s), terminate %s, "
                 "delete leftover volumes %s",
+                "skip-cancel (already cancelled)" if already_cancelled else "cancel",
                 request_id,
                 request_type,
                 instance_id or "none",
@@ -270,24 +281,35 @@ class SpotInstanceRequests(Service):
             )
             return
 
-        try:
-            client.cancel_spot_instance_requests(SpotInstanceRequestIds=[request_id])
-            self.spot_requests_to_delete.append(request_id)
+        if not already_cancelled:
+            try:
+                client.cancel_spot_instance_requests(
+                    SpotInstanceRequestIds=[request_id]
+                )
+                self.spot_requests_to_delete.append(request_id)
+                logging.info(
+                    "Cancelled spot request %s (type=%s) in %s",
+                    request_id,
+                    request_type,
+                    region,
+                )
+            except ClientError as e:
+                logging.error(
+                    "Failed to cancel spot request %s in %s: %s — not terminating "
+                    "its instance (persistent requests would relaunch)",
+                    request_id,
+                    region,
+                    e,
+                )
+                return
+        else:
             logging.info(
-                "Cancelled spot request %s (type=%s) in %s",
-                request_id,
-                request_type,
-                region,
-            )
-        except ClientError as e:
-            logging.error(
-                "Failed to cancel spot request %s in %s: %s — not terminating "
-                "its instance (persistent requests would relaunch)",
+                "Spot request %s already cancelled in %s; finishing "
+                "terminate/leftover volumes",
                 request_id,
                 region,
-                e,
             )
-            return
+            self.spot_requests_to_delete.append(request_id)
 
         if not instance_id:
             return
@@ -301,13 +323,22 @@ class SpotInstanceRequests(Service):
                 request_id,
             )
         except ClientError as e:
-            logging.error(
-                "Failed to terminate instance %s after cancelling %s: %s",
-                instance_id,
-                request_id,
-                e,
+            code = (e.response.get("Error") or {}).get("Code")
+            # Instance already gone — still try leftover volumes below.
+            if code not in {
+                "InvalidInstanceID.NotFound",
+                "InvalidInstanceID.Malformed",
+            }:
+                logging.error(
+                    "Failed to terminate instance %s after cancelling %s: %s",
+                    instance_id,
+                    request_id,
+                    e,
+                )
+                return
+            logging.info(
+                "Instance %s already gone for spot request %s", instance_id, request_id
             )
-            return
 
         for volume_id in leftover_volumes:
             if self._wait_volume_available_then_delete(client, volume_id):
@@ -345,10 +376,15 @@ class SpotInstanceRequests(Service):
                     continue
 
                 matches = self._get_filtered_requests(describe_spot_response)
-                for request_id, instance_id, request_type in matches:
+                for request_id, instance_id, request_type, already_cancelled in matches:
                     try:
                         self._cleanup_one(
-                            client, region, request_id, instance_id, request_type
+                            client,
+                            region,
+                            request_id,
+                            instance_id,
+                            request_type,
+                            already_cancelled=already_cancelled,
                         )
                     except Exception as e:
                         logging.error(

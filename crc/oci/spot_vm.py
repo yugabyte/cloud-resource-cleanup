@@ -44,7 +44,7 @@ class SpotVM(Service, Base):
         self.dry_run = dry_run
         self.filter_tags = filter_tags or {}
         self.exception_tags = exception_tags or {}
-        self.age = age or {}
+        self.age = self.require_positive_age(age)
         self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags or {}
 
@@ -108,8 +108,10 @@ class SpotVM(Service, Base):
 
     def _attached_block_volume_ids(self, compute_client, instance_id: str) -> List[str]:
         """
-        Non-boot block volumes attached to the instance. Boot volume is handled
-        by terminate_instance(preserve_boot_volume=False).
+        Block volumes currently attached to the instance via
+        ``list_volume_attachments`` (boot volumes are not returned by that API).
+        Boot volume deletion is handled by
+        ``terminate_instance(preserve_boot_volume=False)``.
         """
         volume_ids = []
         try:
@@ -125,7 +127,6 @@ class SpotVM(Service, Base):
             return volume_ids
 
         for attachment in attachments:
-            # Skip boot-volume attachments if present in this list
             lifecycle = getattr(attachment, "lifecycle_state", "") or ""
             if lifecycle.upper() in {"DETACHED", "DETACHING"}:
                 continue
@@ -179,7 +180,7 @@ class SpotVM(Service, Base):
 
         logging.error(
             "Timed out waiting for OCI instance %s to reach TERMINATED; "
-            "leftover volumes will not be deleted this run",
+            "will still attempt leftover volume deletes",
             instance_id,
         )
         return False
@@ -241,11 +242,11 @@ class SpotVM(Service, Base):
                             compute_client, instance.id
                         ):
                             logging.error(
-                                "Skipping leftover volume deletes for %s — "
-                                "instance not yet TERMINATED",
+                                "Instance %s not TERMINATED yet; attempting "
+                                "leftover volume deletes anyway (may fail if "
+                                "still attached)",
                                 instance.display_name,
                             )
-                            leftover = []
                     self.instance_names_to_delete.append(instance.display_name)
                     for volume_id in leftover:
                         self._delete_volume(blockstorage_client, volume_id)

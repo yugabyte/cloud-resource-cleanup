@@ -77,11 +77,15 @@ class AzureDetachedDiskTests(unittest.TestCase):
         )
         self.assertIsNone(s._disk_name_from_id(None))
 
-    def test_empty_filter_allows_untagged(self):
+    def test_untagged_always_skipped(self):
         s = _azu_spot(filter_tags={})
         vm = _vm()
         vm.tags = None
-        self.assertTrue(s._should_include_by_tags(vm))
+        self.assertFalse(s._should_include_by_tags(vm))
+
+    def test_requires_positive_age(self):
+        with self.assertRaises(ValueError):
+            _azu_spot(age={})
 
 
 class AzureDeleteOrderTests(unittest.TestCase):

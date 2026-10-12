@@ -45,12 +45,12 @@ def _oci_spot(**kwargs):
 
     s = object.__new__(SpotVM)
     Service.__init__(s)
+    s.age = s.require_positive_age(params["age"])
     s.instance_names_to_delete = []
     s.volumes_to_delete = []
     s.dry_run = params["dry_run"]
     s.filter_tags = params["filter_tags"]
     s.exception_tags = params["exception_tags"]
-    s.age = params["age"]
     s.custom_age_tag_key = params["custom_age_tag_key"]
     s.notags = params["notags"]
     s.compartment_id = "ocid1.compartment.oc1..test"
@@ -131,26 +131,82 @@ class OciLeftoverVolumeTests(unittest.TestCase):
             s._has_matching_filter_tags(_instance(tags={"yb_task": "itest"}))
         )
 
-    def test_wait_for_terminated_before_volume_delete(self):
+
+    def test_requires_positive_age(self):
+        with self.assertRaises(ValueError):
+            _oci_spot(age={})
+
+    def test_delete_terminates_waits_then_deletes_volume(self):
         s = _oci_spot(dry_run=False)
-        s.INSTANCE_TERMINATED_WAIT_SEC = 30
         s.INSTANCE_POLL_INTERVAL_SEC = 0
+        call_order = []
+
         compute = mock.Mock()
         block = mock.Mock()
-        # First poll TERMINATING, then TERMINATED
-        terminating = mock.Mock(lifecycle_state="TERMINATING")
-        terminated = mock.Mock(lifecycle_state="TERMINATED")
-        compute.get_instance.side_effect = [
-            mock.Mock(data=terminating),
-            mock.Mock(data=terminated),
-        ]
-        with mock.patch.object(s, "_wait_instance_terminated", wraps=s._wait_instance_terminated) as waited:
-            self.assertTrue(s._wait_instance_terminated(compute, "ocid1.instance.oc1..test"))
-            waited.assert_called()
-        # Simulate post-wait delete path used by delete()
-        s._delete_volume(block, "vol-keep")
-        block.delete_volume.assert_called_once_with("vol-keep")
-        self.assertEqual(compute.get_instance.call_count, 2)
+
+        def terminate(instance_id, preserve_boot_volume=False):
+            call_order.append("terminate")
+
+        def wait(client, instance_id):
+            call_order.append("wait")
+            return True
+
+        def delete_vol(client, volume_id):
+            call_order.append(("volume", volume_id))
+            s.volumes_to_delete.append(volume_id)
+
+        compute.terminate_instance.side_effect = terminate
+        inst = _instance()
+        with mock.patch.object(s, "get_all_regions", return_value=["us-ashburn-1"]), mock.patch.object(
+            s, "get_compute_client", return_value=compute
+        ), mock.patch.object(
+            s, "get_blockstorage_client", return_value=block
+        ), mock.patch(
+            "crc.oci.spot_vm.oci.pagination.list_call_get_all_results"
+        ) as listed, mock.patch.object(
+            s, "_attached_block_volume_ids", return_value=["vol-keep"]
+        ), mock.patch.object(
+            s, "_wait_instance_terminated", side_effect=wait
+        ), mock.patch.object(
+            s, "_delete_volume", side_effect=delete_vol
+        ):
+            # First call: list_instances; ignore subsequent pagination uses
+            listed.return_value = mock.Mock(data=[inst])
+            s.delete()
+
+        self.assertEqual(
+            call_order, ["terminate", "wait", ("volume", "vol-keep")]
+        )
+        self.assertEqual(s.instance_names_to_delete, ["spot-1"])
+
+    def test_delete_still_tries_volumes_when_wait_fails(self):
+        s = _oci_spot(dry_run=False)
+        compute = mock.Mock()
+        block = mock.Mock()
+        call_order = []
+
+        def terminate(instance_id, preserve_boot_volume=False):
+            call_order.append("terminate")
+
+        compute.terminate_instance.side_effect = terminate
+        inst = _instance()
+        with mock.patch.object(s, "get_all_regions", return_value=["us-ashburn-1"]), mock.patch.object(
+            s, "get_compute_client", return_value=compute
+        ), mock.patch.object(
+            s, "get_blockstorage_client", return_value=block
+        ), mock.patch(
+            "crc.oci.spot_vm.oci.pagination.list_call_get_all_results",
+            return_value=mock.Mock(data=[inst]),
+        ), mock.patch.object(
+            s, "_attached_block_volume_ids", return_value=["vol-keep"]
+        ), mock.patch.object(
+            s, "_wait_instance_terminated", return_value=False
+        ), mock.patch.object(
+            s, "_delete_volume", side_effect=lambda c, v: call_order.append(("volume", v))
+        ):
+            s.delete()
+
+        self.assertEqual(call_order, ["terminate", ("volume", "vol-keep")])
 
 
 if __name__ == "__main__":

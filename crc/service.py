@@ -19,6 +19,7 @@ class Service:
     logs_dir = "logs"
     # File name of the log file
     logs_file = "crc.log"
+    AGE_KEYS = frozenset({"days", "hours"})
 
     def __init__(self) -> None:
         """
@@ -26,6 +27,44 @@ class Service:
         """
         log_filename = os.path.join(self.logs_dir, self.logs_file)
         init_logging(log_filename)
+
+    def require_positive_age(
+        self, age: Optional[Union[Dict[str, int], int]], label: str = "age"
+    ) -> Dict[str, int]:
+        """
+        Require a non-empty, >0 age gate. ``is_old({})`` returns True, so
+        destructive modules must reject missing/zero ages in ``__init__``.
+        """
+        if not age:
+            raise ValueError(
+                "%s is required and must be greater than zero "
+                "(empty age matches every resource)" % label
+            )
+        if isinstance(age, int):
+            age = {"days": age}
+        if not isinstance(age, dict):
+            raise ValueError("%s must be an int or dict of days/hours" % label)
+        extra = set(age) - self.AGE_KEYS
+        if extra:
+            raise ValueError(
+                "%s has unsupported keys %s; use days and/or hours"
+                % (label, sorted(extra))
+            )
+        if not (set(age) & self.AGE_KEYS):
+            raise ValueError("%s must include days and/or hours" % label)
+        normalized: Dict[str, int] = {}
+        for key, value in age.items():
+            try:
+                number = int(value)
+            except (TypeError, ValueError) as e:
+                raise ValueError("%s %s must be an integer" % (label, key)) from e
+            if number < 0:
+                raise ValueError("%s %s cannot be negative" % (label, key))
+            normalized[key] = number
+        total_hours = normalized.get("days", 0) * 24 + normalized.get("hours", 0)
+        if total_hours <= 0:
+            raise ValueError("%s must be greater than zero" % label)
+        return normalized
 
     def get_min_age(self, dict1, dict2):
         """

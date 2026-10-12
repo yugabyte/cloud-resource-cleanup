@@ -45,7 +45,7 @@ class SpotVM(Service):
         self.dry_run = dry_run
         self.filter_tags = filter_tags
         self.exception_tags = exception_tags
-        self.age = age
+        self.age = self.require_positive_age(age)
         self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags
 
@@ -106,14 +106,16 @@ class SpotVM(Service):
 
     def _should_include_by_tags(self, vm) -> bool:
         """
-        Match filter_tags. Empty filter means any VM is eligible (including
-        untagged), same as crc.azu.vm.VM.
+        Match filter_tags. Untagged VMs are never deleted (same as
+        ``crc.azu.vm.VM``). Empty filter_tags means any *tagged* Spot VM may
+        match subject to age / exception / notags.
         """
+        if not vm.tags:
+            return False
         if not self.filter_tags:
             return True
-        tags = vm.tags or {}
         return all(
-            key in tags and (not value or tags[key] in value)
+            key in vm.tags and (not value or vm.tags[key] in value)
             for key, value in self.filter_tags.items()
         )
 

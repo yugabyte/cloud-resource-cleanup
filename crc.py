@@ -678,8 +678,8 @@ class CRC:
             self.notify_deleted_spot_request_via_slack(spot_instance_requests)
 
         if self.influxdb_client:
-            # report this on VMS as well
             self.write_influxdb(VMS, spot_instance_requests.get_deleted)
+            self.write_influxdb(DISKS, spot_instance_requests.volumes_to_delete)
 
     def stop_vm(
         self,
@@ -1562,13 +1562,11 @@ def main():
                         "(cancel request before terminate). Skipping spot_instances."
                     )
                     continue
-                try:
-                    crc.delete_spot_instances(
-                        filter_tags, exception_tags, age, custom_age_tag_key
-                    )
-                except ValueError as e:
-                    logging.warning("%s", e)
-                    continue
+                # Fail closed: missing --resource_group / --project_id / --age
+                # must raise (do not continue into other clouds under --cloud all).
+                crc.delete_spot_instances(
+                    filter_tags, exception_tags, age, custom_age_tag_key
+                )
             elif resource == "snapshot":
                 snapshot = Snapshot(
                     dry_run=dry_run,

@@ -1,6 +1,7 @@
 # Copyright (c) Yugabyte, Inc.
 
 import logging
+import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -15,14 +16,16 @@ class SpotVM(Service):
     Delete GCP Spot / preemptible VMs that match tag and age filters.
 
     GCP has no separate spot-request object — deleting the instance is the
-    cancel. Disks with autoDelete=false are deleted afterwards so they are not
-    left behind (same idea as AWS DeleteOnTermination=false).
+    cancel. Disks with autoDelete=false are deleted after the instance-delete
+    zone operation completes (same idea as AWS DeleteOnTermination=false).
     """
 
     service_name = "compute"
     service_version = "v1"
     default_instance_state = ["RUNNING", "TERMINATED", "SUSPENDED"]
     time_format = "%Y-%m-%dT%H:%M:%S.%f%z"
+    INSTANCE_DELETE_WAIT_SEC = 180
+    INSTANCE_POLL_INTERVAL_SEC = 5
 
     def __init__(
         self,
@@ -41,7 +44,7 @@ class SpotVM(Service):
         self.project_id = project_id
         self.filter_labels = filter_labels or {}
         self.exception_labels = exception_labels or {}
-        self.age = age or {}
+        self.age = self.require_positive_age(age)
         self.custom_age_tag_key = custom_age_tag_key
         self.notags = notags or {}
 
@@ -127,6 +130,51 @@ class SpotVM(Service):
                 )
         return names
 
+    def _wait_zone_operation(self, service, zone: str, operation_name: str) -> bool:
+        """Wait until a zonal operation reaches DONE (instance delete)."""
+        deadline = time.time() + self.INSTANCE_DELETE_WAIT_SEC
+        while time.time() < deadline:
+            try:
+                op = (
+                    service.zoneOperations()
+                    .get(
+                        project=self.project_id,
+                        zone=zone,
+                        operation=operation_name,
+                    )
+                    .execute()
+                )
+            except Exception as e:
+                logging.error(
+                    "Error polling GCP zone operation %s/%s: %s",
+                    zone,
+                    operation_name,
+                    e,
+                )
+                return False
+            status = op.get("status")
+            if status == "DONE":
+                if op.get("error"):
+                    logging.error(
+                        "GCP zone operation %s/%s failed: %s",
+                        zone,
+                        operation_name,
+                        op.get("error"),
+                    )
+                    return False
+                return True
+            logging.info(
+                "Waiting for GCP zone operation %s/%s (status=%s)",
+                zone,
+                operation_name,
+                status,
+            )
+            time.sleep(self.INSTANCE_POLL_INTERVAL_SEC)
+        logging.error(
+            "Timed out waiting for GCP zone operation %s/%s", zone, operation_name
+        )
+        return False
+
     def _delete_disk(self, service, zone: str, disk_name: str) -> None:
         if self.dry_run:
             self.disks_to_delete.append(f"{zone}/{disk_name}")
@@ -168,12 +216,26 @@ class SpotVM(Service):
                     leftover = self._non_autodelete_disks(instance)
                     try:
                         if not self.dry_run:
-                            service.instances().delete(
-                                project=self.project_id,
-                                zone=zone,
-                                instance=instance.name,
-                            ).execute()
+                            op = (
+                                service.instances()
+                                .delete(
+                                    project=self.project_id,
+                                    zone=zone,
+                                    instance=instance.name,
+                                )
+                                .execute()
+                            )
                             logging.info("Deleting GCP Spot VM %s", instance.name)
+                            op_name = op.get("name")
+                            if leftover and op_name:
+                                if not self._wait_zone_operation(
+                                    service, zone, op_name
+                                ):
+                                    logging.error(
+                                        "Instance delete wait failed for %s; "
+                                        "still attempting leftover disk deletes",
+                                        instance.name,
+                                    )
                         self.instance_names_to_delete.append(instance.name)
                         for disk_name in leftover:
                             self._delete_disk(service, zone, disk_name)

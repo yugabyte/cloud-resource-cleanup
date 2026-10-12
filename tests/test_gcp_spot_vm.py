@@ -79,6 +79,10 @@ class GcpSpotDetectTests(unittest.TestCase):
         inst = _instance(labels={})
         self.assertTrue(s._has_matching_filter_label(inst))
 
+    def test_requires_positive_age(self):
+        with self.assertRaises(ValueError):
+            _gcp_spot(age={})
+
 
 class GcpNonAutodeleteDiskTests(unittest.TestCase):
     def test_collects_auto_delete_false_only(self):
@@ -110,6 +114,55 @@ class GcpNonAutodeleteDiskTests(unittest.TestCase):
         service = mock.MagicMock()
         s._delete_disk(service, "us-central1-a", "keep-me")
         service.disks.assert_not_called()
+        self.assertEqual(s.disks_to_delete, ["us-central1-a/keep-me"])
+
+
+class GcpDeleteOrderTests(unittest.TestCase):
+    def test_delete_waits_for_zone_op_before_disk(self):
+        s = _gcp_spot(dry_run=False)
+        s.INSTANCE_POLL_INTERVAL_SEC = 0
+        call_order = []
+
+        zone_ops = mock.MagicMock()
+        zone_ops.get.return_value.execute.return_value = {"status": "DONE"}
+
+        disks = mock.MagicMock()
+        def disk_delete(**kwargs):
+            call_order.append("disk")
+            return mock.Mock(execute=mock.Mock(return_value={}))
+        disks.delete.side_effect = disk_delete
+
+        instances_api = mock.MagicMock()
+        def inst_delete(**kwargs):
+            call_order.append("instance")
+            return mock.Mock(
+                execute=mock.Mock(return_value={"name": "op-1"})
+            )
+        instances_api.delete.side_effect = inst_delete
+
+        service = mock.MagicMock()
+        service.zones.return_value.list.return_value.execute.return_value = {
+            "items": [{"name": "us-central1-a"}]
+        }
+        service.instances.return_value = instances_api
+        service.disks.return_value = disks
+        service.zoneOperations.return_value = zone_ops
+
+        inst = _instance(
+            scheduling=_scheduling(preemptible=True),
+            disks=[_disk("projects/p/zones/z/disks/keep-me", auto_delete=False)],
+        )
+
+        with mock.patch("crc.gcp.spot_vm.discovery.build") as build, mock.patch(
+            "crc.gcp.spot_vm.compute_v1.InstancesClient"
+        ) as client_cls:
+            build.return_value.__enter__.return_value = service
+            build.return_value.__exit__.return_value = False
+            client_cls.return_value.list.return_value = [inst]
+            s.delete()
+
+        self.assertEqual(call_order, ["instance", "disk"])
+        zone_ops.get.assert_called()
         self.assertEqual(s.disks_to_delete, ["us-central1-a/keep-me"])
 
 

@@ -11,19 +11,19 @@ from crc.aws.spot_instance_requests import SpotInstanceRequests
 
 def _spot(
     dry_run=True,
-    filter_tags=None,
+    filter_tags={"yb_owner": ["qa"]},
     exception_tags=None,
-    age=None,
+    age={"days": 1},
     custom_age_tag_key=None,
     notags=None,
 ):
     return SpotInstanceRequests(
         dry_run=dry_run,
-        filter_tags=filter_tags or {"yb_owner": ["qa"]},
-        exception_tags=exception_tags or {},
-        age=age or {"days": 1},
+        filter_tags=filter_tags,
+        exception_tags={} if exception_tags is None else exception_tags,
+        age=age,
         custom_age_tag_key=custom_age_tag_key,
-        notags=notags or {},
+        notags={} if notags is None else notags,
     )
 
 
@@ -42,12 +42,15 @@ def _request(
         "Type": request_type,
         "State": state,
         "CreateTime": now - datetime.timedelta(days=days_old),
-        "Tags": tags
-        or [
-            {"Key": "yb_owner", "Value": "qa"},
-            {"Key": "yb_yba_url", "Value": "https://example"},
-            {"Key": "universe-uuid", "Value": "u-1"},
-        ],
+        "Tags": (
+            [
+                {"Key": "yb_owner", "Value": "qa"},
+                {"Key": "yb_yba_url", "Value": "https://example"},
+                {"Key": "universe-uuid", "Value": "u-1"},
+            ]
+            if tags is None
+            else tags
+        ),
     }
 
 
@@ -61,6 +64,7 @@ class SpotFilterTests(unittest.TestCase):
         self.assertEqual(matches[0][0], "sir-1")
         self.assertEqual(matches[0][1], "i-untagged")
         self.assertEqual(matches[0][2], "persistent")
+        self.assertEqual(matches[0][3], False)
 
     def test_includes_persistent_and_one_time(self):
         s = _spot()
@@ -75,12 +79,37 @@ class SpotFilterTests(unittest.TestCase):
         types = {m[2] for m in matches}
         self.assertEqual(types, {"persistent", "one-time"})
 
-    def test_skips_cancelled(self):
+    def test_skips_cancelled_without_instance(self):
         s = _spot()
         matches = s._get_filtered_requests(
-            {"SpotInstanceRequests": [_request(state="cancelled")]}
+            {
+                "SpotInstanceRequests": [
+                    _request(state="cancelled", instance_id=None)
+                ]
+            }
         )
         self.assertEqual(matches, [])
+
+    def test_retries_cancelled_with_instance(self):
+        s = _spot()
+        matches = s._get_filtered_requests(
+            {"SpotInstanceRequests": [_request(state="cancelled", instance_id="i-1")]}
+        )
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0][3], True)
+
+    def test_skips_untagged_even_without_filters(self):
+        s = _spot(filter_tags={})
+        matches = s._get_filtered_requests(
+            {"SpotInstanceRequests": [_request(tags=[])]}
+        )
+        self.assertEqual(matches, [])
+
+    def test_requires_positive_age(self):
+        with self.assertRaises(ValueError):
+            _spot(age={})
+        with self.assertRaises(ValueError):
+            _spot(age={"days": 0})
 
     def test_skips_young_requests(self):
         s = _spot(age={"days": 10})
@@ -195,6 +224,44 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.terminate_instances.assert_not_called()
         client.delete_volume.assert_not_called()
         self.assertEqual(s.volumes_to_delete, ["vol-keep"])
+
+
+    def test_already_cancelled_skips_cancel_then_terminates(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-keep",
+                                        "DeleteOnTermination": False,
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_volumes.return_value = {
+            "Volumes": [{"State": "available", "VolumeId": "vol-keep"}]
+        }
+        with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
+            s._cleanup_one(
+                client,
+                "us-west-2",
+                "sir-1",
+                "i-1",
+                "one-time",
+                already_cancelled=True,
+            )
+        client.cancel_spot_instance_requests.assert_not_called()
+        client.terminate_instances.assert_called_once()
+        client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
 
 
 if __name__ == "__main__":

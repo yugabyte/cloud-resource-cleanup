@@ -133,8 +133,18 @@ class OciLeftoverVolumeTests(unittest.TestCase):
 
 
     def test_requires_positive_age(self):
-        with self.assertRaises(ValueError):
-            _oci_spot(age={})
+        from crc.oci.spot_vm import SpotVM
+
+        with mock.patch("crc.oci.spot_vm.Base.__init__", return_value=None):
+            with self.assertRaises(ValueError):
+                SpotVM(
+                    dry_run=True,
+                    filter_tags={"yb_task": ["itest"]},
+                    exception_tags={},
+                    age={},
+                    custom_age_tag_key=None,
+                    notags={},
+                )
 
     def test_delete_terminates_waits_then_deletes_volume(self):
         s = _oci_spot(dry_run=False)

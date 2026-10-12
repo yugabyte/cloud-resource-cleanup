@@ -178,9 +178,15 @@ class SpotVM(Service):
         return refs
 
     def _wait_compute_operation(
-        self, service, scope: str, location: str, operation_name: str
+        self,
+        service,
+        scope: str,
+        location: str,
+        operation_name: str,
+        project: Optional[str] = None,
     ) -> bool:
         """Wait until a zone or region operation reaches DONE."""
+        project = project or self.project_id
         deadline = time.time() + self.INSTANCE_DELETE_WAIT_SEC
         while time.time() < deadline:
             try:
@@ -188,7 +194,7 @@ class SpotVM(Service):
                     op = (
                         service.regionOperations()
                         .get(
-                            project=self.project_id,
+                            project=project,
                             region=location,
                             operation=operation_name,
                         )
@@ -198,7 +204,7 @@ class SpotVM(Service):
                     op = (
                         service.zoneOperations()
                         .get(
-                            project=self.project_id,
+                            project=project,
                             zone=location,
                             operation=operation_name,
                         )
@@ -206,8 +212,9 @@ class SpotVM(Service):
                     )
             except Exception as e:
                 logging.error(
-                    "Error polling GCP %s operation %s/%s: %s",
+                    "Error polling GCP %s operation %s/%s/%s: %s",
                     scope,
+                    project,
                     location,
                     operation_name,
                     e,
@@ -217,8 +224,9 @@ class SpotVM(Service):
             if status == "DONE":
                 if op.get("error"):
                     logging.error(
-                        "GCP %s operation %s/%s failed: %s",
+                        "GCP %s operation %s/%s/%s failed: %s",
                         scope,
+                        project,
                         location,
                         operation_name,
                         op.get("error"),
@@ -226,23 +234,27 @@ class SpotVM(Service):
                     return False
                 return True
             logging.info(
-                "Waiting for GCP %s operation %s/%s (status=%s)",
+                "Waiting for GCP %s operation %s/%s/%s (status=%s)",
                 scope,
+                project,
                 location,
                 operation_name,
                 status,
             )
             time.sleep(self.INSTANCE_POLL_INTERVAL_SEC)
         logging.error(
-            "Timed out waiting for GCP %s operation %s/%s",
+            "Timed out waiting for GCP %s operation %s/%s/%s",
             scope,
+            project,
             location,
             operation_name,
         )
         return False
 
     def _wait_zone_operation(self, service, zone: str, operation_name: str) -> bool:
-        return self._wait_compute_operation(service, "zone", zone, operation_name)
+        return self._wait_compute_operation(
+            service, "zone", zone, operation_name, project=self.project_id
+        )
 
     def _delete_disk(
         self, service, disk_ref: Dict[str, str], fallback_zone: str
@@ -270,7 +282,7 @@ class SpotVM(Service):
                 )
             op_name = op.get("name")
             if op_name and not self._wait_compute_operation(
-                service, scope, location, op_name
+                service, scope, location, op_name, project=project
             ):
                 logging.error(
                     "Disk delete operation failed/incomplete for %s; not counted",

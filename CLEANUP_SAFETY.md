@@ -122,11 +122,18 @@ facts change.
 - Order: cancel → terminate → wait for EBS `available` → delete volumes with
   `DeleteOnTermination=false`. A failed cancel does **not** terminate (avoids
   relaunch for `Type=persistent`).
-- Cancelled requests that still have an `InstanceId` are retried so a prior
-  run that cancelled but failed terminate can finish. Leftover volume IDs are
-  tagged on the spot request (`crc_leftover_ebs`) before terminate so a later
-  retry can still delete them after BlockDeviceMappings are gone. Already
-  terminated instances with no leftover volumes are skipped (not re-reported).
+- Cancelled requests that still have an `InstanceId` (and match tags/age) are
+  cleaned up: terminate the instance if still running, then delete
+  `DeleteOnTermination=false` volumes. That finishes a prior CRC run that
+  cancelled but failed later steps, **and** also cleans hand-cancelled
+  requests whose instance AWS left running. Untagged cancelled requests stay
+  skipped.
+- Leftover volume IDs are tagged on the spot request (`crc_leftover_ebs`)
+  before terminate so a later retry can still delete them after
+  BlockDeviceMappings are gone. The tag is cleared when volumes are gone; if
+  `delete_tags` fails, a later run sees `already_gone` and does not re-count
+  deletions. Already terminated instances with no leftover volumes are
+  skipped (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 - GCP/OCI `--resource spot_instances` require explicit `--cloud gcp` /
   `--cloud oci`. Under `--cloud all`, only Azure spot_instances runs.

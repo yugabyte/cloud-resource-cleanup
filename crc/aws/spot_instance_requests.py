@@ -30,6 +30,10 @@ class SpotInstanceRequests(Service):
 
     After terminate, any EBS volume whose BlockDeviceMapping had
     DeleteOnTermination=false is deleted explicitly.
+
+    Matching cancelled requests that still have an InstanceId are cleaned up
+    too (CRC retry after a partial run, or a hand-cancelled request whose
+    instance AWS left running). Untagged cancelled requests stay skipped.
     """
 
     service_name = "ec2"
@@ -90,8 +94,12 @@ class SpotInstanceRequests(Service):
         (request_id, instance_id|None, type, already_cancelled, tags).
         Type is one-time or persistent (AWS SpotInstanceRequests.Type).
 
-        Cancelled requests with an InstanceId are kept so a prior run that
-        cancelled but failed terminate / leftover-volume delete can finish.
+        Cancelled requests with an InstanceId are also queued. That covers a
+        prior CRC run that cancelled but failed terminate / leftover-volume
+        delete, **and** hand-cancelled requests whose instance AWS left
+        running — matching filter/age requests in ``cancelled`` with an
+        InstanceId will have that instance terminated and DoT=false volumes
+        deleted. Untagged cancelled requests remain skipped.
         """
         matches = []
         for request in spot_request_details.get("SpotInstanceRequests", []):

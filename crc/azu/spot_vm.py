@@ -2,7 +2,9 @@
 
 import datetime
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 
 from crc.azu._base import Base
 from crc.azu.vm_delete_helpers import (
@@ -19,8 +21,10 @@ STOPPED_POWER_STATES = ("VM stopped", "VM deallocated")
 class SpotVM(Service):
     """
     Deletes Azure Spot VMs that are in stopped or deallocated state.
-    Uses the same tag/age filtering as the regular VM cleaner and also deletes
-    associated NICs.
+
+    Azure has no separate "spot request" object — deleting the VM is the cancel.
+    Disks whose delete_option is Detach (not Delete) are removed after the VM
+    so they are not left orphaned (same idea as AWS DeleteOnTermination=false).
     """
 
     def __init__(
@@ -36,6 +40,7 @@ class SpotVM(Service):
         super().__init__()
         self.instance_names_to_delete = []
         self.nics_names_to_delete = []
+        self.disks_names_to_delete = []
         self.base = Base(resource_group)
         self.dry_run = dry_run
         self.filter_tags = filter_tags
@@ -60,25 +65,26 @@ class SpotVM(Service):
     def nic_delete_count(self):
         return len(self.nics_names_to_delete)
 
+    @property
+    def get_deleted_disks(self):
+        return self.disks_names_to_delete
+
     def _is_spot_vm(self, vm) -> bool:
-        """Return True if this VM is a Spot VM."""
         priority = getattr(vm, "priority", None)
         if priority is None:
             return False
         return str(priority).lower() == "spot"
 
     def _get_vm_power_status(self, vm_name: str) -> str:
-        """Get power state display status for the VM (e.g. 'VM running', 'VM stopped')."""
         try:
             instance_view = (
                 self.base.get_compute_client()
                 .virtual_machines.instance_view(self.base.resource_group, vm_name)
             )
-            # statuses[0] is ProvisioningState, statuses[1] is PowerState
             if instance_view.statuses and len(instance_view.statuses) > 1:
                 return instance_view.statuses[1].display_status or ""
         except Exception as e:
-            logging.error(f"Failed to get instance view for {vm_name}: {e}")
+            logging.error("Failed to get instance view for %s: %s", vm_name, e)
         return ""
 
     def _should_skip_instance(self, vm) -> bool:
@@ -99,16 +105,88 @@ class SpotVM(Service):
         return False
 
     def _should_include_by_tags(self, vm) -> bool:
-        if not vm.tags:
-            return False
+        """
+        Match filter_tags. Empty filter means any VM is eligible (including
+        untagged), same as crc.azu.vm.VM.
+        """
         if not self.filter_tags:
             return True
+        tags = vm.tags or {}
         return all(
-            key in vm.tags and (not value or vm.tags[key] in value)
+            key in tags and (not value or tags[key] in value)
             for key, value in self.filter_tags.items()
         )
 
-    def _delete_vm(self, vm_name: str):
+    def _disk_name_from_id(self, disk_id: Optional[str]) -> Optional[str]:
+        if not disk_id:
+            return None
+        return disk_id.rstrip("/").split("/")[-1]
+
+    def _detached_disk_names(self, vm) -> List[str]:
+        """
+        Disks that will survive VM delete (delete_option=Detach / not Delete).
+        """
+        names = []
+        profile = getattr(vm, "storage_profile", None)
+        if not profile:
+            return names
+
+        os_disk = getattr(profile, "os_disk", None)
+        if os_disk:
+            delete_option = str(getattr(os_disk, "delete_option", "") or "").lower()
+            managed = getattr(os_disk, "managed_disk", None)
+            disk_id = getattr(managed, "id", None) if managed else None
+            name = self._disk_name_from_id(disk_id) or getattr(os_disk, "name", None)
+            if name and delete_option not in ("", "delete"):
+                names.append(name)
+                logging.info(
+                    "Spot VM %s OS disk %s has delete_option=%s (will delete after VM)",
+                    vm.name,
+                    name,
+                    delete_option or "unset",
+                )
+
+        for data_disk in getattr(profile, "data_disks", None) or []:
+            delete_option = str(getattr(data_disk, "delete_option", "") or "").lower()
+            managed = getattr(data_disk, "managed_disk", None)
+            disk_id = getattr(managed, "id", None) if managed else None
+            name = self._disk_name_from_id(disk_id) or getattr(data_disk, "name", None)
+            if name and delete_option not in ("", "delete"):
+                names.append(name)
+                logging.info(
+                    "Spot VM %s data disk %s has delete_option=%s (will delete after VM)",
+                    vm.name,
+                    name,
+                    delete_option or "unset",
+                )
+        return names
+
+    def _delete_disk(self, disk_name: str) -> None:
+        if self.dry_run:
+            self.disks_names_to_delete.append(disk_name)
+            return
+        try:
+            poller = self.base.get_compute_client().disks.begin_delete(
+                self.base.resource_group, disk_name
+            )
+            poller.result(timeout=600)
+            logging.info("Deleted leftover Spot VM disk %s", disk_name)
+            self.disks_names_to_delete.append(disk_name)
+        except ResourceNotFoundError:
+            logging.info("Disk %s already removed", disk_name)
+            self.disks_names_to_delete.append(disk_name)
+        except HttpResponseError as e:
+            if getattr(e, "status_code", None) == 404:
+                self.disks_names_to_delete.append(disk_name)
+                return
+            logging.error("Failed to delete disk %s: %s", disk_name, e)
+        except Exception as e:
+            logging.error("Failed to delete disk %s: %s", disk_name, e)
+
+    def _delete_vm(self, vm) -> None:
+        leftover_disks = self._detached_disk_names(vm)
+        vm_name = vm.name
+
         if not self.dry_run:
             logging.info("Deleting Azure Spot VM: %s", vm_name)
             try:
@@ -121,6 +199,10 @@ class SpotVM(Service):
                 logging.error("Error deleting Spot VM %s: %s", vm_name, e)
                 raise
         self.instance_names_to_delete.append(vm_name)
+
+        for disk_name in leftover_disks:
+            self._delete_disk(disk_name)
+
         delete_vm_primary_nic(
             self.base.get_network_client(),
             self.base.resource_group,
@@ -157,17 +239,20 @@ class SpotVM(Service):
                 power_status = self._get_vm_power_status(vm.name)
                 if power_status not in STOPPED_POWER_STATES:
                     logging.debug(
-                        f"Skipping Spot VM {vm.name}: power state '{power_status}'"
+                        "Skipping Spot VM %s: power state '%s'",
+                        vm.name,
+                        power_status,
                     )
                     continue
             except Exception as e:
-                logging.error(f"Error getting status for Spot VM {vm.name}: {e}")
+                logging.error("Error getting status for Spot VM %s: %s", vm.name, e)
                 continue
 
             time_created = getattr(vm, "time_created", None)
             if not time_created:
                 logging.warning(
-                    f"Skipping Spot VM {vm.name}: no creation time (age check not possible)"
+                    "Skipping Spot VM %s: no creation time (age check not possible)",
+                    vm.name,
                 )
                 continue
             dt = datetime.datetime.now().astimezone(time_created.tzinfo)
@@ -175,37 +260,34 @@ class SpotVM(Service):
                 vm.tags or {}, self.custom_age_tag_key
             )
             if retention_age:
-                logging.info(f"Updating age for Spot VM: {vm.name}")
+                logging.info("Updating age for Spot VM: %s", vm.name)
             if not self.is_old(retention_age or self.age, dt, time_created):
                 continue
 
             try:
-                self._delete_vm(vm.name)
+                self._delete_vm(vm)
             except Exception as e:
-                logging.error(f"Error deleting Spot VM {vm.name}: {e}")
+                logging.error("Error deleting Spot VM %s: %s", vm.name, e)
 
         if not self.instance_names_to_delete:
             logging.warning("No Azure Spot VMs (stopped/deallocated) to delete.")
 
-        if self.dry_run:
-            logging.warning(
-                f"List of Azure Spot VMs (Total: {len(self.instance_names_to_delete)}) "
-                f"which would be deleted: {self.instance_names_to_delete}"
-            )
-            logging.warning(
-                f"List of Azure NICs (Total: {len(self.nics_names_to_delete)}) "
-                f"which would be deleted: {self.nics_names_to_delete}"
-            )
-        else:
-            logging.warning(
-                f"Number of Azure Spot VMs deleted: {len(self.instance_names_to_delete)}"
-            )
-            logging.warning(
-                f"List of Azure Spot VMs deleted: {self.instance_names_to_delete}"
-            )
-            logging.warning(
-                f"Number of Azure NICs deleted: {len(self.nics_names_to_delete)}"
-            )
-            logging.warning(
-                f"List of Azure NICs deleted: {self.nics_names_to_delete}"
-            )
+        label = "which would be deleted" if self.dry_run else "deleted"
+        logging.warning(
+            "List of Azure Spot VMs (Total: %s) %s: %s",
+            len(self.instance_names_to_delete),
+            label,
+            self.instance_names_to_delete,
+        )
+        logging.warning(
+            "List of Azure NICs (Total: %s) %s: %s",
+            len(self.nics_names_to_delete),
+            label,
+            self.nics_names_to_delete,
+        )
+        logging.warning(
+            "List of Azure leftover disks (delete_option!=Delete) (Total: %s) %s: %s",
+            len(self.disks_names_to_delete),
+            label,
+            self.disks_names_to_delete,
+        )

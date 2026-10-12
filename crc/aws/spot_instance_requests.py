@@ -2,7 +2,8 @@
 
 import datetime
 import logging
-from typing import Dict, List, Tuple
+import time
+from typing import Dict, List, Optional, Tuple
 
 import boto3
 from botocore.exceptions import ClientError
@@ -14,22 +15,27 @@ from crc.service import Service
 
 class SpotInstanceRequests(Service):
     """
-    The VM class provides an interface for managing AWS SpotInstanceRequests.
-    It inherits from the Service class and uses boto3 to interact with the AWS EC2 service.
-    The class defaults to using the UTC time format for calculating age.
-    The class allows for filtering and excluding SpotInstanceRequests based on specified tags, as well as an age threshold for SpotInstanceRequests.
-    The class also has properties for the number of SpotInstanceRequests that will be deleted.
+    Clean AWS Spot Instance Requests and their fulfilled instances.
+
+    Tags are read from the **spot request** (not the instance). That matches
+    YBA fleets where yb_owner / yb_yba_url / universe-uuid live on the request
+    while the EC2 instance is untagged.
+
+    Order of operations (critical for Type=persistent):
+      1. cancel_spot_instance_requests
+      2. terminate_instances
+    Terminating first leaves a persistent request in open/active and AWS
+    launches a replacement.
+
+    After terminate, any EBS volume whose BlockDeviceMapping had
+    DeleteOnTermination=false is deleted explicitly.
     """
 
     service_name = "ec2"
-    """
-    The service_name variable specifies the AWS service that this class will interact with.
-    """
-
     default_region_name = "us-west-2"
-    """
-    The default_region_name variable specifies the default region to be used when interacting with the AWS service.
-    """
+    # How long to wait for a volume to leave 'in-use' after terminate.
+    VOLUME_AVAILABLE_WAIT_SEC = 120
+    VOLUME_POLL_INTERVAL_SEC = 5
 
     def __init__(
         self,
@@ -40,159 +46,274 @@ class SpotInstanceRequests(Service):
         custom_age_tag_key: str,
         notags: Dict[str, List[str]],
     ) -> None:
-        """
-        Initializes the object with filter and exception tags to be used when searching for SpotInstanceRequests, as well as an age threshold for SpotInstanceRequests.
-
-        :param dry_run: A boolean variable that indicates whether the class should operate in dry_run mode or not.
-        In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
-        but will not perform any operations on them.
-        :param filter_tags: dictionary containing key-value pairs as filter tags
-        :type filter_tags: Dict[str, List[str]]
-        :param exception_tags: dictionary containing key-value pairs as exception tags
-        :type exception_tags: Dict[str, List[str]]
-        :param age: dictionary containing key-value pairs as age threshold, the key is either "days" or "hours" or both and value is the number of days or hours.
-        :type age: Dict[str, int]
-        :param custom_age_tag_key: Tag name to overwrite the age condition.
-        :type custom_age_tag_key: str
-        :param notags: dictionary containing key-value pairs as filter tags to exclude instances which do not have these tags
-        :type notags: Dict[str, List[str]]
-        """
         super().__init__()
-        self.spot_requests_to_delete = []
-        self.instance_ids_to_delete = []
+        self.spot_requests_to_delete: List[str] = []
+        self.instance_ids_to_delete: List[str] = []
+        self.volumes_to_delete: List[str] = []
         self.dry_run = dry_run
-        self.filter_tags = filter_tags
-        self.exception_tags = exception_tags
-        self.age = age
+        self.filter_tags = filter_tags or {}
+        self.exception_tags = exception_tags or {}
+        self.age = age or {}
         self.custom_age_tag_key = custom_age_tag_key
-        self.notags = notags
+        self.notags = notags or {}
 
     @property
     def get_deleted(self):
-        """
-        This is a property decorator that returns the list of items in the spot_requests_to_delete list.
-        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
-        """
-        return self.spot_requests_to_delete + self.instance_ids_to_delete
+        return (
+            self.spot_requests_to_delete
+            + self.instance_ids_to_delete
+            + self.volumes_to_delete
+        )
 
     @property
     def delete_count(self):
-        """
-        This is a property decorator that returns the count of items in the spot_requests_to_delete list.
-        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
-        """
-        count = len(self.spot_requests_to_delete) + len(self.instance_ids_to_delete)
-        logging.info(f"count of items in spot_requests_to_delete & instance_ids_to_delete: {count}")
+        count = len(self.get_deleted)
+        logging.info(
+            "count of spot requests+instances+leftover volumes to delete: %s", count
+        )
         return count
 
     def _get_filter(self) -> List[Dict[str, List[str]]]:
-        """
-        Creates a filter to be used when searching for spot requests, based on the provided filter tags during initialization.
-
-        :return: list of filters.
-        :rtype: List[Dict[str, List[str]]]
-        """
         filters = []
         if self.filter_tags:
             for key, value in self.filter_tags.items():
                 filters.append({"Name": f"tag:{key}", "Values": value})
-
-        logging.info(f"Filters created: {filters}")
+        logging.info("Filters created: %s", filters)
         return filters
 
     def _get_filtered_requests(
         self, spot_request_details: dict
-    ) -> Tuple[List[str], List[str]]:
+    ) -> List[Tuple[str, Optional[str], str]]:
         """
-        Retrieves a list of SpotInstanceRequests that match the filter and age threshold,
-        checks for exception tags, and also checks for SpotInstanceRequests that do not have the specified notags.
+        Returns list of (request_id, instance_id|None, type) for matching requests.
+        Type is one-time or persistent (AWS SpotInstanceRequests.Type).
         """
-        spot_requests = []
-        instance_ids = []
+        matches = []
         for request in spot_request_details.get("SpotInstanceRequests", []):
             try:
-                if "Tags" not in request:
+                tags = request.get("Tags") or []
+                # Untagged requests cannot match filter_tags / exception / notags
+                # semantics used by Jenkins; skip unless no tag filters at all.
+                if not tags and (self.filter_tags or self.exception_tags or self.notags):
                     continue
-                tags = request["Tags"]
-                if request["State"] == "cancelled" or self._should_skip_spot_request(
-                    tags
-                ):
+                if request.get("State") == "cancelled":
                     continue
+                if self._should_skip_spot_request(tags):
+                    continue
+                if self.filter_tags and not self._matches_filter_tags(tags):
+                    continue
+
                 request_id = request["SpotInstanceRequestId"]
-                # Open / pending requests may not have an instance yet
-                instance_id = request.get("InstanceId")
+                instance_id = request.get("InstanceId") or None
                 create_time = request["CreateTime"]
+                request_type = (request.get("Type") or "one-time").lower()
 
                 retention_age = self.get_retention_age(tags, self.custom_age_tag_key)
                 if retention_age:
                     logging.info(
-                        f"Updating age for SpotInstanceRequestId: {request_id}"
+                        "Updating age for SpotInstanceRequestId: %s", request_id
                     )
 
-                if self.is_old(
+                if not self.is_old(
                     retention_age or self.age,
-                    # Defaults to use utc timezone
                     datetime.datetime.now().astimezone(create_time.tzinfo),
                     create_time,
                 ):
-                    spot_requests.append(request_id)
-                    if instance_id:
-                        instance_ids.append(instance_id)
-                    logging.info(
-                        f"Spot Request {request_id} with Instance ID {instance_id or 'none'} "
-                        "added to list of requests to be cleaned up."
-                    )
+                    continue
+
+                matches.append((request_id, instance_id, request_type))
+                logging.info(
+                    "Spot request %s (type=%s) instance=%s queued for cleanup",
+                    request_id,
+                    request_type,
+                    instance_id or "none",
+                )
             except Exception as e:
                 logging.error(
-                    f"Error occurred while processing spot request {request}: {e}"
+                    "Error occurred while processing spot request %s: %s", request, e
                 )
-        return spot_requests, instance_ids
+        return matches
+
+    def _matches_filter_tags(self, tags: List[Dict[str, str]]) -> bool:
+        if not self.filter_tags:
+            return True
+        tag_map = {t["Key"]: t.get("Value", "") for t in tags if t.get("Key")}
+        # AND across keys (same as other AWS resources that re-check client-side)
+        for key, values in self.filter_tags.items():
+            if key not in tag_map:
+                return False
+            if values and tag_map[key] not in values:
+                return False
+        return True
 
     def _should_skip_spot_request(self, tags: List[Dict[str, str]]) -> bool:
-        """
-        Check if the SpotInstanceRequests should be skipped based on the exception tags and SpotInstanceRequests that do not have the specified notags.
-        :param tags: List of tags associated with the SpotInstanceRequests
-        :type tags: List[Dict[str,str]]
-        :return: True if the SpotInstanceRequests should be skipped, False otherwise
-        :rtype: bool
-        """
         if not self.exception_tags and not self.notags:
-            logging.warning("Tags and notags not present")
             return False
 
-        in_no_tags = False
         all_tags = {}
-
         for tag in tags:
-            k = tag["Key"]
-            v = tag["Value"]
-
+            k = tag.get("Key")
+            if not k:
+                continue
+            v = tag.get("Value", "")
             if self.exception_tags:
-                if k in self.exception_tags.keys() and (
+                if k in self.exception_tags and (
                     not self.exception_tags[k] or v in self.exception_tags[k]
                 ):
                     return True
-
             all_tags[k] = v
 
         if self.notags:
-            in_no_tags = all(
+            return all(
                 key in all_tags and (not value or all_tags[key] in value)
                 for key, value in self.notags.items()
             )
+        return False
 
-        return in_no_tags
+    def _volumes_with_delete_on_termination_false(
+        self, client, instance_id: str
+    ) -> List[str]:
+        """EBS VolumeIds attached with DeleteOnTermination=false."""
+        try:
+            resp = client.describe_instances(InstanceIds=[instance_id])
+        except ClientError as e:
+            logging.error(
+                "describe_instances failed for %s while checking DeleteOnTermination: %s",
+                instance_id,
+                e,
+            )
+            return []
 
-    def delete(
+        volume_ids = []
+        for reservation in resp.get("Reservations") or []:
+            for instance in reservation.get("Instances") or []:
+                for mapping in instance.get("BlockDeviceMappings") or []:
+                    ebs = mapping.get("Ebs") or {}
+                    volume_id = ebs.get("VolumeId")
+                    if not volume_id:
+                        continue
+                    # Explicit False only — missing defaults to True for root in many AMIs
+                    if ebs.get("DeleteOnTermination") is False:
+                        volume_ids.append(volume_id)
+                        logging.info(
+                            "Instance %s volume %s has DeleteOnTermination=false",
+                            instance_id,
+                            volume_id,
+                        )
+        return volume_ids
+
+    def _wait_volume_available_then_delete(self, client, volume_id: str) -> bool:
+        deadline = time.time() + self.VOLUME_AVAILABLE_WAIT_SEC
+        while time.time() < deadline:
+            try:
+                desc = client.describe_volumes(VolumeIds=[volume_id])
+                volumes = desc.get("Volumes") or []
+                if not volumes:
+                    logging.info("Volume %s already gone", volume_id)
+                    return True
+                state = volumes[0].get("State")
+                if state == "available":
+                    client.delete_volume(VolumeId=volume_id)
+                    logging.info("Deleted leftover volume %s", volume_id)
+                    return True
+                if state == "deleted":
+                    return True
+                logging.info(
+                    "Waiting for volume %s to become available (state=%s)",
+                    volume_id,
+                    state,
+                )
+            except ClientError as e:
+                code = (e.response.get("Error") or {}).get("Code")
+                if code in {"InvalidVolume.NotFound"}:
+                    return True
+                logging.error("Error waiting/deleting volume %s: %s", volume_id, e)
+                return False
+            time.sleep(self.VOLUME_POLL_INTERVAL_SEC)
+
+        logging.error(
+            "Timed out waiting for volume %s to become available; not deleted",
+            volume_id,
+        )
+        return False
+
+    def _cleanup_one(
         self,
+        client,
+        region: str,
+        request_id: str,
+        instance_id: Optional[str],
+        request_type: str,
     ) -> None:
         """
-        Deletes SpotInstanceRequests that match the filter and age threshold, and also checks for exception tags.
-        It checks if the filter_tags and notags attribute of the class is empty,
-        if so, it returns True because there are no tags set to filter the SpotInstanceRequests, so any SpotInstanceRequest should be considered.
-        The method will list the SpotInstanceRequests that match the specified filter and exception tags but will not perform
-        any operations on them if dry_run mode is enabled.
+        Cancel the spot request first, then terminate its instance, then delete
+        any volumes left behind by DeleteOnTermination=false.
         """
+        leftover_volumes: List[str] = []
+        if instance_id:
+            leftover_volumes = self._volumes_with_delete_on_termination_false(
+                client, instance_id
+            )
+
+        if self.dry_run:
+            self.spot_requests_to_delete.append(request_id)
+            if instance_id:
+                self.instance_ids_to_delete.append(instance_id)
+            self.volumes_to_delete.extend(leftover_volumes)
+            logging.info(
+                "Dry run: would cancel spot request %s (type=%s), terminate %s, "
+                "delete leftover volumes %s",
+                request_id,
+                request_type,
+                instance_id or "none",
+                leftover_volumes,
+            )
+            return
+
+        try:
+            client.cancel_spot_instance_requests(SpotInstanceRequestIds=[request_id])
+            self.spot_requests_to_delete.append(request_id)
+            logging.info(
+                "Cancelled spot request %s (type=%s) in %s",
+                request_id,
+                request_type,
+                region,
+            )
+        except ClientError as e:
+            logging.error(
+                "Failed to cancel spot request %s in %s: %s — not terminating "
+                "its instance (persistent requests would relaunch)",
+                request_id,
+                region,
+                e,
+            )
+            return
+
+        if not instance_id:
+            return
+
+        try:
+            client.terminate_instances(InstanceIds=[instance_id])
+            self.instance_ids_to_delete.append(instance_id)
+            logging.info(
+                "Terminated instance %s for cancelled spot request %s",
+                instance_id,
+                request_id,
+            )
+        except ClientError as e:
+            logging.error(
+                "Failed to terminate instance %s after cancelling %s: %s",
+                instance_id,
+                request_id,
+                e,
+            )
+            return
+
+        for volume_id in leftover_volumes:
+            if self._wait_volume_available_then_delete(client, volume_id):
+                self.volumes_to_delete.append(volume_id)
+
+    def delete(self) -> None:
         spot_filter = self._get_filter()
         try:
             regions = get_all_regions(self.service_name, self.default_region_name)
@@ -203,7 +324,6 @@ class SpotInstanceRequests(Service):
         for region in regions:
             try:
                 client = boto3.client(self.service_name, region_name=region)
-                describe_spot_response = None
                 try:
                     describe_spot_response = self._describe_all_spot_requests(
                         client, spot_filter
@@ -224,104 +344,50 @@ class SpotInstanceRequests(Service):
                     )
                     continue
 
-                (
-                    requests_to_operate,
-                    instance_id_to_operate,
-                ) = self._get_filtered_requests(describe_spot_response)
-
-                if not requests_to_operate:
-                    continue
-
-                try:
-                    finalized_requests = []
-                    finalised_instances = []
-                    if not self.dry_run:
-                        for req in requests_to_operate:
-                            try:
-                                client.cancel_spot_instance_requests(
-                                    SpotInstanceRequestIds=[req]
-                                )
-                                finalized_requests.append(req)
-                            except ClientError as e:
-                                logging.error(
-                                    "Error cancelling spot request %s in %s: %s",
-                                    req,
-                                    region,
-                                    e,
-                                )
-                            except Exception as e:
-                                logging.error(
-                                    "Error cancelling spot request %s in %s: %s",
-                                    req,
-                                    region,
-                                    e,
-                                )
-                        for i in range(len(finalized_requests)):
-                            logging.info(
-                                f"Spot Instance Request: {finalized_requests[i]} deleted."
-                            )
-                        self.spot_requests_to_delete.extend(finalized_requests)
-                        for instance_id in instance_id_to_operate:
-                            try:
-                                client.terminate_instances(InstanceIds=[instance_id])
-                                finalised_instances.append(instance_id)
-                            except ClientError as e:
-                                logging.error(
-                                    "Error terminating instance %s in %s: %s",
-                                    instance_id,
-                                    region,
-                                    e,
-                                )
-                            except Exception as e:
-                                logging.error(
-                                    "Error terminating instance %s in %s: %s",
-                                    instance_id,
-                                    region,
-                                    e,
-                                )
-                        for instance in finalised_instances:
-                            logging.info(
-                                f"Spot Instance Request Instance: {instance} deleted."
-                            )
-                        self.instance_ids_to_delete.extend(finalised_instances)
-                    else:
-                        self.spot_requests_to_delete.extend(requests_to_operate)
-                        self.instance_ids_to_delete.extend(instance_id_to_operate)
-                except Exception as e:
-                    logging.error(
-                        "Region %s: unexpected error while processing spot requests: %s",
-                        region,
-                        e,
-                    )
+                matches = self._get_filtered_requests(describe_spot_response)
+                for request_id, instance_id, request_type in matches:
+                    try:
+                        self._cleanup_one(
+                            client, region, request_id, instance_id, request_type
+                        )
+                    except Exception as e:
+                        logging.error(
+                            "Region %s: failed cleaning spot request %s: %s",
+                            region,
+                            request_id,
+                            e,
+                        )
             except CONNECTIVITY_ERRORS as e:
                 log_skipped_region(region, "spot instance requests", e)
                 continue
 
         if not self.spot_requests_to_delete:
-            logging.warning(f"No SpotInstanceRequest to delete.")
+            logging.warning("No SpotInstanceRequest to delete.")
 
-        if self.dry_run:
-            logging.warning(
-                f"List of AWS SpotInstanceRequest (Total: {len(self.spot_requests_to_delete)}) which will be deleted: {self.spot_requests_to_delete}"
-            )
-            logging.warning(
-                f"List of AWS SpotInstanceRequest Instances (Total: {len(self.instance_ids_to_delete)}) which will be deleted: {self.instance_ids_to_delete}"
-            )
-        else:
-            logging.warning(
-                f"List of AWS SpotInstanceRequest (Total: {len(self.spot_requests_to_delete)}) deleted: {self.spot_requests_to_delete}"
-            )
-            logging.warning(
-                f"List of AWS SpotInstanceRequest Instances (Total: {len(self.instance_ids_to_delete)}) deleted: {self.instance_ids_to_delete}"
-            )
+        label = "which will be deleted" if self.dry_run else "deleted"
+        logging.warning(
+            "List of AWS SpotInstanceRequest (Total: %s) %s: %s",
+            len(self.spot_requests_to_delete),
+            label,
+            self.spot_requests_to_delete,
+        )
+        logging.warning(
+            "List of AWS SpotInstanceRequest Instances (Total: %s) %s: %s",
+            len(self.instance_ids_to_delete),
+            label,
+            self.instance_ids_to_delete,
+        )
+        logging.warning(
+            "List of AWS leftover EBS volumes (DeleteOnTermination=false) "
+            "(Total: %s) %s: %s",
+            len(self.volumes_to_delete),
+            label,
+            self.volumes_to_delete,
+        )
 
     def _describe_all_spot_requests(
         self, client, spot_filter: List[Dict[str, List[str]]]
     ) -> dict:
-        """
-        Paginate describe_spot_instance_requests. Omits Filters when empty so AWS
-        does not reject the call.
-        """
         kwargs = {}
         if spot_filter:
             kwargs["Filters"] = spot_filter
@@ -331,8 +397,7 @@ class SpotInstanceRequests(Service):
             if next_token:
                 kwargs["NextToken"] = next_token
             resp = client.describe_spot_instance_requests(**kwargs)
-            batch = resp.get("SpotInstanceRequests", [])
-            all_requests.extend(batch)
+            all_requests.extend(resp.get("SpotInstanceRequests", []))
             next_token = resp.get("NextToken")
             if not next_token:
                 break

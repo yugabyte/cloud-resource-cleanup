@@ -30,17 +30,23 @@ We support below Cloud Providers:
   * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
   * Delete KMS
-  * Delete Spot Instance Requests & associated Instances
+  * Delete Spot Instance Requests & associated Instances (one-time **and** persistent). Cancels the request **before** terminating the instance; deletes leftover EBS when `DeleteOnTermination=false`. Tags are matched on the **spot request** (instances may be untagged).
 * Azure
   * Delete Orphan disks
   * Delete VMs (and attached NICs)
   * Delete Orphan public IPs
+  * Delete Spot VMs (stopped/deallocated) and leftover disks with `delete_option=Detach`
   * Stop VMs
 * GCP
   * Delete Orphan Disks
   * Delete Orphan IPs
   * Delete VMs (including attached resources such as Disks and NICs)
+  * Delete Spot / preemptible VMs and leftover disks with `autoDelete=false`
   * Stop VMs
+* OCI
+  * Delete VMs
+  * Delete preemptible (spot-like) instances and leftover attached block volumes
+  * Delete orphan disks / boot volumes
 
 In addition to these features, `cloud-resource-cleanup` also includes the following features:
 
@@ -175,9 +181,16 @@ python crc.py --cloud aws --resource vm --filter_tags "{'test_task': ['stress-te
 python3 crc.py --cloud aws --resource kms --kms_key_description <key-description> --kms_user <AWS-ARN> --age "{'days': 3}"
 ```
 
-8. To delete all AWS Spot Instance Requests & associated Instances that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`:
+8. To delete all AWS Spot Instance Requests (including Type=persistent) & associated Instances that are older than 3 days and 12 hours and have the tag `test_task` with the value `stress-test`. Tags are matched on the spot request. Order is cancel request → terminate instance → delete leftover volumes with DeleteOnTermination=false:
 ```
 python crc.py --cloud aws --resource spot_instance_requests --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
+```
+
+9. Azure / GCP / OCI Spot (or preemptible) VMs — use `--resource spot_instances`:
+```
+python crc.py --cloud azure --resource_group <rg> --resource spot_instances --filter_tags "{'yb_task': ['itest']}" --age "{'days': 3}"
+python crc.py --cloud gcp --project_id <project> --resource spot_instances --filter_tags "{'yb_task': ['itest']}" --age "{'days': 3}"
+python crc.py --cloud oci --resource spot_instances --filter_tags "{'yb_task': ['itest']}" --age "{'days': 3}"
 ```
 
 # Notes

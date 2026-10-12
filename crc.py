@@ -25,10 +25,8 @@ from crc.azu.spot_vm import SpotVM as AZU_SpotVM
 from crc.azu.vm import VM as AZU_VM
 from crc.gcp.disk import Disk as GCP_Disk
 from crc.gcp.ip import IP as GCP_IP
-from crc.gcp.spot_vm import SpotVM as GCP_SpotVM
 from crc.gcp.vm import VM as GCP_VM
 from crc.oci.disk import Disk as OCI_Disk
-from crc.oci.spot_vm import SpotVM as OCI_SpotVM
 from crc.oci.vm import VM as OCI_VM
 from crc.aws.snapshot import Snapshot
 
@@ -562,11 +560,8 @@ class CRC:
         custom_age_tag_key: str,
     ):
         """
-        Delete Spot / preemptible VMs on Azure, GCP, or OCI.
-
-        Azure: Spot VMs that are stopped/deallocated; leftover Detach disks removed.
-        GCP: Spot/preemptible VMs; leftover autoDelete=false disks removed.
-        OCI: Preemptible instances; leftover attached block volumes removed.
+        Delete Azure Spot VMs that are stopped/deallocated; leftover Detach
+        disks are removed after the VM.
 
         AWS spot cleanup uses ``delete_spot_instance_requests`` instead (cancel
         request first, then terminate — required for Type=persistent).
@@ -590,42 +585,9 @@ class CRC:
                 self.write_influxdb(VMS, spot_vm.get_deleted)
                 self.write_influxdb(NICS, spot_vm.get_deleted_nic)
                 self.write_influxdb(DISKS, spot_vm.get_deleted_disks)
-        elif self.cloud == "gcp":
-            if not self.project_id:
-                raise ValueError("project_id is required for GCP Spot VM cleanup")
-            spot_vm = GCP_SpotVM(
-                self.dry_run,
-                self.project_id,
-                filter_tags,
-                exception_tags,
-                age,
-                custom_age_tag_key,
-                self.notags,
-            )
-            spot_vm.delete()
-            if self.slack_client:
-                self.notify_deleted_vm_via_slack(spot_vm)
-            if self.influxdb_client:
-                self.write_influxdb(VMS, spot_vm.get_deleted)
-                self.write_influxdb(DISKS, spot_vm.get_deleted_disks)
-        elif self.cloud == "oci":
-            spot_vm = OCI_SpotVM(
-                self.dry_run,
-                filter_tags,
-                exception_tags,
-                age,
-                custom_age_tag_key,
-                self.notags,
-            )
-            spot_vm.delete()
-            if self.slack_client:
-                self.notify_deleted_vm_via_slack(spot_vm)
-            if self.influxdb_client:
-                self.write_influxdb(VMS, spot_vm.get_deleted)
-                self.write_influxdb(DISKS, spot_vm.get_deleted_volumes)
         else:
             raise ValueError(
-                "spot_instances is supported on azure, gcp, and oci. "
+                "spot_instances is supported on azure. "
                 "For AWS use --resource spot_instance_requests "
                 "(cancel request before terminate)."
             )
@@ -662,7 +624,7 @@ class CRC:
         if self.cloud != "aws":
             raise ValueError(
                 "spot_instance_requests is AWS-only. "
-                "Use --resource spot_instances for azure/gcp/oci."
+                "Use --resource spot_instances for azure."
             )
         spot_instance_requests = SpotInstanceRequests(
             self.dry_run,
@@ -978,7 +940,7 @@ def get_argparser():
             "Type of resource to operate on. Valid options include: 'disk', 'ip', "
             "'keypair', 'vm', 'kms', 'nic', 'snapshot', 'spot_instance_requests' "
             "(AWS only: cancel request then terminate), 'spot_instances' "
-            "(Azure/GCP/OCI Spot or preemptible VMs), 'all'. Default: 'all'."
+            "(Azure Spot VMs), 'all'. Default: 'all'."
         ),
     )
 
@@ -1342,10 +1304,7 @@ def main():
     # before this PR) so --cloud all / --resource all cannot skip EBS and then
     # continue into destructive AWS ip/keypair/vm/kms cleanup, and so
     # --cloud all --resource disk cannot reach Azure/GCP/OCI disk paths.
-    cloud_arg = clouds
     aws_disk_opt_in = clouds == "aws" and resources == "disk"
-    # GCP/OCI spot cleanup deletes RUNNING instances; keep --cloud all limited to
-    # the legacy Azure-only spot_instances path unless the cloud is explicit.
     clouds = CLOUDS if clouds == "all" else [clouds]
 
     # Process Resources
@@ -1559,22 +1518,16 @@ def main():
                     filter_tags, exception_tags, age, custom_age_tag_key
                 )
             elif resource == "spot_instances":
-                if crc.cloud == "aws":
+                if crc.cloud != "azure":
                     logging.warning(
+                        "spot_instances is Azure-only in this release; skipped for %s. "
                         "For AWS use --resource spot_instance_requests "
-                        "(cancel request before terminate). Skipping spot_instances."
-                    )
-                    continue
-                if crc.cloud in ("gcp", "oci") and cloud_arg == "all":
-                    logging.warning(
-                        "GCP/OCI spot_instances require explicit --cloud %s "
-                        "(not --cloud all); skipped. Azure spot_instances still runs "
-                        "under --cloud all for backward compatibility.",
+                        "(cancel request before terminate).",
                         crc.cloud,
                     )
                     continue
-                # Fail closed: missing --resource_group / --project_id / --age
-                # must raise (do not continue into other clouds under --cloud all).
+                # Fail closed: missing --resource_group / --age must raise
+                # (do not continue into other clouds under --cloud all).
                 crc.delete_spot_instances(
                     filter_tags, exception_tags, age, custom_age_tag_key
                 )

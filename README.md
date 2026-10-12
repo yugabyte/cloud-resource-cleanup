@@ -41,11 +41,9 @@ We support below Cloud Providers:
   * Delete Orphan Disks
   * Delete Orphan IPs
   * Delete VMs (including attached resources such as Disks and NICs)
-  * Delete Spot / preemptible VMs and leftover disks with `autoDelete=false`
   * Stop VMs
 * OCI
   * Delete VMs
-  * Delete preemptible (spot-like) instances and leftover attached block volumes
   * Delete orphan disks / boot volumes
 
 In addition to these features, `cloud-resource-cleanup` also includes the following features:
@@ -186,11 +184,9 @@ python3 crc.py --cloud aws --resource kms --kms_key_description <key-description
 python crc.py --cloud aws --resource spot_instance_requests --filter_tags "{'test_task': ['stress-test']}" --age "{'days': 3, 'hours': 12}"
 ```
 
-9. Azure / GCP / OCI Spot (or preemptible) VMs — use `--resource spot_instances`:
+9. Azure Spot VMs (stopped/deallocated) and leftover Detach disks — use `--resource spot_instances`:
 ```
 python crc.py --cloud azure --resource_group <rg> --resource spot_instances --filter_tags "{'yb_task': ['itest']}" --age "{'days': 3}"
-python crc.py --cloud gcp --project_id <project> --resource spot_instances --filter_tags "{'yb_task': ['itest']}" --age "{'days': 3}"
-python crc.py --cloud oci --resource spot_instances --filter_tags "{'yb_task': ['itest']}" --age "{'days': 3}"
 ```
 
 # Notes

@@ -65,6 +65,7 @@ class SpotFilterTests(unittest.TestCase):
         self.assertEqual(matches[0][1], "i-untagged")
         self.assertEqual(matches[0][2], "persistent")
         self.assertEqual(matches[0][3], False)
+        self.assertTrue(matches[0][4])  # tags present
 
     def test_includes_persistent_and_one_time(self):
         s = _spot()
@@ -128,6 +129,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 {
                     "Instances": [
                         {
+                            "State": {"Name": "running"},
                             "BlockDeviceMappings": [
                                 {
                                     "Ebs": {
@@ -184,7 +186,9 @@ class SpotCleanupOrderTests(unittest.TestCase):
     def test_failed_cancel_does_not_terminate_persistent(self):
         s = _spot(dry_run=False)
         client = mock.MagicMock()
-        client.describe_instances.return_value = {"Reservations": [{"Instances": [{}]}]}
+        client.describe_instances.return_value = {
+            "Reservations": [{"Instances": [{"State": {"Name": "running"}, "BlockDeviceMappings": []}]}]
+        }
         client.cancel_spot_instance_requests.side_effect = ClientError(
             {"Error": {"Code": "UnauthorizedOperation", "Message": "nope"}},
             "CancelSpotInstanceRequests",
@@ -204,6 +208,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 {
                     "Instances": [
                         {
+                            "State": {"Name": "running"},
                             "BlockDeviceMappings": [
                                 {
                                     "Ebs": {
@@ -234,6 +239,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 {
                     "Instances": [
                         {
+                            "State": {"Name": "running"},
                             "BlockDeviceMappings": [
                                 {
                                     "Ebs": {
@@ -262,6 +268,62 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.cancel_spot_instance_requests.assert_not_called()
         client.terminate_instances.assert_called_once()
         client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
+
+
+    def test_skips_cancelled_when_instance_already_done(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "terminated"},
+                            "BlockDeviceMappings": [],
+                        }
+                    ]
+                }
+            ]
+        }
+        s._cleanup_one(
+            client,
+            "us-west-2",
+            "sir-1",
+            "i-1",
+            "one-time",
+            already_cancelled=True,
+            request_tags=[{"Key": "yb_owner", "Value": "qa"}],
+        )
+        client.terminate_instances.assert_not_called()
+        client.delete_volume.assert_not_called()
+        self.assertEqual(s.spot_requests_to_delete, [])
+        self.assertEqual(s.instance_ids_to_delete, [])
+
+    def test_retry_uses_tagged_leftover_volumes(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        # Instance gone — BDM empty / not found path via empty reservations
+        client.describe_instances.return_value = {"Reservations": []}
+        client.describe_volumes.return_value = {
+            "Volumes": [{"State": "available", "VolumeId": "vol-keep"}]
+        }
+        with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
+            s._cleanup_one(
+                client,
+                "us-west-2",
+                "sir-1",
+                "i-1",
+                "one-time",
+                already_cancelled=True,
+                request_tags=[
+                    {"Key": "yb_owner", "Value": "qa"},
+                    {"Key": s.LEFTOVER_VOLUMES_TAG, "Value": "vol-keep"},
+                ],
+            )
+        client.terminate_instances.assert_not_called()
+        client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
+        self.assertEqual(s.volumes_to_delete, ["vol-keep"])
+        self.assertEqual(s.spot_requests_to_delete, ["sir-1"])
 
 
 if __name__ == "__main__":

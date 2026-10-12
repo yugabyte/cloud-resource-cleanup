@@ -44,9 +44,12 @@ facts change.
   gate means every otherwise-matching resource is treated as old enough.
 - Strict rejection of unknown keys, zero durations, and typos exists in
   `crc/aws/disk.py` (`_normalize_age`) and in spot modules via
-  `Service.require_positive_age` (AWS/Azure/GCP/OCI spot). Shared
-  `Service.is_old` still treats `{'days': 0}` / empty age as match-all for
-  callers that do not use `require_positive_age`.
+  `Service.require_positive_age` for `--age`, plus
+  `Service.validated_retention_age` for custom age tags (invalid/zero tags
+  fall back to `--age`). Shared `Service.is_old` still treats empty age as
+  match-all for callers that do not use those helpers. `--max_age` /
+  `MAX_AGE` can still shorten a floor inside `is_old` (including to zero);
+  do not set `MAX_AGE` to a zero duration in Jenkins.
 
 **When adding a new destructive module**
 
@@ -120,8 +123,13 @@ facts change.
   `DeleteOnTermination=false`. A failed cancel does **not** terminate (avoids
   relaunch for `Type=persistent`).
 - Cancelled requests that still have an `InstanceId` are retried so a prior
-  run that cancelled but failed terminate / volume delete can finish.
+  run that cancelled but failed terminate can finish. Leftover volume IDs are
+  tagged on the spot request (`crc_leftover_ebs`) before terminate so a later
+  retry can still delete them after BlockDeviceMappings are gone. Already
+  terminated instances with no leftover volumes are skipped (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
+- GCP/OCI `--resource spot_instances` require explicit `--cloud gcp` /
+  `--cloud oci`. Under `--cloud all`, only Azure spot_instances runs.
 
 ---
 
@@ -135,9 +143,11 @@ facts change.
 | GCP Spot / preemptible | `autoDelete=false` | Wait for instance-delete zone op, then delete disk |
 | OCI preemptible | Attached block volume | Wait for instance `TERMINATED` (best-effort), then delete volume |
 
-All three require a positive `--age`. Azure skips untagged Spot VMs (same as
-`crc.azu.vm.VM`). GCP/OCI match their regular VM label/tag helpers; empty
-filter still needs the age gate.
+All three require a positive `--age`. Custom age tags are validated the same
+way (invalid/zero → fall back to `--age`). Azure skips untagged Spot VMs
+(same as `crc.azu.vm.VM`). GCP/OCI match their regular VM label/tag helpers;
+empty filter still needs the age gate. GCP/OCI paths are opt-in via explicit
+`--cloud` (not `--cloud all`).
 
 ---
 

@@ -33,6 +33,9 @@ class SpotInstanceRequests(Service):
 
     service_name = "ec2"
     default_region_name = "us-west-2"
+    # Persisted on the spot request before terminate so a later retry can still
+    # find DeleteOnTermination=false volumes after BlockDeviceMappings are gone.
+    LEFTOVER_VOLUMES_TAG = "crc_leftover_ebs"
     # How long to wait for a volume to leave 'in-use' after terminate.
     VOLUME_AVAILABLE_WAIT_SEC = 180
     VOLUME_POLL_INTERVAL_SEC = 5
@@ -80,9 +83,10 @@ class SpotInstanceRequests(Service):
 
     def _get_filtered_requests(
         self, spot_request_details: dict
-    ) -> List[Tuple[str, Optional[str], str, bool]]:
+    ) -> List[Tuple[str, Optional[str], str, bool, List[Dict[str, str]]]]:
         """
-        Returns list of (request_id, instance_id|None, type, already_cancelled).
+        Returns list of
+        (request_id, instance_id|None, type, already_cancelled, tags).
         Type is one-time or persistent (AWS SpotInstanceRequests.Type).
 
         Cancelled requests with an InstanceId are kept so a prior run that
@@ -111,7 +115,9 @@ class SpotInstanceRequests(Service):
                 create_time = request["CreateTime"]
                 request_type = (request.get("Type") or "one-time").lower()
 
-                retention_age = self.get_retention_age(tags, self.custom_age_tag_key)
+                retention_age = self.validated_retention_age(
+                    tags, self.custom_age_tag_key
+                )
                 if retention_age:
                     logging.info(
                         "Updating age for SpotInstanceRequestId: %s", request_id
@@ -125,7 +131,7 @@ class SpotInstanceRequests(Service):
                     continue
 
                 matches.append(
-                    (request_id, instance_id, request_type, already_cancelled)
+                    (request_id, instance_id, request_type, already_cancelled, tags)
                 )
                 logging.info(
                     "Spot request %s (type=%s, cancelled=%s) instance=%s queued",
@@ -176,29 +182,41 @@ class SpotInstanceRequests(Service):
             )
         return False
 
-    def _volumes_with_delete_on_termination_false(
+    def _instance_state_and_dot_false_volumes(
         self, client, instance_id: str
-    ) -> List[str]:
-        """EBS VolumeIds attached with DeleteOnTermination=false."""
+    ) -> Tuple[Optional[str], List[str]]:
+        """
+        Return (instance_state|None, DeleteOnTermination=false volume ids).
+        state is None when the instance is not found.
+        """
         try:
             resp = client.describe_instances(InstanceIds=[instance_id])
         except ClientError as e:
+            code = (e.response.get("Error") or {}).get("Code")
+            if code in {
+                "InvalidInstanceID.NotFound",
+                "InvalidInstanceID.Malformed",
+            }:
+                return None, []
             logging.error(
-                "describe_instances failed for %s while checking DeleteOnTermination: %s",
+                "describe_instances failed for %s while checking "
+                "DeleteOnTermination: %s",
                 instance_id,
                 e,
             )
-            return []
+            return "unknown", []
 
-        volume_ids = []
+        volume_ids: List[str] = []
+        state = None
         for reservation in resp.get("Reservations") or []:
             for instance in reservation.get("Instances") or []:
+                state = (instance.get("State") or {}).get("Name")
                 for mapping in instance.get("BlockDeviceMappings") or []:
                     ebs = mapping.get("Ebs") or {}
                     volume_id = ebs.get("VolumeId")
                     if not volume_id:
                         continue
-                    # Explicit False only — missing defaults to True for root in many AMIs
+                    # Explicit False only — missing defaults to True for root
                     if ebs.get("DeleteOnTermination") is False:
                         volume_ids.append(volume_id)
                         logging.info(
@@ -206,7 +224,43 @@ class SpotInstanceRequests(Service):
                             instance_id,
                             volume_id,
                         )
-        return volume_ids
+        return state, volume_ids
+
+    def _leftover_volumes_from_request_tags(
+        self, tags: List[Dict[str, str]]
+    ) -> List[str]:
+        tag_map = {t["Key"]: t.get("Value", "") for t in tags if t.get("Key")}
+        raw = (tag_map.get(self.LEFTOVER_VOLUMES_TAG) or "").strip()
+        if not raw:
+            return []
+        return [v.strip() for v in raw.split(",") if v.strip()]
+
+    def _tag_leftover_volumes_on_request(
+        self, client, request_id: str, volume_ids: List[str]
+    ) -> None:
+        if not volume_ids:
+            return
+        try:
+            client.create_tags(
+                Resources=[request_id],
+                Tags=[
+                    {
+                        "Key": self.LEFTOVER_VOLUMES_TAG,
+                        "Value": ",".join(volume_ids),
+                    }
+                ],
+            )
+            logging.info(
+                "Tagged spot request %s with leftover volumes %s",
+                request_id,
+                volume_ids,
+            )
+        except ClientError as e:
+            logging.error(
+                "Failed to tag leftover volumes on spot request %s: %s",
+                request_id,
+                e,
+            )
 
     def _wait_volume_available_then_delete(self, client, volume_id: str) -> bool:
         deadline = time.time() + self.VOLUME_AVAILABLE_WAIT_SEC
@@ -251,23 +305,40 @@ class SpotInstanceRequests(Service):
         instance_id: Optional[str],
         request_type: str,
         already_cancelled: bool = False,
+        request_tags: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """
         Cancel the spot request first, then terminate its instance, then delete
         any volumes left behind by DeleteOnTermination=false.
 
         When ``already_cancelled`` is True (retry after a prior cancel), skip
-        cancel and finish terminate + leftover volume deletes.
+        cancel and finish terminate + leftover volume deletes. Volume IDs are
+        read from BlockDeviceMappings when present, otherwise from the
+        ``crc_leftover_ebs`` tag written before the first terminate.
         """
+        request_tags = request_tags or []
+        instance_state: Optional[str] = None
         leftover_volumes: List[str] = []
         if instance_id:
-            leftover_volumes = self._volumes_with_delete_on_termination_false(
-                client, instance_id
+            instance_state, leftover_volumes = (
+                self._instance_state_and_dot_false_volumes(client, instance_id)
             )
+        if not leftover_volumes:
+            leftover_volumes = self._leftover_volumes_from_request_tags(request_tags)
+
+        instance_done = instance_state in {None, "terminated", "shutting-down"}
+        if already_cancelled and instance_done and not leftover_volumes:
+            logging.info(
+                "Skipping cancelled spot request %s: instance %s already "
+                "gone/terminated and no leftover volumes to delete",
+                request_id,
+                instance_id or "none",
+            )
+            return
 
         if self.dry_run:
             self.spot_requests_to_delete.append(request_id)
-            if instance_id:
+            if instance_id and not instance_done:
                 self.instance_ids_to_delete.append(instance_id)
             self.volumes_to_delete.extend(leftover_volumes)
             logging.info(
@@ -309,40 +380,66 @@ class SpotInstanceRequests(Service):
                 request_id,
                 region,
             )
-            self.spot_requests_to_delete.append(request_id)
 
         if not instance_id:
             return
 
-        try:
-            client.terminate_instances(InstanceIds=[instance_id])
-            self.instance_ids_to_delete.append(instance_id)
-            logging.info(
-                "Terminated instance %s for cancelled spot request %s",
-                instance_id,
-                request_id,
-            )
-        except ClientError as e:
-            code = (e.response.get("Error") or {}).get("Code")
-            # Instance already gone — still try leftover volumes below.
-            if code not in {
-                "InvalidInstanceID.NotFound",
-                "InvalidInstanceID.Malformed",
-            }:
-                logging.error(
-                    "Failed to terminate instance %s after cancelling %s: %s",
+        # Persist volume ids before terminate so a later retry can find them
+        # after BlockDeviceMappings disappear.
+        if leftover_volumes:
+            self._tag_leftover_volumes_on_request(client, request_id, leftover_volumes)
+
+        if not instance_done:
+            try:
+                client.terminate_instances(InstanceIds=[instance_id])
+                self.instance_ids_to_delete.append(instance_id)
+                logging.info(
+                    "Terminated instance %s for cancelled spot request %s",
                     instance_id,
                     request_id,
-                    e,
                 )
-                return
+            except ClientError as e:
+                code = (e.response.get("Error") or {}).get("Code")
+                if code not in {
+                    "InvalidInstanceID.NotFound",
+                    "InvalidInstanceID.Malformed",
+                }:
+                    logging.error(
+                        "Failed to terminate instance %s after cancelling %s: %s",
+                        instance_id,
+                        request_id,
+                        e,
+                    )
+                    return
+                logging.info(
+                    "Instance %s already gone for spot request %s",
+                    instance_id,
+                    request_id,
+                )
+        else:
             logging.info(
-                "Instance %s already gone for spot request %s", instance_id, request_id
+                "Instance %s already %s for spot request %s; only leftover "
+                "volumes will be deleted",
+                instance_id,
+                instance_state or "missing",
+                request_id,
             )
 
+        deleted_any_volume = False
         for volume_id in leftover_volumes:
             if self._wait_volume_available_then_delete(client, volume_id):
                 self.volumes_to_delete.append(volume_id)
+                deleted_any_volume = True
+
+        # Count the cancelled request only when this run did real work (first
+        # cancel, a terminate, or a leftover volume delete) — avoids re-reporting
+        # already-finished retries in Slack/Influx.
+        if not already_cancelled:
+            return
+        if deleted_any_volume or (
+            instance_id in self.instance_ids_to_delete
+        ):
+            self.spot_requests_to_delete.append(request_id)
 
     def delete(self) -> None:
         spot_filter = self._get_filter()
@@ -376,7 +473,13 @@ class SpotInstanceRequests(Service):
                     continue
 
                 matches = self._get_filtered_requests(describe_spot_response)
-                for request_id, instance_id, request_type, already_cancelled in matches:
+                for (
+                    request_id,
+                    instance_id,
+                    request_type,
+                    already_cancelled,
+                    request_tags,
+                ) in matches:
                     try:
                         self._cleanup_one(
                             client,
@@ -385,6 +488,7 @@ class SpotInstanceRequests(Service):
                             instance_id,
                             request_type,
                             already_cancelled=already_cancelled,
+                            request_tags=request_tags,
                         )
                     except Exception as e:
                         logging.error(

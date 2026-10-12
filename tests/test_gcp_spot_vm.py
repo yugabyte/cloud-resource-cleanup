@@ -83,6 +83,15 @@ class GcpSpotDetectTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _gcp_spot(age={})
 
+    def test_invalid_custom_age_falls_back_to_cli_age(self):
+        s = _gcp_spot(age={"days": 7}, custom_age_tag_key="retention")
+        inst = _instance(labels={"retention": "{'days': 0}"})
+        # zero custom age ignored; 7-day floor keeps young instance
+        inst.creation_timestamp = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).strftime(s.time_format)
+        self.assertFalse(s._is_old_instance(inst))
+
 
 class GcpNonAutodeleteDiskTests(unittest.TestCase):
     def test_collects_auto_delete_false_only(self):

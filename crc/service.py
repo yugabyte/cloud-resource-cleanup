@@ -66,6 +66,26 @@ class Service:
             raise ValueError("%s must be greater than zero" % label)
         return normalized
 
+    def validated_retention_age(
+        self,
+        tags: Union[Dict[str, str], List[Dict[str, str]]],
+        key: str,
+    ) -> Optional[Dict[str, int]]:
+        """
+        Parse ``custom_age_tag_key`` and require a positive age. Invalid or
+        zero-duration tags are ignored so ``is_old`` falls back to ``--age``.
+        """
+        raw = self.get_retention_age(tags, key)
+        if raw is None:
+            return None
+        try:
+            return self.require_positive_age(raw, "custom age tag")
+        except ValueError as e:
+            logging.warning(
+                "Ignoring invalid custom age tag %r for key %r: %s", raw, key, e
+            )
+            return None
+
     def get_min_age(self, dict1, dict2):
         """
         Compares two dictionaries containing 'days' and 'hours' keys and returns the one representing

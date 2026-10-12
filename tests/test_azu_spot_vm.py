@@ -17,7 +17,8 @@ def _azu_spot(**kwargs):
         notags={},
     )
     params.update(kwargs)
-    with mock.patch("crc.azu.spot_vm.Base"):
+    with mock.patch("crc.azu.spot_vm.Base") as base_cls:
+        base_cls.return_value.resource_group = params["resource_group"]
         return SpotVM(**params)
 
 
@@ -87,6 +88,15 @@ class AzureDetachedDiskTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _azu_spot(age={})
 
+    def test_disk_ref_parses_other_resource_group(self):
+        s = _azu_spot()
+        self.assertEqual(
+            s._disk_ref_from_id(
+                "/subscriptions/x/resourceGroups/other-rg/providers/Microsoft.Compute/disks/vol-a"
+            ),
+            ("other-rg", "vol-a"),
+        )
+
 
 class AzureDeleteOrderTests(unittest.TestCase):
     def test_delete_vm_removes_leftover_disks_after_vm(self):
@@ -100,16 +110,16 @@ class AzureDeleteOrderTests(unittest.TestCase):
         def track_vm_delete(*args, **kwargs):
             call_order.append("vm")
 
-        def track_disk(name):
-            call_order.append(("disk", name))
-            s.disks_names_to_delete.append(name)
+        def track_disk(resource_group, disk_name):
+            call_order.append(("disk", resource_group, disk_name))
+            s.disks_names_to_delete.append(f"{resource_group}/{disk_name}")
 
         with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait", side_effect=track_vm_delete), mock.patch(
             "crc.azu.spot_vm.delete_vm_primary_nic"
         ), mock.patch.object(s, "_delete_disk", side_effect=track_disk):
             s._delete_vm(vm)
 
-        self.assertEqual(call_order, ["vm", ("disk", "os-detach")])
+        self.assertEqual(call_order, ["vm", ("disk", "rg", "os-detach")])
         self.assertEqual(s.instance_names_to_delete, ["spot-1"])
 
     def test_dry_run_records_leftover_disks_without_deleting_vm(self):
@@ -121,7 +131,7 @@ class AzureDeleteOrderTests(unittest.TestCase):
             s._delete_vm(vm)
         delete_vm.assert_not_called()
         self.assertEqual(s.instance_names_to_delete, ["spot-1"])
-        self.assertEqual(s.disks_names_to_delete, ["os-detach"])
+        self.assertEqual(s.disks_names_to_delete, ["rg/os-detach"])
 
 
 if __name__ == "__main__":

@@ -104,7 +104,9 @@ class SpotVM(Service):
         created = datetime.strptime(instance.creation_timestamp, self.time_format)
         now = datetime.now(tz=created.tzinfo)
         labels = dict(getattr(instance, "labels", None) or {})
-        retention_age = self.get_retention_age(labels, self.custom_age_tag_key)
+        retention_age = self.validated_retention_age(
+            labels, self.custom_age_tag_key
+        )
         if retention_age:
             logging.info("Updating age for Spot VM: %s", instance.name)
         return self.is_old(retention_age or self.age, now, created)
@@ -180,9 +182,19 @@ class SpotVM(Service):
             self.disks_to_delete.append(f"{zone}/{disk_name}")
             return
         try:
-            service.disks().delete(
-                project=self.project_id, zone=zone, disk=disk_name
-            ).execute()
+            op = (
+                service.disks()
+                .delete(project=self.project_id, zone=zone, disk=disk_name)
+                .execute()
+            )
+            op_name = op.get("name")
+            if op_name and not self._wait_zone_operation(service, zone, op_name):
+                logging.error(
+                    "Disk delete operation failed/incomplete for %s/%s; not counted",
+                    zone,
+                    disk_name,
+                )
+                return
             logging.info("Deleted leftover Spot VM disk %s/%s", zone, disk_name)
             self.disks_to_delete.append(f"{zone}/{disk_name}")
         except Exception as e:
@@ -227,15 +239,16 @@ class SpotVM(Service):
                             )
                             logging.info("Deleting GCP Spot VM %s", instance.name)
                             op_name = op.get("name")
-                            if leftover and op_name:
-                                if not self._wait_zone_operation(
-                                    service, zone, op_name
-                                ):
-                                    logging.error(
-                                        "Instance delete wait failed for %s; "
-                                        "still attempting leftover disk deletes",
-                                        instance.name,
-                                    )
+                            if not op_name or not self._wait_zone_operation(
+                                service, zone, op_name
+                            ):
+                                logging.error(
+                                    "Instance delete failed/incomplete for %s; "
+                                    "not counting as deleted and skipping "
+                                    "leftover disk deletes",
+                                    instance.name,
+                                )
+                                continue
                         self.instance_names_to_delete.append(instance.name)
                         for disk_name in leftover:
                             self._delete_disk(service, zone, disk_name)

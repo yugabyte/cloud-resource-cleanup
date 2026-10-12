@@ -1342,7 +1342,10 @@ def main():
     # before this PR) so --cloud all / --resource all cannot skip EBS and then
     # continue into destructive AWS ip/keypair/vm/kms cleanup, and so
     # --cloud all --resource disk cannot reach Azure/GCP/OCI disk paths.
+    cloud_arg = clouds
     aws_disk_opt_in = clouds == "aws" and resources == "disk"
+    # GCP/OCI spot cleanup deletes RUNNING instances; keep --cloud all limited to
+    # the legacy Azure-only spot_instances path unless the cloud is explicit.
     clouds = CLOUDS if clouds == "all" else [clouds]
 
     # Process Resources
@@ -1560,6 +1563,14 @@ def main():
                     logging.warning(
                         "For AWS use --resource spot_instance_requests "
                         "(cancel request before terminate). Skipping spot_instances."
+                    )
+                    continue
+                if crc.cloud in ("gcp", "oci") and cloud_arg == "all":
+                    logging.warning(
+                        "GCP/OCI spot_instances require explicit --cloud %s "
+                        "(not --cloud all); skipped. Azure spot_instances still runs "
+                        "under --cloud all for backward compatibility.",
+                        crc.cloud,
                     )
                     continue
                 # Fail closed: missing --resource_group / --project_id / --age

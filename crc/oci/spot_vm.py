@@ -99,11 +99,13 @@ class SpotVM(Service, Base):
         if created.tzinfo is None:
             created = created.replace(tzinfo=datetime.now().astimezone().tzinfo)
         now = datetime.now(tz=created.tzinfo)
-        retention_age = self.get_retention_age(
+        retention_age = self.validated_retention_age(
             instance.freeform_tags or {}, self.custom_age_tag_key
         )
         if retention_age:
-            logging.info("Updating age for preemptible instance: %s", instance.display_name)
+            logging.info(
+                "Updating age for preemptible instance: %s", instance.display_name
+            )
         return self.is_old(retention_age or self.age, now, created)
 
     def _attached_block_volume_ids(self, compute_client, instance_id: str) -> List[str]:

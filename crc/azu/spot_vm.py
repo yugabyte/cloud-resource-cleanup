@@ -124,27 +124,49 @@ class SpotVM(Service):
             return None
         return disk_id.rstrip("/").split("/")[-1]
 
-    def _detached_disk_names(self, vm) -> List[str]:
+    def _disk_ref_from_id(
+        self, disk_id: Optional[str], fallback_name: Optional[str] = None
+    ) -> Optional[tuple]:
+        """
+        Return (resource_group, disk_name) from a managed disk ARM id.
+        Falls back to the VM resource group when the id has no RG segment.
+        """
+        name = self._disk_name_from_id(disk_id) or fallback_name
+        if not name:
+            return None
+        rg = self.base.resource_group
+        if disk_id:
+            parts = disk_id.strip("/").split("/")
+            for i, part in enumerate(parts):
+                if part.lower() == "resourcegroups" and i + 1 < len(parts):
+                    rg = parts[i + 1]
+                    break
+        return rg, name
+
+    def _detached_disk_refs(self, vm) -> List[tuple]:
         """
         Disks that will survive VM delete (delete_option=Detach / not Delete).
+        Each entry is (resource_group, disk_name).
         """
-        names = []
+        refs = []
         profile = getattr(vm, "storage_profile", None)
         if not profile:
-            return names
+            return refs
 
         os_disk = getattr(profile, "os_disk", None)
         if os_disk:
             delete_option = str(getattr(os_disk, "delete_option", "") or "").lower()
             managed = getattr(os_disk, "managed_disk", None)
             disk_id = getattr(managed, "id", None) if managed else None
-            name = self._disk_name_from_id(disk_id) or getattr(os_disk, "name", None)
-            if name and delete_option not in ("", "delete"):
-                names.append(name)
+            ref = self._disk_ref_from_id(disk_id, getattr(os_disk, "name", None))
+            if ref and delete_option not in ("", "delete"):
+                refs.append(ref)
                 logging.info(
-                    "Spot VM %s OS disk %s has delete_option=%s (will delete after VM)",
+                    "Spot VM %s OS disk %s/%s has delete_option=%s "
+                    "(will delete after VM)",
                     vm.name,
-                    name,
+                    ref[0],
+                    ref[1],
                     delete_option or "unset",
                 )
 
@@ -152,41 +174,50 @@ class SpotVM(Service):
             delete_option = str(getattr(data_disk, "delete_option", "") or "").lower()
             managed = getattr(data_disk, "managed_disk", None)
             disk_id = getattr(managed, "id", None) if managed else None
-            name = self._disk_name_from_id(disk_id) or getattr(data_disk, "name", None)
-            if name and delete_option not in ("", "delete"):
-                names.append(name)
+            ref = self._disk_ref_from_id(disk_id, getattr(data_disk, "name", None))
+            if ref and delete_option not in ("", "delete"):
+                refs.append(ref)
                 logging.info(
-                    "Spot VM %s data disk %s has delete_option=%s (will delete after VM)",
+                    "Spot VM %s data disk %s/%s has delete_option=%s "
+                    "(will delete after VM)",
                     vm.name,
-                    name,
+                    ref[0],
+                    ref[1],
                     delete_option or "unset",
                 )
-        return names
+        return refs
 
-    def _delete_disk(self, disk_name: str) -> None:
+    # Back-compat alias used by unit tests
+    def _detached_disk_names(self, vm) -> List[str]:
+        return [name for _, name in self._detached_disk_refs(vm)]
+
+    def _delete_disk(self, resource_group: str, disk_name: str) -> None:
+        label = f"{resource_group}/{disk_name}"
         if self.dry_run:
-            self.disks_names_to_delete.append(disk_name)
+            self.disks_names_to_delete.append(label)
             return
         try:
             poller = self.base.get_compute_client().disks.begin_delete(
-                self.base.resource_group, disk_name
+                resource_group, disk_name
             )
             poller.result(timeout=600)
-            logging.info("Deleted leftover Spot VM disk %s", disk_name)
-            self.disks_names_to_delete.append(disk_name)
+            logging.info("Deleted leftover Spot VM disk %s", label)
+            self.disks_names_to_delete.append(label)
         except ResourceNotFoundError:
-            logging.info("Disk %s already removed", disk_name)
-            self.disks_names_to_delete.append(disk_name)
+            # Only treat as gone when we targeted the RG from the disk id.
+            logging.info("Disk %s already removed", label)
+            self.disks_names_to_delete.append(label)
         except HttpResponseError as e:
             if getattr(e, "status_code", None) == 404:
-                self.disks_names_to_delete.append(disk_name)
+                logging.info("Disk %s already removed", label)
+                self.disks_names_to_delete.append(label)
                 return
-            logging.error("Failed to delete disk %s: %s", disk_name, e)
+            logging.error("Failed to delete disk %s: %s", label, e)
         except Exception as e:
-            logging.error("Failed to delete disk %s: %s", disk_name, e)
+            logging.error("Failed to delete disk %s: %s", label, e)
 
     def _delete_vm(self, vm) -> None:
-        leftover_disks = self._detached_disk_names(vm)
+        leftover_disks = self._detached_disk_refs(vm)
         vm_name = vm.name
 
         if not self.dry_run:
@@ -202,8 +233,8 @@ class SpotVM(Service):
                 raise
         self.instance_names_to_delete.append(vm_name)
 
-        for disk_name in leftover_disks:
-            self._delete_disk(disk_name)
+        for resource_group, disk_name in leftover_disks:
+            self._delete_disk(resource_group, disk_name)
 
         delete_vm_primary_nic(
             self.base.get_network_client(),
@@ -258,7 +289,7 @@ class SpotVM(Service):
                 )
                 continue
             dt = datetime.datetime.now().astimezone(time_created.tzinfo)
-            retention_age = self.get_retention_age(
+            retention_age = self.validated_retention_age(
                 vm.tags or {}, self.custom_age_tag_key
             )
             if retention_age:

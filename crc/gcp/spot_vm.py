@@ -92,10 +92,8 @@ class SpotVM(Service):
         if "goog-gke-node" in labels:
             return True
         metadata = getattr(instance, "metadata", None)
-        items = getattr(metadata, "items", None)
-        if not isinstance(items, (list, tuple)):
-            return False
-        for item in items:
+        # Iterate any sequence (proto-plus RepeatedComposite is not list/tuple).
+        for item in getattr(metadata, "items", None) or []:
             if getattr(item, "key", None) != "created-by":
                 continue
             value = str(getattr(item, "value", "") or "")

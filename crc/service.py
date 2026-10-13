@@ -56,7 +56,8 @@ class Service:
         for key, value in age.items():
             try:
                 number = int(value)
-            except (TypeError, ValueError) as e:
+            except (TypeError, ValueError, OverflowError) as e:
+                # OverflowError: e.g. int(inf) from literal {'days': 1e999}
                 raise ValueError("%s %s must be an integer" % (label, key)) from e
             if number < 0:
                 raise ValueError("%s %s cannot be negative" % (label, key))
@@ -113,16 +114,22 @@ class Service:
                 "Custom age tag %r is present but empty (skipping resource)", key
             )
             raise ValueError("custom age tag %r is present but empty" % key)
-        parsed = self._parse_literal(str(raw_str), key)
-        if parsed is None:
+        # Parse here (not via _parse_literal) so TypeError/etc. become
+        # ValueError for spot callers. Do not change _parse_literal —
+        # get_retention_age callers (disk/vm) rely on TypeError escaping
+        # into their except Exception fail-closed paths.
+        try:
+            parsed = ast.literal_eval(str(raw_str))
+        except (ValueError, SyntaxError, TypeError) as e:
             logging.warning(
-                "Custom age tag %r=%r is unparseable (skipping resource)",
+                "Custom age tag %r=%r is unparseable (skipping resource): %s",
                 key,
                 raw_str,
+                e,
             )
             raise ValueError(
                 "custom age tag %r is present but unparseable: %r" % (key, raw_str)
-            )
+            ) from e
         try:
             return self.require_positive_age(parsed, "custom age tag")
         except ValueError as e:
@@ -261,8 +268,7 @@ class Service:
         """Helper function to safely parse a literal value."""
         try:
             return ast.literal_eval(value)
-        except (ValueError, SyntaxError, TypeError) as e:
-            # TypeError: e.g. `{[1]: 2}` / `{{}}` — unhashable keys in literal.
+        except (ValueError, SyntaxError) as e:
             logging.error(f"Error parsing '{key}' tag value '{value}': {e}")
             return None
 

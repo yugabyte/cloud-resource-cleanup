@@ -417,6 +417,9 @@ class SpotInstanceRequests(Service):
                     request_id,
                     e,
                 )
+                # BotoCoreError may mean AWS applied the tags anyway — include
+                # this volume in invalidation, not only prior successes.
+                tagged_scope[volume_id] = scope_keys
                 self._invalidate_leftover_marker(
                     client, list(tagged_scope), tagged_scope
                 )

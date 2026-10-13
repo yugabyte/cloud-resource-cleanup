@@ -46,13 +46,14 @@ facts change.
   `crc/aws/disk.py` (`_normalize_age`) and in spot modules via
   `Service.require_positive_age` for `--age`, plus
   `Service.validated_retention_age` for custom age tags (absent → use
-  `--age`; present but empty/unparseable/invalid/zero → raise so callers
-  **skip** the resource — presence is checked separately from
-  `ast.literal_eval`, same fail-closed idea as `crc/aws/disk.py`). Shared
-  `Service.is_old` still treats empty age as match-all for callers that do
-  not use those helpers. `--max_age` / `MAX_AGE` can still shorten a floor
-  inside `is_old` (including to zero); do not set `MAX_AGE` to a zero
-  duration in Jenkins.
+  `--age`; present but empty/unparseable/invalid/zero → raise `ValueError`
+  so callers **skip** — including TypeError/`inf` OverflowError cases).
+  Spot-only: do not soften `_parse_literal` for this; other modules
+  (`get_retention_age`) still rely on TypeError escaping into their
+  `except Exception` fail-closed paths. Shared `Service.is_old` still
+  treats empty age as match-all for callers that do not use those helpers.
+  `--max_age` / `MAX_AGE` can still shorten a floor inside `is_old`
+  (including to zero); do not set `MAX_AGE` to a zero duration in Jenkins.
 
 **When adding a new destructive module**
 

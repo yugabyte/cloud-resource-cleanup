@@ -406,6 +406,66 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.cancel_spot_instance_requests.assert_not_called()
         client.terminate_instances.assert_not_called()
         client.delete_volume.assert_not_called()
+        # Ambiguous/failed tag still invalidates that volume (may have applied)
+        client.delete_tags.assert_called_once()
+        self.assertEqual(
+            client.delete_tags.call_args.kwargs.get("Resources")
+            or client.delete_tags.call_args[1].get("Resources"),
+            ["vol-keep"],
+        )
+
+    def test_create_tags_timeout_invalidates_failing_volume(self):
+        from botocore.exceptions import ReadTimeoutError
+
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "running"},
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-a",
+                                        "DeleteOnTermination": False,
+                                    }
+                                },
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-b",
+                                        "DeleteOnTermination": False,
+                                    }
+                                },
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_volumes.return_value = {"Volumes": [{"Tags": []}]}
+        client.create_tags.side_effect = [
+            None,  # vol-a ok
+            ReadTimeoutError(endpoint_url="https://ec2.amazonaws.com"),
+        ]
+        s._cleanup_one(
+            client,
+            "us-west-2",
+            "sir-1",
+            "i-1",
+            "persistent",
+            request_tags=[{"Key": "yb_owner", "Value": "qa"}],
+        )
+        client.cancel_spot_instance_requests.assert_not_called()
+        # Both volumes invalidated (prior success + ambiguous failure)
+        cleared = {
+            call.kwargs.get("Resources")[0]
+            if call.kwargs.get("Resources")
+            else call[1]["Resources"][0]
+            for call in client.delete_tags.call_args_list
+        }
+        self.assertEqual(cleared, {"vol-a", "vol-b"})
 
     def test_invalid_custom_age_tag_skips_request(self):
         s = _spot(custom_age_tag_key="retention")

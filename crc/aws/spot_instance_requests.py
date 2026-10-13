@@ -3,6 +3,7 @@
 import datetime
 import fnmatch
 import logging
+import re
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -20,7 +21,9 @@ class SpotInstanceRequests(Service):
 
     Tags are read from the **spot request** (not the instance). That matches
     YBA fleets where yb_owner / yb_yba_url / universe-uuid live on the request
-    while the EC2 instance is untagged.
+    while the EC2 instance is untagged. DoT=false leftover volumes are also
+    checked for their own exception/notags tags (and sensitive yb_task) before
+    delete — same contract as ``crc/aws/disk.py``.
 
     Order of operations (critical for Type=persistent):
       1. tag DoT=false volumes (before cancel, so CreateTags failure is a no-op)
@@ -36,7 +39,8 @@ class SpotInstanceRequests(Service):
     before terminate so a later run can still find *available* orphans via
     ``describe_volumes`` after AWS drops the spot request (~4h). Volumes from
     instances already gone before CRC tagged them are not rediscovered. The
-    region sweep re-applies those gates; in-use volumes are not swept.
+    region sweep re-applies filter/exception/notags/age (live request when
+    present); in-use volumes are not swept.
 
     Matching cancelled requests that still have an InstanceId are cleaned up
     too (CRC retry after a partial run, or a hand-cancelled request whose
@@ -58,6 +62,16 @@ class SpotInstanceRequests(Service):
     # How long to wait for a volume to leave 'in-use' after terminate.
     VOLUME_AVAILABLE_WAIT_SEC = 180
     VOLUME_POLL_INTERVAL_SEC = 5
+    # Same defensive skips as crc/aws/disk.py even if Jenkins omits
+    # --exception_tags for these yb_task values.
+    SENSITIVE_YB_TASK = {
+        "infrastructure",
+        "infra",
+        "ipsec",
+        "vpn",
+        "prod",
+        "production",
+    }
 
     def __init__(
         self,
@@ -212,6 +226,105 @@ class SpotInstanceRequests(Service):
             )
         return False
 
+    def _is_sensitive_yb_task(self, value: str) -> bool:
+        folded = value.casefold().strip()
+        if not folded:
+            return False
+        if folded in self.SENSITIVE_YB_TASK:
+            return True
+        for token in re.split(r"[-_\s/]+", folded):
+            if token in self.SENSITIVE_YB_TASK:
+                return True
+        for sensitive in self.SENSITIVE_YB_TASK:
+            if folded.startswith(sensitive + "-") or folded.startswith(sensitive + "_"):
+                return True
+        return False
+
+    def _tags_have_sensitive_yb_task(self, tags: List[Dict[str, str]]) -> bool:
+        tag_map = {t["Key"]: t.get("Value", "") for t in tags if t.get("Key")}
+        for key in ("yb_task", "yb-task"):
+            if key in tag_map and self._is_sensitive_yb_task(tag_map[key]):
+                return True
+        return False
+
+    def _volume_tags_protect_from_delete(self, tags: List[Dict[str, str]]) -> bool:
+        """True when volume-owned tags mean we must not delete (exception/notags/yb_task)."""
+        if self._should_skip_spot_request(tags):
+            return True
+        return self._tags_have_sensitive_yb_task(tags)
+
+    def _describe_volume_tag_list(
+        self, client, volume_id: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """Return the volume's Tags list, or None if describe fails."""
+        try:
+            desc = client.describe_volumes(VolumeIds=[volume_id])
+            volumes = desc.get("Volumes") or []
+            if not volumes:
+                return []
+            return [
+                t
+                for t in (volumes[0].get("Tags") or [])
+                if t.get("Key")
+            ]
+        except (ClientError, BotoCoreError) as e:
+            logging.error(
+                "describe_volumes failed for %s while checking volume tags: %s",
+                volume_id,
+                e,
+            )
+            return None
+
+    def _volume_ok_to_delete(self, client, volume_id: str) -> bool:
+        """Fail closed: skip delete when tags cannot be read or protect the volume."""
+        tags = self._describe_volume_tag_list(client, volume_id)
+        if tags is None:
+            logging.error(
+                "Skipping leftover volume %s: could not read tags (fail closed)",
+                volume_id,
+            )
+            return False
+        # Ignore CRC leftover/scope keys — protection is the volume's own tags.
+        own = [
+            t
+            for t in tags
+            if t["Key"] != self.LEFTOVER_FROM_TAG
+            and not t["Key"].startswith(self.LEFTOVER_SCOPE_PREFIX)
+        ]
+        if self._volume_tags_protect_from_delete(own):
+            logging.info(
+                "Skipping leftover volume %s: protected by volume tags "
+                "(exception/notags/sensitive yb_task)",
+                volume_id,
+            )
+            return False
+        return True
+
+    def _filter_deletable_leftover_volumes(
+        self, client, volume_ids: List[str]
+    ) -> List[str]:
+        return [vid for vid in volume_ids if self._volume_ok_to_delete(client, vid)]
+
+    def _passes_age_gate(
+        self, tags: List[Dict[str, str]], create_time
+    ) -> bool:
+        """True if old enough to delete. Missing create time / bad custom age → keep."""
+        if create_time is None:
+            return False
+        try:
+            retention_age = self.validated_retention_age(
+                tags, self.custom_age_tag_key
+            )
+        except ValueError:
+            return False
+        try:
+            now = datetime.datetime.now().astimezone(create_time.tzinfo)
+        except Exception:
+            if getattr(create_time, "tzinfo", None) is None:
+                create_time = create_time.replace(tzinfo=datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.timezone.utc)
+        return self.is_old(retention_age or self.age, now, create_time)
+
     def _instance_state_and_dot_false_volumes(
         self, client, instance_id: str
     ) -> Tuple[Optional[str], List[str]]:
@@ -288,12 +401,13 @@ class SpotInstanceRequests(Service):
         self,
         request_id: str,
         request_tags: Optional[List[Dict[str, str]]],
-        existing_keys: Optional[set] = None,
     ) -> List[Dict[str, str]]:
         """
         Tags written onto each leftover volume: crc_leftover_of plus
         filter/exception/notags values under LEFTOVER_SCOPE_PREFIX (never
-        overwrites the volume's own tag keys).
+        overwrites the volume's own unprefixed tag keys). Prefixed scope keys
+        are always written/overwritten so a prior failed invalidate cannot
+        leave stale filter values sticky across retries.
         """
         tags: List[Dict[str, str]] = [
             {"Key": self.LEFTOVER_FROM_TAG, "Value": request_id}
@@ -306,13 +420,15 @@ class SpotInstanceRequests(Service):
         tag_map = {
             t["Key"]: t.get("Value", "") for t in (request_tags or []) if t.get("Key")
         }
-        already = existing_keys or set()
         for key in sorted(keys_needed):
             if key not in tag_map:
                 continue
-            pkey = self.LEFTOVER_SCOPE_PREFIX + key
-            if pkey not in already:
-                tags.append({"Key": pkey, "Value": tag_map[key]})
+            tags.append(
+                {
+                    "Key": self.LEFTOVER_SCOPE_PREFIX + key,
+                    "Value": tag_map[key],
+                }
+            )
         return tags
 
     def _prefixed_scope_keys_on_volume(self, client, volume_id: str) -> List[str]:
@@ -384,10 +500,43 @@ class SpotInstanceRequests(Service):
                     )
                 except (ClientError, BotoCoreError) as e:
                     logging.error(
-                        "Failed to clear scope tags from volume %s: %s",
+                        "Failed to clear scope tags from volume %s: %s — "
+                        "trying per-key delete, then overwrite",
                         volume_id,
                         e,
                     )
+                    for key in scope_keys:
+                        try:
+                            client.delete_tags(
+                                Resources=[volume_id], Tags=[{"Key": key}]
+                            )
+                        except (ClientError, BotoCoreError) as per_e:
+                            logging.error(
+                                "Failed to clear scope tag %s from volume %s: %s",
+                                key,
+                                volume_id,
+                                per_e,
+                            )
+                    # Overwrite sticky values so a later --resource disk run
+                    # with the same filter_tags cannot match them.
+                    try:
+                        client.create_tags(
+                            Resources=[volume_id],
+                            Tags=[
+                                {
+                                    "Key": k,
+                                    "Value": self.LEFTOVER_INVALID_VALUE,
+                                }
+                                for k in scope_keys
+                            ],
+                        )
+                    except (ClientError, BotoCoreError) as overwrite_e:
+                        logging.error(
+                            "Failed to overwrite sticky scope tags on "
+                            "volume %s: %s",
+                            volume_id,
+                            overwrite_e,
+                        )
             try:
                 client.create_tags(
                     Resources=[volume_id],
@@ -431,15 +580,13 @@ class SpotInstanceRequests(Service):
             return {}
         tagged_scope: Dict[str, List[str]] = {}
         for volume_id in volume_ids:
-            existing = self._volume_tag_keys(client, volume_id)
-            if existing is None:
+            # describe_volumes fail-closed: do not cancel if we cannot tag safely.
+            if self._volume_tag_keys(client, volume_id) is None:
                 self._invalidate_leftover_marker(
                     client, list(tagged_scope), tagged_scope
                 )
                 return None
-            tags = self._scope_tags_for_volume(
-                request_id, request_tags, existing_keys=existing
-            )
+            tags = self._scope_tags_for_volume(request_id, request_tags)
             scope_keys = [
                 t["Key"] for t in tags if t["Key"] != self.LEFTOVER_FROM_TAG
             ]
@@ -509,13 +656,13 @@ class SpotInstanceRequests(Service):
 
     def _live_spot_request_tags(
         self, client, request_id: str
-    ) -> Tuple[str, Optional[List[Dict[str, str]]]]:
+    ) -> Tuple[str, Optional[List[Dict[str, str]]], Optional[datetime.datetime]]:
         """
-        Look up tags for a spot request during sweep.
+        Look up tags/CreateTime for a spot request during sweep.
 
-        Returns ``(\"live\", tags)``, ``(\"gone\", None)`` when AWS no longer
-        lists the request, or ``(\"error\", None)`` on other API failures
-        (caller must fail closed and skip the volume).
+        Returns ``(\"live\", tags, create_time)``, ``(\"gone\", None, None)``
+        when AWS no longer lists the request, or ``(\"error\", None, None)``
+        on other API failures (caller must fail closed and skip the volume).
         """
         try:
             resp = client.describe_spot_instance_requests(
@@ -527,13 +674,13 @@ class SpotInstanceRequests(Service):
                 "InvalidSpotInstanceRequestID.NotFound",
                 "InvalidSpotInstanceRequestID.Malformed",
             }:
-                return "gone", None
+                return "gone", None, None
             logging.error(
                 "describe_spot_instance_requests for %s failed during sweep: %s",
                 request_id,
                 e,
             )
-            return "error", None
+            return "error", None, None
         except BotoCoreError as e:
             logging.error(
                 "describe_spot_instance_requests transport error for %s "
@@ -541,18 +688,36 @@ class SpotInstanceRequests(Service):
                 request_id,
                 e,
             )
-            return "error", None
+            return "error", None, None
         reqs = resp.get("SpotInstanceRequests") or []
         if not reqs:
-            return "gone", None
-        return "live", reqs[0].get("Tags") or []
+            return "gone", None, None
+        req = reqs[0]
+        return "live", req.get("Tags") or [], req.get("CreateTime")
+
+    def _volume_own_tags_for_protect(self, volume: dict) -> List[Dict[str, str]]:
+        """Volume-owned tags only (exclude crc_leftover_of / crc_leftover_tag_*)."""
+        out: List[Dict[str, str]] = []
+        for t in volume.get("Tags") or []:
+            key = t.get("Key") or ""
+            if (
+                not key
+                or key == self.LEFTOVER_FROM_TAG
+                or key.startswith(self.LEFTOVER_SCOPE_PREFIX)
+            ):
+                continue
+            out.append(t)
+        return out
 
     def _volume_passes_sweep_gates(self, client, volume: dict) -> bool:
         """
-        Apply the same filter/exception/notags gates as spot requests.
+        Apply the same filter/exception/notags/untagged/age gates as spot
+        requests, plus the volume's own exception/notags/sensitive yb_task.
+
         Prefer live request tags when the request still exists (so a newly
-        added exception tag still protects the volume); otherwise use the
-        scope tags copied onto the volume at tag time.
+        added exception or custom age tag still protects the volume);
+        otherwise use the scope tags copied onto the volume at tag time and
+        the volume CreateTime for age.
         """
         tag_map = {
             t["Key"]: t.get("Value", "")
@@ -562,13 +727,29 @@ class SpotInstanceRequests(Service):
         request_id = tag_map.get(self.LEFTOVER_FROM_TAG)
         if not request_id or request_id == self.LEFTOVER_INVALID_VALUE:
             return False
-        status, live_tags = self._live_spot_request_tags(client, request_id)
+
+        # Volume-owned tags always apply (DoT=false volumes may be protected
+        # even when the spot request itself is not).
+        if self._volume_tags_protect_from_delete(
+            self._volume_own_tags_for_protect(volume)
+        ):
+            return False
+
+        status, live_tags, create_time = self._live_spot_request_tags(
+            client, request_id
+        )
         if status == "error":
             return False
         if status == "live":
-            if self._should_skip_spot_request(live_tags or []):
+            tags = live_tags or []
+            # Untagged live requests: fail closed (same as _get_filtered_requests).
+            if not tags:
                 return False
-            if self.filter_tags and not self._matches_filter_tags(live_tags or []):
+            if self._should_skip_spot_request(tags):
+                return False
+            if self.filter_tags and not self._matches_filter_tags(tags):
+                return False
+            if not self._passes_age_gate(tags, create_time):
                 return False
             return True
         # Request gone (~4h): gate on crc_leftover_tag_* copies (+ volume tags).
@@ -576,6 +757,8 @@ class SpotInstanceRequests(Service):
         if self._should_skip_spot_request(vol_tags):
             return False
         if self.filter_tags and not self._matches_filter_tags(vol_tags):
+            return False
+        if not self._passes_age_gate(vol_tags, volume.get("CreateTime")):
             return False
         return True
 
@@ -678,10 +861,13 @@ class SpotInstanceRequests(Service):
             return
 
         if self.dry_run:
+            deletable = self._filter_deletable_leftover_volumes(
+                client, leftover_volumes
+            )
             self.spot_requests_to_delete.append(request_id)
             if instance_id and not instance_done:
                 self.instance_ids_to_delete.append(instance_id)
-            self.volumes_to_delete.extend(leftover_volumes)
+            self.volumes_to_delete.extend(deletable)
             logging.info(
                 "Dry run: would %s spot request %s (type=%s), terminate %s, "
                 "delete leftover volumes %s",
@@ -689,7 +875,7 @@ class SpotInstanceRequests(Service):
                 request_id,
                 request_type,
                 instance_id or "none",
-                leftover_volumes,
+                deletable,
             )
             return
 
@@ -827,7 +1013,9 @@ class SpotInstanceRequests(Service):
             )
 
         deleted_any_volume = False
-        for volume_id in leftover_volumes:
+        for volume_id in self._filter_deletable_leftover_volumes(
+            client, leftover_volumes
+        ):
             result = self._wait_volume_available_then_delete(client, volume_id)
             if result == "deleted":
                 self.volumes_to_delete.append(volume_id)
@@ -845,7 +1033,8 @@ class SpotInstanceRequests(Service):
     def _sweep_tagged_leftover_volumes(self, client, region: str) -> None:
         """
         Delete *available* volumes tagged crc_leftover_of from a prior run,
-        only when filter/exception/notags still allow it. Skips in-use volumes
+        only when filter/exception/notags/untagged/age still allow it (and
+        the volume's own tags do not protect it). Skips in-use volumes
         (still attached — not leftovers yet). Covers AWS dropping the spot
         request after ~4h. Errors on one volume do not abort the rest.
         """

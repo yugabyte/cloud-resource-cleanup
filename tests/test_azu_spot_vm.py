@@ -146,7 +146,9 @@ class AzureDeleteOrderTests(unittest.TestCase):
 
         with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait", side_effect=track_vm_delete), mock.patch(
             "crc.azu.spot_vm.delete_vm_primary_nic"
-        ), mock.patch.object(s, "_delete_disk", side_effect=track_disk):
+        ), mock.patch.object(s, "_disk_should_skip_delete", return_value=False), mock.patch.object(
+            s, "_delete_disk", side_effect=track_disk
+        ):
             s._delete_vm(vm)
 
         self.assertEqual(call_order, ["vm", ("disk", "rg", "os-detach", True)])
@@ -161,6 +163,9 @@ class AzureDeleteOrderTests(unittest.TestCase):
                 delete_option="Detach",
             )
         )
+        disk_obj = mock.Mock()
+        disk_obj.tags = {}
+        s.base.get_compute_client.return_value.disks.get.return_value = disk_obj
         with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait") as delete_vm, mock.patch(
             "crc.azu.spot_vm.delete_vm_primary_nic"
         ):
@@ -168,6 +173,41 @@ class AzureDeleteOrderTests(unittest.TestCase):
         delete_vm.assert_not_called()
         self.assertEqual(s.instance_names_to_delete, ["spot-1"])
         self.assertEqual(s.disks_names_to_delete, ["rg/os-detach"])
+
+    def test_disk_exception_tag_skips_delete(self):
+        s = _azu_spot(dry_run=False, exception_tags={"keep": ["true"]})
+        vm = _vm(
+            os_disk=_disk(
+                name="os-detach",
+                disk_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/disks/os-detach",
+                delete_option="Detach",
+            )
+        )
+        disk_obj = mock.Mock()
+        disk_obj.tags = {"keep": "true"}
+        s.base.get_compute_client.return_value.disks.get.return_value = disk_obj
+        with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait"), mock.patch(
+            "crc.azu.spot_vm.delete_vm_primary_nic"
+        ), mock.patch.object(s, "_delete_disk") as delete_disk:
+            s._delete_vm(vm)
+        delete_disk.assert_not_called()
+        self.assertEqual(s.disks_names_to_delete, [])
+
+    def test_disk_outside_resource_group_skipped(self):
+        s = _azu_spot(dry_run=False)
+        vm = _vm(
+            os_disk=_disk(
+                name="os-detach",
+                disk_id="/subscriptions/x/resourceGroups/other-rg/providers/Microsoft.Compute/disks/os-detach",
+                delete_option="Detach",
+            )
+        )
+        with mock.patch("crc.azu.spot_vm.begin_delete_vm_and_wait"), mock.patch(
+            "crc.azu.spot_vm.delete_vm_primary_nic"
+        ), mock.patch.object(s, "_delete_disk") as delete_disk:
+            s._delete_vm(vm)
+        delete_disk.assert_not_called()
+        s.base.get_compute_client.return_value.disks.get.assert_not_called()
 
 
 if __name__ == "__main__":

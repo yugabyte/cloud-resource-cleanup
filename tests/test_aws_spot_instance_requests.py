@@ -242,6 +242,9 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 }
             ]
         }
+        client.describe_volumes.return_value = {
+            "Volumes": [{"VolumeId": "vol-keep", "Tags": []}]
+        }
 
         s._cleanup_one(client, "us-west-2", "sir-1", "i-1", "persistent")
 
@@ -249,6 +252,128 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.terminate_instances.assert_not_called()
         client.delete_volume.assert_not_called()
         self.assertEqual(s.volumes_to_delete, ["vol-keep"])
+
+    def test_volume_exception_tag_skips_leftover_delete(self):
+        s = _spot(dry_run=False, exception_tags={"autoclean": ["false"]})
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "terminated"},
+                            "BlockDeviceMappings": [],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_volumes.side_effect = [
+            # _volumes_tagged_leftover via paginator is separate; list path:
+            # first describe for tag check before delete
+            {
+                "Volumes": [
+                    {
+                        "VolumeId": "vol-protected",
+                        "Tags": [{"Key": "autoclean", "Value": "false"}],
+                    }
+                ]
+            },
+        ]
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [
+            {
+                "Volumes": [
+                    {
+                        "VolumeId": "vol-protected",
+                        "State": "available",
+                        "Tags": [
+                            {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-1"},
+                            {"Key": "autoclean", "Value": "false"},
+                        ],
+                    }
+                ]
+            }
+        ]
+        client.get_paginator.return_value = paginator
+
+        s._cleanup_one(
+            client,
+            "us-west-2",
+            "sir-1",
+            "i-1",
+            "one-time",
+            already_cancelled=True,
+        )
+        client.delete_volume.assert_not_called()
+        self.assertEqual(s.volumes_to_delete, [])
+
+    def test_volume_sensitive_yb_task_skips_leftover_delete(self):
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "terminated"},
+                            "BlockDeviceMappings": [],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_volumes.return_value = {
+            "Volumes": [
+                {
+                    "VolumeId": "vol-infra",
+                    "Tags": [{"Key": "yb_task", "Value": "infrastructure"}],
+                }
+            ]
+        }
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [
+            {
+                "Volumes": [
+                    {
+                        "VolumeId": "vol-infra",
+                        "State": "available",
+                        "Tags": [
+                            {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-1"},
+                            {"Key": "yb_task", "Value": "infrastructure"},
+                        ],
+                    }
+                ]
+            }
+        ]
+        client.get_paginator.return_value = paginator
+
+        s._cleanup_one(
+            client,
+            "us-west-2",
+            "sir-1",
+            "i-1",
+            "one-time",
+            already_cancelled=True,
+        )
+        client.delete_volume.assert_not_called()
+
+    def test_scope_tags_overwrite_existing_prefix_keys(self):
+        s = _spot(filter_tags={"yb_owner": ["qa"]})
+        tags = s._scope_tags_for_volume(
+            "sir-1", [{"Key": "yb_owner", "Value": "qa"}]
+        )
+        self.assertIn(
+            {"Key": s.LEFTOVER_SCOPE_PREFIX + "yb_owner", "Value": "qa"}, tags
+        )
+        # Retag always includes prefixed keys (no "already present" skip).
+        tags2 = s._scope_tags_for_volume(
+            "sir-1", [{"Key": "yb_owner", "Value": "qa-new"}]
+        )
+        self.assertIn(
+            {"Key": s.LEFTOVER_SCOPE_PREFIX + "yb_owner", "Value": "qa-new"},
+            tags2,
+        )
 
 
     def test_already_cancelled_skips_cancel_then_terminates(self):
@@ -503,11 +628,15 @@ class SpotCleanupOrderTests(unittest.TestCase):
     def test_sweep_tagged_leftover_volumes(self):
         s = _spot(dry_run=False)
         client = mock.MagicMock()
+        old = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=7
+        )
         page = {
             "Volumes": [
                 {
                     "VolumeId": "vol-orphan",
                     "State": "available",
+                    "CreateTime": old,
                     "Tags": [
                         {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-gone"},
                         {"Key": "yb_owner", "Value": "qa"},
@@ -536,6 +665,107 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.delete_volume.assert_called_once_with(VolumeId="vol-orphan")
         self.assertEqual(s.volumes_to_delete, ["vol-orphan"])
 
+    def test_sweep_skips_young_live_request(self):
+        s = _spot(dry_run=False, age={"days": 10})
+        client = mock.MagicMock()
+        young = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=2
+        )
+        page = {
+            "Volumes": [
+                {
+                    "VolumeId": "vol-young",
+                    "State": "available",
+                    "CreateTime": young,
+                    "Tags": [
+                        {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-live"},
+                        {"Key": "yb_owner", "Value": "qa"},
+                    ],
+                }
+            ]
+        }
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [page]
+        client.get_paginator.return_value = paginator
+        client.describe_spot_instance_requests.return_value = {
+            "SpotInstanceRequests": [
+                {
+                    "SpotInstanceRequestId": "sir-live",
+                    "CreateTime": young,
+                    "Tags": [{"Key": "yb_owner", "Value": "qa"}],
+                }
+            ]
+        }
+        s._sweep_tagged_leftover_volumes(client, "us-west-2")
+        client.delete_volume.assert_not_called()
+
+    def test_sweep_skips_untagged_live_request(self):
+        s = _spot(dry_run=False, filter_tags={})
+        client = mock.MagicMock()
+        old = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=7
+        )
+        page = {
+            "Volumes": [
+                {
+                    "VolumeId": "vol-untagged-req",
+                    "State": "available",
+                    "CreateTime": old,
+                    "Tags": [
+                        {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-live"},
+                    ],
+                }
+            ]
+        }
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [page]
+        client.get_paginator.return_value = paginator
+        client.describe_spot_instance_requests.return_value = {
+            "SpotInstanceRequests": [
+                {
+                    "SpotInstanceRequestId": "sir-live",
+                    "CreateTime": old,
+                    "Tags": [],
+                }
+            ]
+        }
+        s._sweep_tagged_leftover_volumes(client, "us-west-2")
+        client.delete_volume.assert_not_called()
+
+    def test_sweep_skips_volume_own_exception_on_live_request(self):
+        s = _spot(dry_run=False, exception_tags={"keep": ["true"]})
+        client = mock.MagicMock()
+        old = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=7
+        )
+        page = {
+            "Volumes": [
+                {
+                    "VolumeId": "vol-keep",
+                    "State": "available",
+                    "CreateTime": old,
+                    "Tags": [
+                        {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-live"},
+                        {"Key": "keep", "Value": "true"},
+                    ],
+                }
+            ]
+        }
+        paginator = mock.MagicMock()
+        paginator.paginate.return_value = [page]
+        client.get_paginator.return_value = paginator
+        client.describe_spot_instance_requests.return_value = {
+            "SpotInstanceRequests": [
+                {
+                    "SpotInstanceRequestId": "sir-live",
+                    "CreateTime": old,
+                    "Tags": [{"Key": "yb_owner", "Value": "qa"}],
+                }
+            ]
+        }
+        s._sweep_tagged_leftover_volumes(client, "us-west-2")
+        client.delete_volume.assert_not_called()
+
     def test_sweep_skips_other_owner_and_in_use(self):
         s = _spot(dry_run=False, filter_tags={"yb_owner": ["qa"]})
         client = mock.MagicMock()
@@ -544,6 +774,8 @@ class SpotCleanupOrderTests(unittest.TestCase):
                 {
                     "VolumeId": "vol-other",
                     "State": "available",
+                    "CreateTime": datetime.datetime.now(datetime.timezone.utc)
+                    - datetime.timedelta(days=7),
                     "Tags": [
                         {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-x"},
                         {"Key": "yb_owner", "Value": "prod"},
@@ -706,14 +938,26 @@ class SpotCleanupOrderTests(unittest.TestCase):
             "persistent",
             request_tags=[{"Key": "yb_owner", "Value": "qa"}],
         )
-        # First create_tags = leftover marker; second = invalidate sentinel
-        self.assertEqual(client.create_tags.call_count, 2)
+        # leftover marker + sticky scope overwrite + leftover sentinel
+        self.assertEqual(client.create_tags.call_count, 3)
         last_tags = client.create_tags.call_args_list[-1].kwargs.get("Tags")
         if last_tags is None:
             last_tags = client.create_tags.call_args_list[-1][1]["Tags"]
         self.assertEqual(
             last_tags,
             [{"Key": s.LEFTOVER_FROM_TAG, "Value": s.LEFTOVER_INVALID_VALUE}],
+        )
+        scope_overwrite = client.create_tags.call_args_list[1].kwargs.get("Tags")
+        if scope_overwrite is None:
+            scope_overwrite = client.create_tags.call_args_list[1][1]["Tags"]
+        self.assertEqual(
+            scope_overwrite,
+            [
+                {
+                    "Key": s.LEFTOVER_SCOPE_PREFIX + "yb_owner",
+                    "Value": s.LEFTOVER_INVALID_VALUE,
+                }
+            ],
         )
 
     def test_sweep_rejects_terminate_failed_sentinel(self):

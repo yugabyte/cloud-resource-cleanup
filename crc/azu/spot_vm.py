@@ -200,6 +200,74 @@ class SpotVM(Service):
     def _detached_disk_names(self, vm) -> List[str]:
         return [name for _, name, _ in self._detached_disk_refs(vm)]
 
+    def _disk_should_skip_delete(
+        self, resource_group: str, disk_name: str
+    ) -> bool:
+        """
+        Skip disks outside --resource_group, or whose own tags match
+        exception_tags / notags (same contract as crc/azu/disk.py).
+        Fail closed when disks.get fails for a reason other than 404.
+        """
+        if resource_group.casefold() != self.base.resource_group.casefold():
+            logging.info(
+                "Skipping leftover Spot disk %s/%s: outside --resource_group %s",
+                resource_group,
+                disk_name,
+                self.base.resource_group,
+            )
+            return True
+        try:
+            disk = self.base.get_compute_client().disks.get(
+                resource_group, disk_name
+            )
+        except ResourceNotFoundError:
+            return False
+        except HttpResponseError as e:
+            if getattr(e, "status_code", None) == 404:
+                return False
+            logging.error(
+                "Failed to get disk %s/%s for tag check (skipping): %s",
+                resource_group,
+                disk_name,
+                e,
+            )
+            return True
+        except Exception as e:
+            logging.error(
+                "Failed to get disk %s/%s for tag check (skipping): %s",
+                resource_group,
+                disk_name,
+                e,
+            )
+            return True
+
+        tags = disk.tags or {}
+        exception_tags_match = (
+            self.exception_tags
+            and tags
+            and any(
+                key in tags and (not value or tags[key] in value)
+                for key, value in self.exception_tags.items()
+            )
+        )
+        no_tags_match = (
+            self.notags
+            and tags
+            and all(
+                key in tags and (not value or tags[key] in value)
+                for key, value in self.notags.items()
+            )
+        )
+        if exception_tags_match or no_tags_match:
+            logging.info(
+                "Skipping leftover Spot disk %s/%s: exception_tags/notags "
+                "on the disk",
+                resource_group,
+                disk_name,
+            )
+            return True
+        return False
+
     def _delete_disk(
         self, resource_group: str, disk_name: str, rg_from_id: bool = False
     ) -> None:
@@ -258,6 +326,8 @@ class SpotVM(Service):
         self.instance_names_to_delete.append(vm_name)
 
         for resource_group, disk_name, rg_from_id in leftover_disks:
+            if self._disk_should_skip_delete(resource_group, disk_name):
+                continue
             self._delete_disk(resource_group, disk_name, rg_from_id)
 
         delete_vm_primary_nic(

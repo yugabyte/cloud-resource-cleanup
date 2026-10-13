@@ -136,12 +136,17 @@ facts change.
 - Before terminate (and when BDMs are still visible on a shutting-down
   instance), each `DeleteOnTermination=false` volume is tagged
   `crc_leftover_of=<spot-request-id>` plus filter/exception/notags copies under
-  `crc_leftover_tag_*` (prefixed so volume-owned tags are never overwritten).
-  Later runs rediscover available orphans via `describe_volumes` (per-request
-  and a gated region sweep). The sweep skips in-use volumes and re-checks
-  filters (live request tags when present). If cancel/terminate fails after
-  tagging, the leftover marker **and** every `crc_leftover_tag_*` key are
-  cleared (DeleteTags, or leftover overwritten to `terminate-failed` on
+  `crc_leftover_tag_*` (prefixed so volume-owned tags are never overwritten;
+  prefixed keys are always overwritten on retag so sticky values cannot linger
+  after a failed invalidate). Later runs rediscover available orphans via
+  `describe_volumes` (per-request and a gated region sweep). Before delete,
+  each volume's **own** tags are checked for `--exception_tags` / `--notags`
+  and the same sensitive `yb_task` values as `crc/aws/disk.py`. The sweep
+  skips in-use volumes and re-checks filter/exception/notags/untagged/age
+  (live request tags + CreateTime when present; otherwise scope copies +
+  volume CreateTime) plus volume-owned protection tags. If cancel/terminate
+  fails after tagging, the leftover marker **and** every `crc_leftover_tag_*`
+  key are cleared (DeleteTags / per-key / overwrite to `terminate-failed` on
   ClientError/BotoCoreError).
   Cancel failures catch ClientError and BotoCoreError. Ambiguous terminate
   transport errors re-check instance state and keep the marker only when
@@ -165,7 +170,9 @@ facts change.
 Requires a positive `--age`. Custom age tags: absent → `--age`; present but
 empty/unparseable/invalid/zero → skip the VM. Azure skips untagged Spot VMs
 (same as `crc.azu.vm.VM`). Only managed disks with an ARM id are queued
-(ephemeral OS disks are skipped).
+(ephemeral OS disks are skipped). Leftover Detach disks are skipped when they
+live outside `--resource_group`, or when `disks.get` shows
+`--exception_tags` / `--notags` on the disk itself (same as `crc/azu/disk.py`).
 
 **Gap:** leftover disk refs are taken from the VM before delete. If
 `_delete_disk` fails after the VM is gone, the disk is not rediscovered on a

@@ -313,9 +313,13 @@ class SpotVM(Service):
                 )
                 continue
             dt = datetime.datetime.now().astimezone(time_created.tzinfo)
-            retention_age = self.validated_retention_age(
-                vm.tags or {}, self.custom_age_tag_key
-            )
+            try:
+                retention_age = self.validated_retention_age(
+                    vm.tags or {}, self.custom_age_tag_key
+                )
+            except ValueError:
+                # Present but invalid custom age tag — fail closed (keep).
+                continue
             if retention_age:
                 logging.info("Updating age for Spot VM: %s", vm.name)
             if not self.is_old(retention_age or self.age, dt, time_created):

@@ -45,11 +45,13 @@ facts change.
 - Strict rejection of unknown keys, zero durations, and typos exists in
   `crc/aws/disk.py` (`_normalize_age`) and in spot modules via
   `Service.require_positive_age` for `--age`, plus
-  `Service.validated_retention_age` for custom age tags (invalid/zero tags
-  fall back to `--age`). Shared `Service.is_old` still treats empty age as
-  match-all for callers that do not use those helpers. `--max_age` /
-  `MAX_AGE` can still shorten a floor inside `is_old` (including to zero);
-  do not set `MAX_AGE` to a zero duration in Jenkins.
+  `Service.validated_retention_age` for custom age tags (absent → use
+  `--age`; present but invalid/zero → raise so callers **skip** the
+  resource, same fail-closed idea as `crc/aws/disk.py`). Shared
+  `Service.is_old` still treats empty age as match-all for callers that do
+  not use those helpers. `--max_age` / `MAX_AGE` can still shorten a floor
+  inside `is_old` (including to zero); do not set `MAX_AGE` to a zero
+  duration in Jenkins.
 
 **When adding a new destructive module**
 
@@ -119,9 +121,10 @@ facts change.
 - Tags for YBA fleets live on the spot request; filtering is on the request.
   Untagged requests are always skipped (fail-closed).
 - `--age` is required and must be >0 (`Service.require_positive_age`).
-- Order: cancel → terminate → wait for EBS `available` → delete volumes with
-  `DeleteOnTermination=false`. A failed cancel does **not** terminate (avoids
-  relaunch for `Type=persistent`).
+- Order: tag DoT=false volumes → cancel → terminate → wait for EBS
+  `available` → delete volumes. Tagging runs before cancel so a CreateTags
+  failure leaves the request untouched. A failed cancel does **not**
+  terminate (avoids relaunch for `Type=persistent`).
 - Cancelled requests that still have an `InstanceId` (and match tags/age) are
   cleaned up: terminate the instance if still running, then delete
   `DeleteOnTermination=false` volumes. That finishes a prior CRC run that
@@ -134,9 +137,12 @@ facts change.
   keys from the request. Later runs rediscover available orphans via
   `describe_volumes` (per-request and a gated region sweep). The sweep skips
   in-use volumes and re-checks filters (live request tags when present). If
-  terminate fails after tagging, the leftover marker is cleared (DeleteTags, or
-  overwritten to `terminate-failed` if DeleteTags is denied). Already
-  terminated instances with no leftover volumes are skipped (not re-reported).
+  terminate (or cancel after tagging) fails, the leftover marker is cleared
+  (DeleteTags, or overwritten to `terminate-failed` on ClientError /
+  BotoCoreError). Ambiguous transport errors on terminate re-check instance
+  state before invalidating so a successful-but-timed-out terminate keeps the
+  marker. Already terminated instances with no leftover volumes are skipped
+  (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 
 ---
@@ -149,10 +155,10 @@ facts change.
 |-------|----------------------------|---------|
 | Azure Spot | `delete_option` is Detach or unset (Azure default) | Delete managed disk after `begin_delete_vm_and_wait` |
 
-Requires a positive `--age`. Custom age tags are validated the same way
-(invalid/zero → fall back to `--age`). Azure skips untagged Spot VMs
-(same as `crc.azu.vm.VM`). Only managed disks with an ARM id are queued
-(ephemeral OS disks are skipped).
+Requires a positive `--age`. Custom age tags: absent → `--age`; present but
+invalid/zero → skip the VM. Azure skips untagged Spot VMs (same as
+`crc.azu.vm.VM`). Only managed disks with an ARM id are queued (ephemeral OS
+disks are skipped).
 
 **Gap:** leftover disk refs are taken from the VM before delete. If
 `_delete_disk` fails after the VM is gone, the disk is not rediscovered on a

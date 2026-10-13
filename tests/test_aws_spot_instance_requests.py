@@ -186,7 +186,6 @@ class SpotCleanupOrderTests(unittest.TestCase):
         self.assertEqual(
             call_order,
             [
-                ("cancel", ["sir-1"]),
                 (
                     "create_tags",
                     ["vol-keep"],
@@ -195,6 +194,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
                         {"Key": "yb_owner", "Value": "qa"},
                     ],
                 ),
+                ("cancel", ["sir-1"]),
                 ("terminate", ["i-1"]),
                 ("delete_volume", "vol-keep"),
             ],
@@ -403,9 +403,25 @@ class SpotCleanupOrderTests(unittest.TestCase):
             "CreateTags",
         )
         s._cleanup_one(client, "us-west-2", "sir-1", "i-1", "persistent")
-        client.cancel_spot_instance_requests.assert_called_once()
+        client.cancel_spot_instance_requests.assert_not_called()
         client.terminate_instances.assert_not_called()
         client.delete_volume.assert_not_called()
+
+    def test_invalid_custom_age_tag_skips_request(self):
+        s = _spot(custom_age_tag_key="retention")
+        matches = s._get_filtered_requests(
+            {
+                "SpotInstanceRequests": [
+                    _request(
+                        tags=[
+                            {"Key": "yb_owner", "Value": "qa"},
+                            {"Key": "retention", "Value": "{'day': 30}"},
+                        ]
+                    )
+                ]
+            }
+        )
+        self.assertEqual(matches, [])
 
     def test_sweep_tagged_leftover_volumes(self):
         s = _spot(dry_run=False)
@@ -637,6 +653,70 @@ class SpotCleanupOrderTests(unittest.TestCase):
         )
         client.delete_tags.assert_called_once()
         client.delete_volume.assert_not_called()
+
+    def test_botocore_terminate_error_keeps_marker_if_shutting_down(self):
+        from botocore.exceptions import EndpointConnectionError
+
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        running = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "running"},
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-keep",
+                                        "DeleteOnTermination": False,
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        shutting = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "shutting-down"},
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-keep",
+                                        "DeleteOnTermination": False,
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_instances.side_effect = [running, shutting]
+        client.describe_volumes.return_value = {
+            "Volumes": [
+                {"VolumeId": "vol-keep", "State": "available", "Tags": []}
+            ]
+        }
+        client.terminate_instances.side_effect = EndpointConnectionError(
+            endpoint_url="https://ec2.amazonaws.com"
+        )
+        with mock.patch.object(s, "VOLUME_POLL_INTERVAL_SEC", 0):
+            s._cleanup_one(
+                client,
+                "us-west-2",
+                "sir-1",
+                "i-1",
+                "persistent",
+                request_tags=[{"Key": "yb_owner", "Value": "qa"}],
+            )
+        client.delete_tags.assert_not_called()
+        client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
 
     def test_tags_bdm_volumes_when_instance_shutting_down(self):
         s = _spot(dry_run=False)

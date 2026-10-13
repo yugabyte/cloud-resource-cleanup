@@ -72,8 +72,12 @@ class Service:
         key: str,
     ) -> Optional[Dict[str, int]]:
         """
-        Parse ``custom_age_tag_key`` and require a positive age. Invalid or
-        zero-duration tags are ignored so ``is_old`` falls back to ``--age``.
+        Parse ``custom_age_tag_key`` and require a positive age.
+
+        Returns ``None`` when the tag is absent (caller should use ``--age``).
+        Raises ``ValueError`` when the tag is present but invalid or zero —
+        callers must skip the resource (fail closed, same idea as
+        ``crc/aws/disk.py``), not fall back to ``--age``.
         """
         raw = self.get_retention_age(tags, key)
         if raw is None:
@@ -82,9 +86,12 @@ class Service:
             return self.require_positive_age(raw, "custom age tag")
         except ValueError as e:
             logging.warning(
-                "Ignoring invalid custom age tag %r for key %r: %s", raw, key, e
+                "Invalid custom age tag %r for key %r (skipping resource): %s",
+                raw,
+                key,
+                e,
             )
-            return None
+            raise
 
     def get_min_age(self, dict1, dict2):
         """

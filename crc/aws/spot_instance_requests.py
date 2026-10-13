@@ -23,8 +23,9 @@ class SpotInstanceRequests(Service):
     while the EC2 instance is untagged.
 
     Order of operations (critical for Type=persistent):
-      1. cancel_spot_instance_requests
-      2. terminate_instances
+      1. tag DoT=false volumes (before cancel, so CreateTags failure is a no-op)
+      2. cancel_spot_instance_requests
+      3. terminate_instances
     Terminating first leaves a persistent request in open/active and AWS
     launches a replacement.
 
@@ -132,9 +133,13 @@ class SpotInstanceRequests(Service):
                 create_time = request["CreateTime"]
                 request_type = (request.get("Type") or "one-time").lower()
 
-                retention_age = self.validated_retention_age(
-                    tags, self.custom_age_tag_key
-                )
+                try:
+                    retention_age = self.validated_retention_age(
+                        tags, self.custom_age_tag_key
+                    )
+                except ValueError:
+                    # Present but invalid custom age tag — fail closed (keep).
+                    continue
                 if retention_age:
                     logging.info(
                         "Updating age for SpotInstanceRequestId: %s", request_id
@@ -258,7 +263,7 @@ class SpotInstanceRequests(Service):
                 for t in (volumes[0].get("Tags") or [])
                 if t.get("Key")
             }
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             logging.error(
                 "describe_volumes failed for %s while preparing leftover tags: %s",
                 volume_id,
@@ -309,7 +314,7 @@ class SpotInstanceRequests(Service):
                     Tags=[{"Key": self.LEFTOVER_FROM_TAG}],
                 )
                 continue
-            except ClientError as e:
+            except (ClientError, BotoCoreError) as e:
                 logging.error(
                     "Failed to clear %s from volume %s: %s — trying sentinel",
                     self.LEFTOVER_FROM_TAG,
@@ -366,7 +371,7 @@ class SpotInstanceRequests(Service):
             try:
                 client.create_tags(Resources=[volume_id], Tags=tags)
                 tagged.append(volume_id)
-            except ClientError as e:
+            except (ClientError, BotoCoreError) as e:
                 logging.error(
                     "Failed to tag leftover volume %s for spot request %s: %s",
                     volume_id,
@@ -386,7 +391,7 @@ class SpotInstanceRequests(Service):
     def _volumes_tagged_leftover(
         self, client, request_id: Optional[str] = None
     ) -> List[str]:
-        """Find volumes previously marked with crc_leftover_of (any state)."""
+        """Find volumes marked crc_leftover_of in available or in-use state."""
         return [
             vol["VolumeId"]
             for vol in self._describe_tagged_leftover_volumes(
@@ -595,6 +600,23 @@ class SpotInstanceRequests(Service):
             )
             return
 
+        # Tag BDM volumes *before* cancel so a CreateTags failure leaves the
+        # request untouched (and is not reported as deleted). Invalidate the
+        # marker if terminate then fails so an attached volume is not swept.
+        tagged_for_retry = False
+        if instance_id and leftover_volumes and volumes_from_bdm:
+            if not self._tag_volumes_as_leftover(
+                client, request_id, leftover_volumes, request_tags=request_tags
+            ):
+                logging.error(
+                    "Not cancelling/terminating spot request %s — "
+                    "failed to tag leftover volumes on %s",
+                    request_id,
+                    instance_id,
+                )
+                return
+            tagged_for_retry = True
+
         if not already_cancelled:
             try:
                 client.cancel_spot_instance_requests(
@@ -615,6 +637,8 @@ class SpotInstanceRequests(Service):
                     region,
                     e,
                 )
+                if tagged_for_retry:
+                    self._invalidate_leftover_marker(client, leftover_volumes)
                 return
         else:
             logging.info(
@@ -626,23 +650,6 @@ class SpotInstanceRequests(Service):
 
         if not instance_id:
             return
-
-        # Tag BDM volumes whenever we still have them (including shutting-down)
-        # so a timed-out wait remains findable after BDMs disappear. Invalidate
-        # the marker if terminate then fails so an attached volume is not swept.
-        tagged_for_retry = False
-        if leftover_volumes and volumes_from_bdm:
-            if not self._tag_volumes_as_leftover(
-                client, request_id, leftover_volumes, request_tags=request_tags
-            ):
-                logging.error(
-                    "Not terminating instance %s for spot request %s — "
-                    "failed to tag leftover volumes",
-                    instance_id,
-                    request_id,
-                )
-                return
-            tagged_for_retry = True
 
         if not instance_done:
             terminate_ok = False
@@ -675,13 +682,37 @@ class SpotInstanceRequests(Service):
                         e,
                     )
             except (BotoCoreError, Exception) as e:
-                # Transport timeouts etc. are not ClientError — still invalidate.
+                # Transport error: terminate may have been accepted. Re-check
+                # before invalidating the leftover marker.
                 logging.error(
                     "Failed to terminate instance %s after cancelling %s: %s",
                     instance_id,
                     request_id,
                     e,
                 )
+                state, _ = self._instance_state_and_dot_false_volumes(
+                    client, instance_id
+                )
+                if state in {None, "shutting-down", "terminated"}:
+                    logging.info(
+                        "Instance %s state=%s after ambiguous terminate error; "
+                        "keeping leftover markers",
+                        instance_id,
+                        state or "not-found",
+                    )
+                    terminate_ok = True
+                    if (
+                        state == "shutting-down"
+                        and instance_id not in self.instance_ids_to_delete
+                    ):
+                        self.instance_ids_to_delete.append(instance_id)
+                elif state == "unknown":
+                    logging.error(
+                        "Could not confirm instance %s state after terminate "
+                        "error; keeping leftover markers and aborting this run",
+                        instance_id,
+                    )
+                    return
             if not terminate_ok:
                 if tagged_for_retry:
                     self._invalidate_leftover_marker(client, leftover_volumes)

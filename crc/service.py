@@ -261,7 +261,8 @@ class Service:
         """Helper function to safely parse a literal value."""
         try:
             return ast.literal_eval(value)
-        except (ValueError, SyntaxError) as e:
+        except (ValueError, SyntaxError, TypeError) as e:
+            # TypeError: e.g. `{[1]: 2}` / `{{}}` — unhashable keys in literal.
             logging.error(f"Error parsing '{key}' tag value '{value}': {e}")
             return None
 

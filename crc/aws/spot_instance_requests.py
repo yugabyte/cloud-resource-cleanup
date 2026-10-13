@@ -30,11 +30,13 @@ class SpotInstanceRequests(Service):
     launches a replacement.
 
     After terminate, any EBS volume whose BlockDeviceMapping had
-    DeleteOnTermination=false is deleted explicitly. Those volumes are tagged
+    DeleteOnTermination=false is deleted explicitly when CRC still saw those
+    BDMs (instance running or shutting-down). Those volumes are tagged
     ``crc_leftover_of=<spot-request-id>`` (plus filter/exception/notags keys)
     before terminate so a later run can still find *available* orphans via
-    ``describe_volumes`` after AWS drops the spot request (~4h). The region
-    sweep re-applies those gates; in-use volumes are not swept.
+    ``describe_volumes`` after AWS drops the spot request (~4h). Volumes from
+    instances already gone before CRC tagged them are not rediscovered. The
+    region sweep re-applies those gates; in-use volumes are not swept.
 
     Matching cancelled requests that still have an InstanceId are cleaned up
     too (CRC retry after a partial run, or a hand-cancelled request whose

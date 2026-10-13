@@ -30,7 +30,7 @@ We support below Cloud Providers:
   * Delete VMs (including attached resources such as Disks and NICs)
   * Stop VMs
   * Delete KMS
-  * Delete Spot Instance Requests & associated Instances (one-time **and** persistent). Cancels the request **before** terminating the instance; deletes leftover EBS when `DeleteOnTermination=false`. Tags are matched on the **spot request** (instances may be untagged).
+  * Delete Spot Instance Requests & associated Instances (one-time **and** persistent). Cancels the request **before** terminating the instance; deletes `DeleteOnTermination=false` EBS that CRC sees while the instance is still running/shutting-down (tagged for retry). Tags are matched on the **spot request** (instances may be untagged).
 * Azure
   * Delete Orphan disks
   * Delete VMs (and attached NICs)

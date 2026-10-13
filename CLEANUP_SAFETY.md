@@ -144,8 +144,10 @@ facts change.
   Cancel failures catch ClientError and BotoCoreError. Ambiguous terminate
   transport errors re-check instance state and keep the marker only when
   confirmed `shutting-down`/`terminated`/gone; otherwise invalidate. Sweep
-  isolates per-volume errors. Already terminated instances with no leftover
-  volumes are skipped (not re-reported).
+  isolates per-volume errors. Already-cancelled requests whose instance is
+  gone and that have no tagged leftovers are skipped (not re-reported).
+  Closed/failed requests may still be cancelled again and counted until AWS
+  drops them.
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 
 ---

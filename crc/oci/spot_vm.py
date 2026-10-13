@@ -3,7 +3,7 @@
 import logging
 import time
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import oci
 from oci.exceptions import ServiceError
@@ -15,15 +15,11 @@ from crc.service import Service
 
 class SpotVM(Service, Base):
     """
-    Delete OCI preemptible (spot-like) instances that match tag and age filters.
+    Delete OCI preemptible instances that match tag/age filters.
 
-    OCI has no separate spot-request object — terminate_instance is the cancel.
-    Boot volume is deleted with the instance by default (preserve_boot_volume=False).
-    Attached block volumes are deleted after terminate: the module waits for
-    instance TERMINATED (which detaches them) then calls delete_volume. It does
-    not call detach_volume itself. If the TERMINATED wait times out, delete_volume
-    is still attempted and may fail while the volume remains attached; those
-    leftovers are not rediscovered on later runs (instance is TERMINATED).
+    terminate_instance is the cancel (preserve_boot_volume=False). Attached
+    block volumes are deleted after TERMINATED wait; volume freeform_tags are
+    checked for exception/notags first. Attachment-list failure skips terminate.
     """
 
     default_instance_state = ["RUNNING", "STOPPED"]
@@ -66,29 +62,25 @@ class SpotVM(Service, Base):
     def _is_preemptible(self, instance) -> bool:
         return getattr(instance, "preemptible_instance_config", None) is not None
 
-    def _should_skip_instance(self, instance) -> bool:
-        tags = instance.freeform_tags or {}
+    def _tags_protect(self, tags: dict) -> bool:
         if not tags:
             return False
-        if self.exception_tags:
-            if any(
-                key in tags and (not value or tags[key] in value)
-                for key, value in self.exception_tags.items()
-            ):
-                return True
-        if self.notags:
-            if all(
-                key in tags and (not value or tags[key] in value)
-                for key, value in self.notags.items()
-            ):
-                return True
+        if self.exception_tags and any(
+            key in tags and (not value or tags[key] in value)
+            for key, value in self.exception_tags.items()
+        ):
+            return True
+        if self.notags and all(
+            key in tags and (not value or tags[key] in value)
+            for key, value in self.notags.items()
+        ):
+            return True
         return False
 
+    def _should_skip_instance(self, instance) -> bool:
+        return self._tags_protect(instance.freeform_tags or {})
+
     def _has_matching_filter_tags(self, instance) -> bool:
-        """
-        Match filter_tags. Empty filter means any instance is eligible
-        (including untagged), same as crc.oci.vm.VM.
-        """
         if not self.filter_tags:
             return True
         tags = instance.freeform_tags or {}
@@ -115,14 +107,13 @@ class SpotVM(Service, Base):
             )
         return self.is_old(retention_age or self.age, now, created)
 
-    def _attached_block_volume_ids(self, compute_client, instance_id: str) -> List[str]:
+    def _attached_block_volume_ids(
+        self, compute_client, instance_id: str
+    ) -> Optional[List[str]]:
         """
-        Block volumes currently attached to the instance via
-        ``list_volume_attachments`` (boot volumes are not returned by that API).
-        Boot volume deletion is handled by
-        ``terminate_instance(preserve_boot_volume=False)``.
+        Attached block volume IDs, or None if listing failed (caller must not
+        terminate — leftovers would be lost).
         """
-        volume_ids = []
         try:
             attachments = oci.pagination.list_call_get_all_results(
                 compute_client.list_volume_attachments,
@@ -133,8 +124,9 @@ class SpotVM(Service, Base):
             logging.error(
                 "Failed to list volume attachments for %s: %s", instance_id, e
             )
-            return volume_ids
+            return None
 
+        volume_ids = []
         for attachment in attachments:
             lifecycle = getattr(attachment, "lifecycle_state", "") or ""
             if lifecycle.upper() in {"DETACHED", "DETACHING"}:
@@ -194,6 +186,23 @@ class SpotVM(Service, Base):
         )
         return False
 
+    def _volume_ok_to_delete(self, blockstorage_client, volume_id: str) -> bool:
+        try:
+            volume = blockstorage_client.get_volume(volume_id).data
+        except Exception as e:
+            logging.error(
+                "Failed to get volume %s for tag check (skipping): %s",
+                volume_id,
+                e,
+            )
+            return False
+        if self._tags_protect(volume.freeform_tags or {}):
+            logging.info(
+                "Skipping leftover volume %s: exception_tags/notags", volume_id
+            )
+            return False
+        return True
+
     def _delete_volume(self, blockstorage_client, volume_id: str) -> None:
         if self.dry_run:
             self.volumes_to_delete.append(volume_id)
@@ -222,24 +231,29 @@ class SpotVM(Service, Base):
                 continue
 
             for instance in instances:
-                if instance.lifecycle_state not in self.default_instance_state:
-                    continue
-                if not self._is_preemptible(instance):
-                    continue
-                if self._should_skip_instance(instance):
-                    continue
-                if not self._has_matching_filter_tags(instance):
-                    continue
-                if not self._is_old_instance(instance):
-                    continue
-
-                leftover = self._attached_block_volume_ids(
-                    compute_client, instance.id
-                )
                 try:
+                    if instance.lifecycle_state not in self.default_instance_state:
+                        continue
+                    if not self._is_preemptible(instance):
+                        continue
+                    if self._should_skip_instance(instance):
+                        continue
+                    if not self._has_matching_filter_tags(instance):
+                        continue
+                    if not self._is_old_instance(instance):
+                        continue
+
+                    leftover = self._attached_block_volume_ids(
+                        compute_client, instance.id
+                    )
+                    if leftover is None:
+                        logging.error(
+                            "Skipping terminate for %s: volume attachment "
+                            "list failed",
+                            instance.display_name,
+                        )
+                        continue
                     if not self.dry_run:
-                        # preserve_boot_volume=False deletes the boot volume with
-                        # the instance (DeleteOnTermination=true equivalent).
                         compute_client.terminate_instance(
                             instance.id, preserve_boot_volume=False
                         )
@@ -252,17 +266,20 @@ class SpotVM(Service, Base):
                         ):
                             logging.error(
                                 "Instance %s not TERMINATED yet; attempting "
-                                "leftover volume deletes anyway (may fail if "
-                                "still attached)",
+                                "leftover volume deletes anyway",
                                 instance.display_name,
                             )
                     self.instance_names_to_delete.append(instance.display_name)
                     for volume_id in leftover:
+                        if not self._volume_ok_to_delete(
+                            blockstorage_client, volume_id
+                        ):
+                            continue
                         self._delete_volume(blockstorage_client, volume_id)
                 except Exception as e:
                     logging.error(
-                        "Error terminating OCI preemptible instance %s: %s",
-                        instance.display_name,
+                        "Error processing OCI preemptible instance %s: %s",
+                        getattr(instance, "display_name", "?"),
                         e,
                     )
 

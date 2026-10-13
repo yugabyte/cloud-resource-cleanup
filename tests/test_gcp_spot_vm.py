@@ -160,9 +160,12 @@ class GcpDeleteOrderTests(unittest.TestCase):
         zone_ops.get.return_value.execute.return_value = {"status": "DONE"}
 
         disks = mock.MagicMock()
+        disks.get.return_value.execute.return_value = {"labels": {}}
+
         def disk_delete(**kwargs):
             call_order.append("disk")
             return mock.Mock(execute=mock.Mock(return_value={}))
+
         disks.delete.side_effect = disk_delete
 
         instances_api = mock.MagicMock()
@@ -197,6 +200,33 @@ class GcpDeleteOrderTests(unittest.TestCase):
         self.assertEqual(call_order, ["instance", "disk"])
         zone_ops.get.assert_called()
         self.assertEqual(s.disks_to_delete, ["p/z/keep-me"])
+
+    def test_disk_exception_labels_skip_delete(self):
+        s = _gcp_spot(exception_labels={"keep": ["true"]})
+        service = mock.MagicMock()
+        service.disks.return_value.get.return_value.execute.return_value = {
+            "labels": {"keep": "true"}
+        }
+        self.assertFalse(
+            s._disk_ok_to_delete(
+                service,
+                {
+                    "project": "p",
+                    "scope": "zone",
+                    "location": "z",
+                    "name": "d1",
+                },
+                "z",
+            )
+        )
+
+    def test_gke_node_skipped(self):
+        s = _gcp_spot()
+        inst = _instance(
+            scheduling=_scheduling(preemptible=True),
+            labels={"yb_task": "itest", "goog-gke-node": ""},
+        )
+        self.assertTrue(s._is_managed_or_gke_node(inst))
 
 
 if __name__ == "__main__":

@@ -69,29 +69,41 @@ class SpotVM(Service):
         provisioning = str(getattr(scheduling, "provisioning_model", "") or "").upper()
         return provisioning == "SPOT"
 
-    def _should_skip_instance(self, instance) -> bool:
-        labels = dict(getattr(instance, "labels", None) or {})
+    def _labels_protect(self, labels: dict) -> bool:
         if not labels:
             return False
-        if self.exception_labels:
-            if any(
-                key in labels and (not value or labels[key] in value)
-                for key, value in self.exception_labels.items()
-            ):
-                return True
-        if self.notags:
-            if all(
-                key in labels and (not value or labels[key] in value)
-                for key, value in self.notags.items()
-            ):
+        if self.exception_labels and any(
+            key in labels and (not value or labels[key] in value)
+            for key, value in self.exception_labels.items()
+        ):
+            return True
+        if self.notags and all(
+            key in labels and (not value or labels[key] in value)
+            for key, value in self.notags.items()
+        ):
+            return True
+        return False
+
+    def _should_skip_instance(self, instance) -> bool:
+        return self._labels_protect(dict(getattr(instance, "labels", None) or {}))
+
+    def _is_managed_or_gke_node(self, instance) -> bool:
+        labels = dict(getattr(instance, "labels", None) or {})
+        if "goog-gke-node" in labels:
+            return True
+        metadata = getattr(instance, "metadata", None)
+        items = getattr(metadata, "items", None)
+        if not isinstance(items, (list, tuple)):
+            return False
+        for item in items:
+            if getattr(item, "key", None) != "created-by":
+                continue
+            value = str(getattr(item, "value", "") or "")
+            if "instanceGroupManagers" in value:
                 return True
         return False
 
     def _has_matching_filter_label(self, instance) -> bool:
-        """
-        Match filter_labels. Empty filter means any instance is eligible
-        (including unlabeled), same as crc.gcp.vm.VM.
-        """
         if not self.filter_labels:
             return True
         labels = dict(getattr(instance, "labels", None) or {})
@@ -260,6 +272,41 @@ class SpotVM(Service):
             service, "zone", zone, operation_name, project=self.project_id
         )
 
+    def _disk_ok_to_delete(
+        self, service, disk_ref: Dict[str, str], fallback_zone: str
+    ) -> bool:
+        project = disk_ref.get("project") or self.project_id
+        scope = disk_ref.get("scope") or "zone"
+        location = disk_ref.get("location") or fallback_zone
+        disk_name = disk_ref["name"]
+        label = f"{project}/{location}/{disk_name}"
+        try:
+            if scope == "region":
+                disk = (
+                    service.regionDisks()
+                    .get(project=project, region=location, disk=disk_name)
+                    .execute()
+                )
+            else:
+                disk = (
+                    service.disks()
+                    .get(project=project, zone=location, disk=disk_name)
+                    .execute()
+                )
+        except Exception as e:
+            logging.error(
+                "Failed to get leftover disk %s for label check (skipping): %s",
+                label,
+                e,
+            )
+            return False
+        if self._labels_protect(disk.get("labels") or {}):
+            logging.info(
+                "Skipping leftover Spot disk %s: exception_labels/notags", label
+            )
+            return False
+        return True
+
     def _delete_disk(
         self, service, disk_ref: Dict[str, str], fallback_zone: str
     ) -> None:
@@ -307,22 +354,31 @@ class SpotVM(Service):
 
             for zone_obj in zones:
                 zone = zone_obj["name"]
-                for instance in instance_client.list(
-                    project=self.project_id, zone=zone
-                ):
-                    if instance.status not in self.default_instance_state:
-                        continue
-                    if not self._is_spot_instance(instance):
-                        continue
-                    if self._should_skip_instance(instance):
-                        continue
-                    if not self._has_matching_filter_label(instance):
-                        continue
-                    if not self._is_old_instance(instance):
-                        continue
-
-                    leftover = self._non_autodelete_disks(instance)
+                try:
+                    instances = list(
+                        instance_client.list(project=self.project_id, zone=zone)
+                    )
+                except Exception as e:
+                    logging.error(
+                        "Zone %s: failed listing GCP instances: %s", zone, e
+                    )
+                    continue
+                for instance in instances:
                     try:
+                        if instance.status not in self.default_instance_state:
+                            continue
+                        if not self._is_spot_instance(instance):
+                            continue
+                        if self._is_managed_or_gke_node(instance):
+                            continue
+                        if self._should_skip_instance(instance):
+                            continue
+                        if not self._has_matching_filter_label(instance):
+                            continue
+                        if not self._is_old_instance(instance):
+                            continue
+
+                        leftover = self._non_autodelete_disks(instance)
                         if not self.dry_run:
                             op = (
                                 service.instances()
@@ -340,17 +396,22 @@ class SpotVM(Service):
                             ):
                                 logging.error(
                                     "Instance delete failed/incomplete for %s; "
-                                    "not counting as deleted and skipping "
-                                    "leftover disk deletes",
+                                    "skipping leftover disk deletes",
                                     instance.name,
                                 )
                                 continue
                         self.instance_names_to_delete.append(instance.name)
                         for disk_ref in leftover:
+                            if not self._disk_ok_to_delete(
+                                service, disk_ref, zone
+                            ):
+                                continue
                             self._delete_disk(service, disk_ref, zone)
                     except Exception as e:
                         logging.error(
-                            "Error deleting GCP Spot VM %s: %s", instance.name, e
+                            "Error processing GCP Spot VM %s: %s",
+                            getattr(instance, "name", "?"),
+                            e,
                         )
 
         if not self.instance_names_to_delete:

@@ -404,6 +404,18 @@ class CRC:
             print(
                 f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
             )
+        volumes = getattr(spot_instance_request, "volumes_to_delete", None) or []
+        if volumes:
+            disk_msg = self.get_msg(DISKS, DELETED, volumes)
+            try:
+                self.slack_client.chat_postMessage(
+                    channel="#" + self.slack_channel, text=disk_msg
+                )
+            except Exception as e:
+                print(
+                    f"Failed to send message '{disk_msg}' to Slack channel "
+                    f"'{self.slack_channel}': {e}"
+                )
 
     def notify_deleted_ip_via_slack(self, ip: object):
         """
@@ -552,7 +564,7 @@ class CRC:
             if self.cloud == "azure":
                 self.write_influxdb(NICS, vm.get_deleted_nic)
 
-    def delete_azure_spot_instances(
+    def delete_spot_instances(
         self,
         filter_tags: Dict[str, List[str]],
         exception_tags: Dict[str, List[str]],
@@ -560,31 +572,63 @@ class CRC:
         custom_age_tag_key: str,
     ):
         """
-        Delete Azure Spot VMs that are stopped or deallocated.
+        Delete Azure Spot VMs that are stopped/deallocated; leftover Detach
+        disks are removed after the VM.
 
-        :param filter_tags: Dictionary of tags to filter the VM.
-        :param exception_tags: Dictionary of tags to exclude the VM.
-        :param age: Dictionary of age conditions to filter the VM.
-        :param custom_age_tag_key: Tag name to overwrite the age condition.
+        AWS spot cleanup uses ``delete_spot_instance_requests`` instead (cancel
+        request first, then terminate — required for Type=persistent).
         """
-        if not self.resource_group:
-            raise ValueError("resource_group is required for Azure Spot VM cleanup")
-        spot_vm = AZU_SpotVM(
-            self.resource_group,
-            self.dry_run,
-            filter_tags,
-            exception_tags,
-            age,
-            custom_age_tag_key,
-            self.notags,
-        )
-        spot_vm.delete()
+        if self.cloud == "azure":
+            if not self.resource_group:
+                raise ValueError("resource_group is required for Azure Spot VM cleanup")
+            spot_vm = AZU_SpotVM(
+                self.resource_group,
+                self.dry_run,
+                filter_tags,
+                exception_tags,
+                age,
+                custom_age_tag_key,
+                self.notags,
+            )
+            spot_vm.delete()
+            if self.slack_client:
+                self.notify_deleted_vm_via_slack(spot_vm)
+                disks = spot_vm.get_deleted_disks or []
+                if disks:
+                    disk_msg = self.get_msg(DISKS, DELETED, disks)
+                    try:
+                        self.slack_client.chat_postMessage(
+                            channel="#" + self.slack_channel, text=disk_msg
+                        )
+                    except Exception as e:
+                        print(
+                            f"Failed to send message '{disk_msg}' to Slack "
+                            f"channel '{self.slack_channel}': {e}"
+                        )
+            if self.influxdb_client:
+                self.write_influxdb(VMS, spot_vm.get_deleted)
+                self.write_influxdb(NICS, spot_vm.get_deleted_nic)
+                self.write_influxdb(DISKS, spot_vm.get_deleted_disks)
+        else:
+            raise ValueError(
+                "spot_instances is supported on azure. "
+                "For AWS use --resource spot_instance_requests "
+                "(cancel request before terminate)."
+            )
 
-        if self.slack_client:
-            self.notify_deleted_vm_via_slack(spot_vm)
-        if self.influxdb_client:
-            self.write_influxdb(VMS, spot_vm.get_deleted)
-            self.write_influxdb(NICS, spot_vm.get_deleted_nic)
+    def delete_azure_spot_instances(
+        self,
+        filter_tags: Dict[str, List[str]],
+        exception_tags: Dict[str, List[str]],
+        age: Dict[str, int],
+        custom_age_tag_key: str,
+    ):
+        """Backward-compatible alias for delete_spot_instances on Azure. """
+        if self.cloud != "azure":
+            raise ValueError("delete_azure_spot_instances is Azure-only")
+        self.delete_spot_instances(
+            filter_tags, exception_tags, age, custom_age_tag_key
+        )
 
     def delete_spot_instance_requests(
         self,
@@ -596,11 +640,16 @@ class CRC:
         """
         Delete AWS Spot Instance Requests and associated instances.
 
-        :param filter_tags: Dictionary of tags to filter the VM.
-        :param exception_tags: Dictionary of tags to exclude the VM.
-        :param age: Dictionary of age conditions to filter the VM.
-        :param custom_age_tag_key: Tag name to overwrite the age condition.
+        Cancels the spot request first, then terminates the instance. Reversing
+        that order on Type=persistent relaunches a replacement. Tags are matched
+        on the spot request (instances may be untagged). Volumes with
+        DeleteOnTermination=false are deleted after terminate.
         """
+        if self.cloud != "aws":
+            raise ValueError(
+                "spot_instance_requests is AWS-only. "
+                "Use --resource spot_instances for azure."
+            )
         spot_instance_requests = SpotInstanceRequests(
             self.dry_run,
             filter_tags,
@@ -615,8 +664,8 @@ class CRC:
             self.notify_deleted_spot_request_via_slack(spot_instance_requests)
 
         if self.influxdb_client:
-            # report this on VMS as well
             self.write_influxdb(VMS, spot_instance_requests.get_deleted)
+            self.write_influxdb(DISKS, spot_instance_requests.volumes_to_delete)
 
     def stop_vm(
         self,
@@ -911,7 +960,12 @@ def get_argparser():
             "all",
         ],
         metavar="RESOURCE",
-        help="Type of resource to operate on. Valid options are: 'disk', 'ip', 'keypair', 'vm', 'all'. Default: 'all'. Example: -r or --resource vm",
+        help=(
+            "Type of resource to operate on. Valid options include: 'disk', 'ip', "
+            "'keypair', 'vm', 'kms', 'nic', 'snapshot', 'spot_instance_requests' "
+            "(AWS only: cancel request then terminate), 'spot_instances' "
+            "(Azure Spot VMs), 'all'. Default: 'all'."
+        ),
     )
 
     # Add Argument for Project ID (GCP only)
@@ -1477,19 +1531,30 @@ def main():
                     custom_age_tag_key,
                 )
             elif resource == "spot_instance_requests":
+                if crc.cloud != "aws":
+                    logging.warning(
+                        "spot_instance_requests is AWS-only; skipped for %s "
+                        "(use --resource spot_instances)",
+                        crc.cloud,
+                    )
+                    continue
                 crc.delete_spot_instance_requests(
                     filter_tags, exception_tags, age, custom_age_tag_key
                 )
             elif resource == "spot_instances":
-                if crc.cloud == "azure":
-                    crc.delete_azure_spot_instances(
-                        filter_tags, exception_tags, age, custom_age_tag_key
-                    )
-                else:
+                if crc.cloud != "azure":
                     logging.warning(
-                        "spot_instances resource is only supported for Azure; skipped for %s",
+                        "spot_instances is Azure-only in this release; skipped for %s. "
+                        "For AWS use --resource spot_instance_requests "
+                        "(cancel request before terminate).",
                         crc.cloud,
                     )
+                    continue
+                # Fail closed: missing --resource_group / --age must raise
+                # (do not continue into other clouds under --cloud all).
+                crc.delete_spot_instances(
+                    filter_tags, exception_tags, age, custom_age_tag_key
+                )
             elif resource == "snapshot":
                 snapshot = Snapshot(
                     dry_run=dry_run,

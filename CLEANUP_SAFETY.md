@@ -179,9 +179,10 @@ explicit `--cloud` (not `--cloud all`). Leftover disks/volumes are skipped when
 their own exception/notags match (and Azure disks outside `--resource_group`).
 
 **Gap:** Azure/GCP/OCI do not persist leftover IDs after the instance is gone
-(no `crc_leftover_of`). Failed disk deletes, list-attachment failures (OCI),
-or delete-wait timeouts are not rediscovered on a later `spot_instances` run;
-a separate `--resource disk` run may still match on disk/volume tags.
+(no `crc_leftover_of`). Failed disk deletes or delete-wait timeouts are not
+rediscovered on a later `spot_instances` run; a separate `--resource disk` run
+may still match on disk/volume tags. (OCI skips terminate when attachment
+listing fails, so that case is retried.)
 
 ---
 

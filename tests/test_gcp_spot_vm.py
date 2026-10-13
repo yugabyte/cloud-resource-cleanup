@@ -42,6 +42,7 @@ def _instance(name="spot-1", scheduling=None, disks=None, labels=None):
     instance.labels = labels if labels is not None else {"yb_task": "itest"}
     instance.status = "RUNNING"
     instance.creation_timestamp = "2020-01-01T00:00:00.000000+00:00"
+    instance.metadata = None
     return instance
 
 
@@ -83,13 +84,10 @@ class GcpSpotDetectTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _gcp_spot(age={})
 
-    def test_invalid_custom_age_falls_back_to_cli_age(self):
+    def test_invalid_custom_age_skips_even_when_old(self):
         s = _gcp_spot(age={"days": 7}, custom_age_tag_key="retention")
+        # Old enough for --age; zero custom age must fail closed (keep).
         inst = _instance(labels={"retention": "{'days': 0}"})
-        # zero custom age ignored; 7-day floor keeps young instance
-        inst.creation_timestamp = __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).strftime(s.time_format)
         self.assertFalse(s._is_old_instance(inst))
 
 
@@ -226,6 +224,22 @@ class GcpDeleteOrderTests(unittest.TestCase):
             scheduling=_scheduling(preemptible=True),
             labels={"yb_task": "itest", "goog-gke-node": ""},
         )
+        self.assertTrue(s._is_managed_or_gke_node(inst))
+
+    def test_mig_created_by_non_list_sequence(self):
+        # proto-plus RepeatedComposite is a MutableSequence, not list/tuple.
+        from collections import UserList
+
+        s = _gcp_spot()
+        item = mock.Mock()
+        item.key = "created-by"
+        item.value = (
+            "projects/p/zones/z/instanceGroupManagers/mig-1"
+        )
+        inst = _instance(scheduling=_scheduling(preemptible=True))
+        meta = mock.Mock()
+        meta.items = UserList([item])
+        inst.metadata = meta
         self.assertTrue(s._is_managed_or_gke_node(inst))
 
 

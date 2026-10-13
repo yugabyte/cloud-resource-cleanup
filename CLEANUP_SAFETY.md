@@ -45,15 +45,15 @@ facts change.
 - Strict rejection of unknown keys, zero durations, and typos exists in
   `crc/aws/disk.py` (`_normalize_age`) and in spot modules via
   `Service.require_positive_age` for `--age`, plus
-  `Service.validated_retention_age` for custom age tags (absent → use
-  `--age`; present but empty/unparseable/invalid/zero → raise `ValueError`
-  so callers **skip** — including TypeError/`inf` OverflowError cases).
-  Spot-only: do not soften `_parse_literal` for this; other modules
-  (`get_retention_age`) still rely on TypeError escaping into their
-  `except Exception` fail-closed paths. Shared `Service.is_old` still
-  treats empty age as match-all for callers that do not use those helpers.
-  `--max_age` / `MAX_AGE` can still shorten a floor inside `is_old`
-  (including to zero); do not set `MAX_AGE` to a zero duration in Jenkins.
+  Spot modules use `Service.validated_retention_age` for custom age tags
+  (absent → `--age`; present but empty/unparseable/invalid/zero → raise
+  `ValueError` so callers **skip**, including TypeError / `inf`
+  OverflowError). Other modules that still call `get_retention_age` alone
+  **fail open**: parse errors become `None` and the resource is judged by
+  `--age` / detach_age. Shared `Service.is_old` still treats empty age as
+  match-all for callers that do not use those helpers. `--max_age` /
+  `MAX_AGE` can still shorten a floor inside `is_old` (including to zero);
+  do not set `MAX_AGE` to a zero duration in Jenkins.
 
 **When adding a new destructive module**
 
@@ -135,13 +135,14 @@ facts change.
   skipped.
 - Before terminate (and when BDMs are still visible on a shutting-down
   instance), each `DeleteOnTermination=false` volume is tagged
-  `crc_leftover_of=<spot-request-id>` plus the run's filter/exception/notags
-  keys from the request. Later runs rediscover available orphans via
-  `describe_volumes` (per-request and a gated region sweep). The sweep skips
-  in-use volumes and re-checks filters (live request tags when present). If
-  cancel/terminate fails after tagging, the leftover marker **and** any
-  filter/exception/notags keys this run added are cleared (DeleteTags, or
-  leftover overwritten to `terminate-failed` on ClientError/BotoCoreError).
+  `crc_leftover_of=<spot-request-id>` plus filter/exception/notags copies under
+  `crc_leftover_tag_*` (prefixed so volume-owned tags are never overwritten).
+  Later runs rediscover available orphans via `describe_volumes` (per-request
+  and a gated region sweep). The sweep skips in-use volumes and re-checks
+  filters (live request tags when present). If cancel/terminate fails after
+  tagging, the leftover marker **and** every `crc_leftover_tag_*` key are
+  cleared (DeleteTags, or leftover overwritten to `terminate-failed` on
+  ClientError/BotoCoreError).
   Cancel failures catch ClientError and BotoCoreError. Ambiguous terminate
   transport errors re-check instance state and keep the marker only when
   confirmed `shutting-down`/`terminated`/gone; otherwise invalidate. Sweep

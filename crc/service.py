@@ -48,7 +48,7 @@ class Service:
         if extra:
             raise ValueError(
                 "%s has unsupported keys %s; use days and/or hours"
-                % (label, sorted(extra))
+                % (label, sorted(extra, key=repr))
             )
         if not (set(age) & self.AGE_KEYS):
             raise ValueError("%s must include days and/or hours" % label)
@@ -115,9 +115,10 @@ class Service:
             )
             raise ValueError("custom age tag %r is present but empty" % key)
         # Parse here (not via _parse_literal) so TypeError/etc. become
-        # ValueError for spot callers. Do not change _parse_literal —
-        # get_retention_age callers (disk/vm) rely on TypeError escaping
-        # into their except Exception fail-closed paths.
+        # ValueError for spot callers. Leave _parse_literal unchanged:
+        # get_retention_age swallows parse errors and returns None (callers
+        # then treat the tag as absent — fail-open to --age). Spot modules
+        # that need fail-closed must use this helper.
         try:
             parsed = ast.literal_eval(str(raw_str))
         except (ValueError, SyntaxError, TypeError) as e:

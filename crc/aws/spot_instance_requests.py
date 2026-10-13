@@ -52,6 +52,9 @@ class SpotInstanceRequests(Service):
     # Written when we cannot clear LEFTOVER_FROM_TAG after a failed terminate;
     # sweep rejects this value so an attached volume is never deleted later.
     LEFTOVER_INVALID_VALUE = "terminate-failed"
+    # Filter/exception/notags copies use this prefix so they never overwrite the
+    # volume's own tags and can always be found/cleared on invalidate.
+    LEFTOVER_SCOPE_PREFIX = "crc_leftover_tag_"
     # How long to wait for a volume to leave 'in-use' after terminate.
     VOLUME_AVAILABLE_WAIT_SEC = 180
     VOLUME_POLL_INTERVAL_SEC = 5
@@ -288,9 +291,9 @@ class SpotInstanceRequests(Service):
         existing_keys: Optional[set] = None,
     ) -> List[Dict[str, str]]:
         """
-        Tags written onto each leftover volume: crc_leftover_of plus any
-        filter/exception/notags keys from the spot request that the volume
-        does not already have (never overwrites the volume's own values).
+        Tags written onto each leftover volume: crc_leftover_of plus
+        filter/exception/notags values under LEFTOVER_SCOPE_PREFIX (never
+        overwrites the volume's own tag keys).
         """
         tags: List[Dict[str, str]] = [
             {"Key": self.LEFTOVER_FROM_TAG, "Value": request_id}
@@ -305,9 +308,40 @@ class SpotInstanceRequests(Service):
         }
         already = existing_keys or set()
         for key in sorted(keys_needed):
-            if key in tag_map and key not in already:
-                tags.append({"Key": key, "Value": tag_map[key]})
+            if key not in tag_map:
+                continue
+            pkey = self.LEFTOVER_SCOPE_PREFIX + key
+            if pkey not in already:
+                tags.append({"Key": pkey, "Value": tag_map[key]})
         return tags
+
+    def _prefixed_scope_keys_on_volume(self, client, volume_id: str) -> List[str]:
+        """Return crc_leftover_tag_* keys currently on the volume."""
+        keys = self._volume_tag_keys(client, volume_id)
+        if not keys:
+            return []
+        return sorted(k for k in keys if k.startswith(self.LEFTOVER_SCOPE_PREFIX))
+
+    def _effective_tags_for_sweep(self, volume: dict) -> List[Dict[str, str]]:
+        """
+        Tags used for filter/exception when the spot request is gone:
+        unprefixed copies of crc_leftover_tag_* plus the volume's own tags.
+        """
+        out: List[Dict[str, str]] = []
+        for t in volume.get("Tags") or []:
+            key = t.get("Key") or ""
+            if not key or key == self.LEFTOVER_FROM_TAG:
+                continue
+            if key.startswith(self.LEFTOVER_SCOPE_PREFIX):
+                out.append(
+                    {
+                        "Key": key[len(self.LEFTOVER_SCOPE_PREFIX) :],
+                        "Value": t.get("Value", ""),
+                    }
+                )
+            else:
+                out.append(t)
+        return out
 
     def _invalidate_leftover_marker(
         self,
@@ -316,17 +350,19 @@ class SpotInstanceRequests(Service):
         added_scope_keys: Optional[Dict[str, List[str]]] = None,
     ) -> None:
         """
-        Stop a volume from being swept (or picked up by aws disk cleanup)
-        after a failed cancel/terminate/tag.
+        Stop a volume from being swept after a failed cancel/terminate/tag.
 
-        Removes ``crc_leftover_of`` **and** any filter/exception/notags keys
-        this run added. Prefer DeleteTags. If that fails, still try to clear
-        scope keys, then overwrite the leftover marker with
-        LEFTOVER_INVALID_VALUE via CreateTags so the sweep rejects it.
+        Removes ``crc_leftover_of`` and every ``crc_leftover_tag_*`` key
+        (from this run's map and/or still present on the volume). Prefer
+        DeleteTags; if that fails, retry scope-only clear, then overwrite
+        the leftover marker with LEFTOVER_INVALID_VALUE.
         """
         scope_map = added_scope_keys or {}
         for volume_id in volume_ids:
-            scope_keys = scope_map.get(volume_id) or []
+            scope_keys = list(scope_map.get(volume_id) or [])
+            for key in self._prefixed_scope_keys_on_volume(client, volume_id):
+                if key not in scope_keys:
+                    scope_keys.append(key)
             tags_to_clear = [{"Key": self.LEFTOVER_FROM_TAG}] + [
                 {"Key": k} for k in scope_keys
             ]
@@ -535,8 +571,8 @@ class SpotInstanceRequests(Service):
             if self.filter_tags and not self._matches_filter_tags(live_tags or []):
                 return False
             return True
-        # Request gone (~4h): gate on tags copied onto the volume.
-        vol_tags = volume.get("Tags") or []
+        # Request gone (~4h): gate on crc_leftover_tag_* copies (+ volume tags).
+        vol_tags = self._effective_tags_for_sweep(volume)
         if self._should_skip_spot_request(vol_tags):
             return False
         if self.filter_tags and not self._matches_filter_tags(vol_tags):

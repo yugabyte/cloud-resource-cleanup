@@ -191,7 +191,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
                     ["vol-keep"],
                     [
                         {"Key": s.LEFTOVER_FROM_TAG, "Value": "sir-1"},
-                        {"Key": "yb_owner", "Value": "qa"},
+                        {"Key": s.LEFTOVER_SCOPE_PREFIX + "yb_owner", "Value": "qa"},
                     ],
                 ),
                 ("cancel", ["sir-1"]),
@@ -613,7 +613,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
             Resources=["vol-keep"],
             Tags=[
                 {"Key": s.LEFTOVER_FROM_TAG},
-                {"Key": "yb_owner"},
+                {"Key": s.LEFTOVER_SCOPE_PREFIX + "yb_owner"},
             ],
         )
         client.delete_volume.assert_not_called()
@@ -661,7 +661,7 @@ class SpotCleanupOrderTests(unittest.TestCase):
             Resources=["vol-keep"],
             Tags=[
                 {"Key": s.LEFTOVER_FROM_TAG},
-                {"Key": "yb_owner"},
+                {"Key": s.LEFTOVER_SCOPE_PREFIX + "yb_owner"},
             ],
         )
 

@@ -404,6 +404,18 @@ class CRC:
             print(
                 f"Failed to send message '{msg}' to Slack channel '{self.slack_channel}': {e}"
             )
+        volumes = getattr(spot_instance_request, "volumes_to_delete", None) or []
+        if volumes:
+            disk_msg = self.get_msg(DISKS, DELETED, volumes)
+            try:
+                self.slack_client.chat_postMessage(
+                    channel="#" + self.slack_channel, text=disk_msg
+                )
+            except Exception as e:
+                print(
+                    f"Failed to send message '{disk_msg}' to Slack channel "
+                    f"'{self.slack_channel}': {e}"
+                )
 
     def notify_deleted_ip_via_slack(self, ip: object):
         """
@@ -581,6 +593,18 @@ class CRC:
             spot_vm.delete()
             if self.slack_client:
                 self.notify_deleted_vm_via_slack(spot_vm)
+                disks = spot_vm.get_deleted_disks or []
+                if disks:
+                    disk_msg = self.get_msg(DISKS, DELETED, disks)
+                    try:
+                        self.slack_client.chat_postMessage(
+                            channel="#" + self.slack_channel, text=disk_msg
+                        )
+                    except Exception as e:
+                        print(
+                            f"Failed to send message '{disk_msg}' to Slack "
+                            f"channel '{self.slack_channel}': {e}"
+                        )
             if self.influxdb_client:
                 self.write_influxdb(VMS, spot_vm.get_deleted)
                 self.write_influxdb(NICS, spot_vm.get_deleted_nic)

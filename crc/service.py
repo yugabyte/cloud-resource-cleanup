@@ -4,7 +4,7 @@ import ast
 import datetime
 import logging
 import os
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from crc.utils import init_logging
 
@@ -66,6 +66,30 @@ class Service:
             raise ValueError("%s must be greater than zero" % label)
         return normalized
 
+    def _lookup_custom_age_tag(
+        self,
+        tags: Union[Dict[str, str], List[Dict[str, str]]],
+        key: str,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Return ``(present, raw_value)`` for ``custom_age_tag_key``.
+
+        ``present`` is True whenever the key exists on the resource (including
+        empty / unparseable values). Distinguishes "tag absent" from
+        "tag present but bad" — ``get_retention_age`` alone cannot.
+        """
+        if not key or not tags:
+            return False, None
+        if isinstance(tags, list):
+            for tag in tags:
+                if tag.get("Key") == key:
+                    return True, tag.get("Value")
+            return False, None
+        # Dict / GCP ScalarMapContainer
+        if key in tags:
+            return True, tags.get(key)
+        return False, None
+
     def validated_retention_age(
         self,
         tags: Union[Dict[str, str], List[Dict[str, str]]],
@@ -75,19 +99,36 @@ class Service:
         Parse ``custom_age_tag_key`` and require a positive age.
 
         Returns ``None`` when the tag is absent (caller should use ``--age``).
-        Raises ``ValueError`` when the tag is present but invalid or zero —
-        callers must skip the resource (fail closed, same idea as
-        ``crc/aws/disk.py``), not fall back to ``--age``.
+        Raises ``ValueError`` when the tag is present but empty, unparseable,
+        invalid, or zero — callers must skip the resource (fail closed), not
+        fall back to ``--age``.
         """
-        raw = self.get_retention_age(tags, key)
-        if raw is None:
+        if not key:
             return None
+        present, raw_str = self._lookup_custom_age_tag(tags, key)
+        if not present:
+            return None
+        if raw_str is None or str(raw_str).strip() == "":
+            logging.warning(
+                "Custom age tag %r is present but empty (skipping resource)", key
+            )
+            raise ValueError("custom age tag %r is present but empty" % key)
+        parsed = self._parse_literal(str(raw_str), key)
+        if parsed is None:
+            logging.warning(
+                "Custom age tag %r=%r is unparseable (skipping resource)",
+                key,
+                raw_str,
+            )
+            raise ValueError(
+                "custom age tag %r is present but unparseable: %r" % (key, raw_str)
+            )
         try:
-            return self.require_positive_age(raw, "custom age tag")
+            return self.require_positive_age(parsed, "custom age tag")
         except ValueError as e:
             logging.warning(
                 "Invalid custom age tag %r for key %r (skipping resource): %s",
-                raw,
+                parsed,
                 key,
                 e,
             )

@@ -423,6 +423,23 @@ class SpotCleanupOrderTests(unittest.TestCase):
         )
         self.assertEqual(matches, [])
 
+    def test_unparseable_custom_age_tag_skips_request(self):
+        s = _spot(custom_age_tag_key="retention")
+        for bad in ("never", "30d", "{days: 30}", "{'days': 30"):
+            matches = s._get_filtered_requests(
+                {
+                    "SpotInstanceRequests": [
+                        _request(
+                            tags=[
+                                {"Key": "yb_owner", "Value": "qa"},
+                                {"Key": "retention", "Value": bad},
+                            ]
+                        )
+                    ]
+                }
+            )
+            self.assertEqual(matches, [], msg="expected skip for %r" % bad)
+
     def test_sweep_tagged_leftover_volumes(self):
         s = _spot(dry_run=False)
         client = mock.MagicMock()
@@ -534,9 +551,59 @@ class SpotCleanupOrderTests(unittest.TestCase):
         client.create_tags.assert_called_once()
         client.delete_tags.assert_called_once_with(
             Resources=["vol-keep"],
-            Tags=[{"Key": s.LEFTOVER_FROM_TAG}],
+            Tags=[
+                {"Key": s.LEFTOVER_FROM_TAG},
+                {"Key": "yb_owner"},
+            ],
         )
         client.delete_volume.assert_not_called()
+
+    def test_cancel_botocore_error_invalidates_marker(self):
+        from botocore.exceptions import EndpointConnectionError
+
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "running"},
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-keep",
+                                        "DeleteOnTermination": False,
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_volumes.return_value = {
+            "Volumes": [{"VolumeId": "vol-keep", "Tags": []}]
+        }
+        client.cancel_spot_instance_requests.side_effect = EndpointConnectionError(
+            endpoint_url="https://ec2.amazonaws.com"
+        )
+        s._cleanup_one(
+            client,
+            "us-west-2",
+            "sir-1",
+            "i-1",
+            "persistent",
+            request_tags=[{"Key": "yb_owner", "Value": "qa"}],
+        )
+        client.terminate_instances.assert_not_called()
+        client.delete_tags.assert_called_once_with(
+            Resources=["vol-keep"],
+            Tags=[
+                {"Key": s.LEFTOVER_FROM_TAG},
+                {"Key": "yb_owner"},
+            ],
+        )
 
     def test_terminate_failure_sentinel_when_delete_tags_denied(self):
         s = _spot(dry_run=False)
@@ -717,6 +784,54 @@ class SpotCleanupOrderTests(unittest.TestCase):
             )
         client.delete_tags.assert_not_called()
         client.delete_volume.assert_called_once_with(VolumeId="vol-keep")
+
+    def test_botocore_terminate_unknown_state_invalidates_marker(self):
+        from botocore.exceptions import EndpointConnectionError
+
+        s = _spot(dry_run=False)
+        client = mock.MagicMock()
+        running = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "State": {"Name": "running"},
+                            "BlockDeviceMappings": [
+                                {
+                                    "Ebs": {
+                                        "VolumeId": "vol-keep",
+                                        "DeleteOnTermination": False,
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        client.describe_instances.side_effect = [
+            running,
+            ClientError(
+                {"Error": {"Code": "UnauthorizedOperation", "Message": "nope"}},
+                "DescribeInstances",
+            ),
+        ]
+        client.describe_volumes.return_value = {
+            "Volumes": [{"VolumeId": "vol-keep", "Tags": []}]
+        }
+        client.terminate_instances.side_effect = EndpointConnectionError(
+            endpoint_url="https://ec2.amazonaws.com"
+        )
+        s._cleanup_one(
+            client,
+            "us-west-2",
+            "sir-1",
+            "i-1",
+            "persistent",
+            request_tags=[{"Key": "yb_owner", "Value": "qa"}],
+        )
+        client.delete_tags.assert_called_once()
+        client.delete_volume.assert_not_called()
 
     def test_tags_bdm_volumes_when_instance_shutting_down(self):
         s = _spot(dry_run=False)

@@ -46,8 +46,9 @@ facts change.
   `crc/aws/disk.py` (`_normalize_age`) and in spot modules via
   `Service.require_positive_age` for `--age`, plus
   `Service.validated_retention_age` for custom age tags (absent → use
-  `--age`; present but invalid/zero → raise so callers **skip** the
-  resource, same fail-closed idea as `crc/aws/disk.py`). Shared
+  `--age`; present but empty/unparseable/invalid/zero → raise so callers
+  **skip** the resource — presence is checked separately from
+  `ast.literal_eval`, same fail-closed idea as `crc/aws/disk.py`). Shared
   `Service.is_old` still treats empty age as match-all for callers that do
   not use those helpers. `--max_age` / `MAX_AGE` can still shorten a floor
   inside `is_old` (including to zero); do not set `MAX_AGE` to a zero
@@ -137,12 +138,14 @@ facts change.
   keys from the request. Later runs rediscover available orphans via
   `describe_volumes` (per-request and a gated region sweep). The sweep skips
   in-use volumes and re-checks filters (live request tags when present). If
-  terminate (or cancel after tagging) fails, the leftover marker is cleared
-  (DeleteTags, or overwritten to `terminate-failed` on ClientError /
-  BotoCoreError). Ambiguous transport errors on terminate re-check instance
-  state before invalidating so a successful-but-timed-out terminate keeps the
-  marker. Already terminated instances with no leftover volumes are skipped
-  (not re-reported).
+  cancel/terminate fails after tagging, the leftover marker **and** any
+  filter/exception/notags keys this run added are cleared (DeleteTags, or
+  leftover overwritten to `terminate-failed` on ClientError/BotoCoreError).
+  Cancel failures catch ClientError and BotoCoreError. Ambiguous terminate
+  transport errors re-check instance state and keep the marker only when
+  confirmed `shutting-down`/`terminated`/gone; otherwise invalidate. Sweep
+  isolates per-volume errors. Already terminated instances with no leftover
+  volumes are skipped (not re-reported).
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
 
 ---
@@ -156,9 +159,9 @@ facts change.
 | Azure Spot | `delete_option` is Detach or unset (Azure default) | Delete managed disk after `begin_delete_vm_and_wait` |
 
 Requires a positive `--age`. Custom age tags: absent → `--age`; present but
-invalid/zero → skip the VM. Azure skips untagged Spot VMs (same as
-`crc.azu.vm.VM`). Only managed disks with an ARM id are queued (ephemeral OS
-disks are skipped).
+empty/unparseable/invalid/zero → skip the VM. Azure skips untagged Spot VMs
+(same as `crc.azu.vm.VM`). Only managed disks with an ARM id are queued
+(ephemeral OS disks are skipped).
 
 **Gap:** leftover disk refs are taken from the VM before delete. If
 `_delete_disk` fails after the VM is gone, the disk is not rediscovered on a

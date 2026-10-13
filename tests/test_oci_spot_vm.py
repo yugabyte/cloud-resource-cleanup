@@ -6,10 +6,12 @@ import types
 import unittest
 from unittest import mock
 
-# oci may be absent in local/dev environments; stub enough for import + helpers.
-if "oci" not in sys.modules or not getattr(sys.modules["oci"], "__path__", None):
+# Stub oci only when the real package is not installed.
+try:
+    import oci  # noqa: F401
+except ImportError:
     oci_stub = types.ModuleType("oci")
-    oci_stub.__path__ = []  # mark as package so submodule imports work
+    oci_stub.__path__ = []
     oci_exceptions = types.ModuleType("oci.exceptions")
 
     class _OciExc(Exception):
@@ -110,6 +112,24 @@ class OciLeftoverVolumeTests(unittest.TestCase):
             ids = s._attached_block_volume_ids(compute, "ocid1.instance.oc1..test")
         self.assertEqual(ids, ["vol-keep"])
 
+    def test_attachment_list_failure_returns_none(self):
+        s = _oci_spot()
+        with mock.patch(
+            "crc.oci.spot_vm.oci.pagination.list_call_get_all_results",
+            side_effect=RuntimeError("boom"),
+        ):
+            self.assertIsNone(
+                s._attached_block_volume_ids(mock.Mock(), "ocid1.instance.oc1..test")
+            )
+
+    def test_volume_exception_tags_skip_delete(self):
+        s = _oci_spot(exception_tags={"keep": ["true"]})
+        block = mock.Mock()
+        vol = mock.Mock()
+        vol.freeform_tags = {"keep": "true"}
+        block.get_volume.return_value = mock.Mock(data=vol)
+        self.assertFalse(s._volume_ok_to_delete(block, "vol-1"))
+
     def test_dry_run_delete_volume_records_without_api(self):
         s = _oci_spot(dry_run=True)
         block = mock.Mock()
@@ -178,9 +198,10 @@ class OciLeftoverVolumeTests(unittest.TestCase):
         ), mock.patch.object(
             s, "_wait_instance_terminated", side_effect=wait
         ), mock.patch.object(
+            s, "_volume_ok_to_delete", return_value=True
+        ), mock.patch.object(
             s, "_delete_volume", side_effect=delete_vol
         ):
-            # First call: list_instances; ignore subsequent pagination uses
             listed.return_value = mock.Mock(data=[inst])
             s.delete()
 
@@ -188,6 +209,23 @@ class OciLeftoverVolumeTests(unittest.TestCase):
             call_order, ["terminate", "wait", ("volume", "vol-keep")]
         )
         self.assertEqual(s.instance_names_to_delete, ["spot-1"])
+
+    def test_skip_terminate_when_attachment_list_fails(self):
+        s = _oci_spot(dry_run=False)
+        compute = mock.Mock()
+        with mock.patch.object(s, "get_all_regions", return_value=["us-ashburn-1"]), mock.patch.object(
+            s, "get_compute_client", return_value=compute
+        ), mock.patch.object(
+            s, "get_blockstorage_client", return_value=mock.Mock()
+        ), mock.patch(
+            "crc.oci.spot_vm.oci.pagination.list_call_get_all_results",
+            return_value=mock.Mock(data=[_instance()]),
+        ), mock.patch.object(
+            s, "_attached_block_volume_ids", return_value=None
+        ):
+            s.delete()
+        compute.terminate_instance.assert_not_called()
+        self.assertEqual(s.instance_names_to_delete, [])
 
     def test_delete_still_tries_volumes_when_wait_fails(self):
         s = _oci_spot(dry_run=False)
@@ -211,6 +249,8 @@ class OciLeftoverVolumeTests(unittest.TestCase):
             s, "_attached_block_volume_ids", return_value=["vol-keep"]
         ), mock.patch.object(
             s, "_wait_instance_terminated", return_value=False
+        ), mock.patch.object(
+            s, "_volume_ok_to_delete", return_value=True
         ), mock.patch.object(
             s, "_delete_volume", side_effect=lambda c, v: call_order.append(("volume", v))
         ):

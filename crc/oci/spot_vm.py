@@ -102,9 +102,13 @@ class SpotVM(Service, Base):
         if created.tzinfo is None:
             created = created.replace(tzinfo=datetime.now().astimezone().tzinfo)
         now = datetime.now(tz=created.tzinfo)
-        retention_age = self.validated_retention_age(
-            instance.freeform_tags or {}, self.custom_age_tag_key
-        )
+        try:
+            retention_age = self.validated_retention_age(
+                instance.freeform_tags or {}, self.custom_age_tag_key
+            )
+        except ValueError:
+            # Present but invalid custom age tag — fail closed (keep).
+            return False
         if retention_age:
             logging.info(
                 "Updating age for preemptible instance: %s", instance.display_name

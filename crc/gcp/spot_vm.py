@@ -104,9 +104,13 @@ class SpotVM(Service):
         created = datetime.strptime(instance.creation_timestamp, self.time_format)
         now = datetime.now(tz=created.tzinfo)
         labels = dict(getattr(instance, "labels", None) or {})
-        retention_age = self.validated_retention_age(
-            labels, self.custom_age_tag_key
-        )
+        try:
+            retention_age = self.validated_retention_age(
+                labels, self.custom_age_tag_key
+            )
+        except ValueError:
+            # Present but invalid custom age tag — fail closed (keep).
+            return False
         if retention_age:
             logging.info("Updating age for Spot VM: %s", instance.name)
         return self.is_old(retention_age or self.age, now, created)

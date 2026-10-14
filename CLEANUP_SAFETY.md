@@ -156,28 +156,34 @@ facts change.
   Closed/failed requests may still be cancelled again and counted until AWS
   drops them.
 - Influx: requests+instances under VMS; leftover volumes under DISKS.
+- GCP/OCI `--resource spot_instances` require explicit `--cloud gcp` /
+  `--cloud oci`. Under `--cloud all`, only Azure spot_instances runs.
 
 ---
 
-## Leftover disks on Azure Spot
+## Leftover disks on other clouds
 
 **On main (this branch)**
 
 | Cloud | “Won’t auto-delete” signal | Cleanup |
 |-------|----------------------------|---------|
 | Azure Spot | `delete_option` is Detach or unset (Azure default) | Delete managed disk after `begin_delete_vm_and_wait` |
+| GCP Spot / preemptible | `autoDelete=false` | Wait for instance-delete zone op, then delete disk (zonal or regional) |
+| OCI preemptible | Attached block volume | Wait for instance `TERMINATED` (best-effort), then delete volume |
 
-Requires a positive `--age`. Custom age tags: absent → `--age`; present but
-empty/unparseable/invalid/zero → skip the VM. Azure skips untagged Spot VMs
-(same as `crc.azu.vm.VM`). Only managed disks with an ARM id are queued
-(ephemeral OS disks are skipped). Leftover Detach disks are skipped when they
-live outside `--resource_group`, or when `disks.get` shows
-`--exception_tags` / `--notags` on the disk itself (same as `crc/azu/disk.py`).
+All three require a positive `--age`. Custom age tags: absent → `--age`;
+present but empty/unparseable/invalid/zero → skip. Azure skips untagged Spot
+VMs (same as `crc.azu.vm.VM`). GCP/OCI match their regular VM label/tag
+helpers; empty filter still needs the age gate. GCP/OCI are opt-in via
+explicit `--cloud` (not `--cloud all`). Leftover disks/volumes are skipped when
+their own exception/notags match (and Azure disks outside `--resource_group`).
+GCP skips GKE/MIG members; OCI skips OKE / instance-pool members (tags/metadata).
 
-**Gap:** leftover disk refs are taken from the VM before delete. If
-`_delete_disk` fails after the VM is gone, the disk is not rediscovered on a
-later `spot_instances` run (no Azure equivalent of `crc_leftover_of` yet). A
-separate `--resource disk` run may still catch it if the disk's own tags match.
+**Gap:** Azure/GCP/OCI do not persist leftover IDs after the instance is gone
+(no `crc_leftover_of`). If leftover disk/volume delete fails (or OCI TERMINATED
+wait times out while still attached), a later `spot_instances` run will not
+rediscover them; use `--resource disk` if tags match. OCI skips terminate when
+attachment listing fails, so that case is retried.
 
 ---
 
@@ -203,3 +209,5 @@ separate `--resource disk` run may still catch it if the disk's own tags match.
 | `crc/aws/spot_instance_requests.py` | cancel→terminate→DoT=false EBS; cancel-fail skips terminate; age required; cancelled+InstanceId retried |
 | `crc/aws/connectivity.py` | Skip unreachable regions |
 | `crc/azu/spot_vm.py` | Spot VM + NIC + Detach disks; age required; untagged skipped |
+| `crc/gcp/spot_vm.py` | Spot/preemptible + autoDelete=false disks after zone-op wait; age required |
+| `crc/oci/spot_vm.py` | Preemptible + leftover block volumes after TERMINATED wait; age required |

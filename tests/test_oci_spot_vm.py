@@ -65,12 +65,16 @@ def _instance(
     tags=None,
     days_old=7,
     state="RUNNING",
+    defined_tags=None,
+    metadata=None,
 ):
     inst = mock.Mock()
     inst.id = "ocid1.instance.oc1..test"
     inst.display_name = display_name
     inst.lifecycle_state = state
     inst.freeform_tags = tags if tags is not None else {"yb_task": "itest"}
+    inst.defined_tags = {} if defined_tags is None else defined_tags
+    inst.metadata = {} if metadata is None else metadata
     inst.preemptible_instance_config = mock.Mock() if preemptible else None
     inst.time_created = datetime.datetime.now(
         datetime.timezone.utc
@@ -93,6 +97,30 @@ class OciPreemptibleDetectTests(unittest.TestCase):
     def test_regular_instance_not_preemptible(self):
         s = _oci_spot()
         self.assertFalse(s._is_preemptible(_instance(preemptible=False)))
+
+    def test_oke_freeform_tag_skipped(self):
+        s = _oci_spot()
+        self.assertTrue(
+            s._is_managed_or_oke_node(
+                _instance(tags={"yb_task": "itest", "oke-cluster-id": "c1"})
+            )
+        )
+
+    def test_instance_pool_defined_tag_skipped(self):
+        s = _oci_spot()
+        self.assertTrue(
+            s._is_managed_or_oke_node(
+                _instance(
+                    defined_tags={
+                        "Oracle-Tags": {"CreatedBy": "instancepool/pool-1"}
+                    }
+                )
+            )
+        )
+
+    def test_plain_itest_not_managed(self):
+        s = _oci_spot()
+        self.assertFalse(s._is_managed_or_oke_node(_instance()))
 
 
 class OciLeftoverVolumeTests(unittest.TestCase):

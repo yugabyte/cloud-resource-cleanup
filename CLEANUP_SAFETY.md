@@ -177,12 +177,13 @@ VMs (same as `crc.azu.vm.VM`). GCP/OCI match their regular VM label/tag
 helpers; empty filter still needs the age gate. GCP/OCI are opt-in via
 explicit `--cloud` (not `--cloud all`). Leftover disks/volumes are skipped when
 their own exception/notags match (and Azure disks outside `--resource_group`).
+GCP skips GKE/MIG members; OCI skips OKE / instance-pool members (tags/metadata).
 
 **Gap:** Azure/GCP/OCI do not persist leftover IDs after the instance is gone
-(no `crc_leftover_of`). Failed disk deletes or delete-wait timeouts are not
-rediscovered on a later `spot_instances` run; a separate `--resource disk` run
-may still match on disk/volume tags. (OCI skips terminate when attachment
-listing fails, so that case is retried.)
+(no `crc_leftover_of`). If leftover disk/volume delete fails (or OCI TERMINATED
+wait times out while still attached), a later `spot_instances` run will not
+rediscover them; use `--resource disk` if tags match. OCI skips terminate when
+attachment listing fails, so that case is retried.
 
 ---
 

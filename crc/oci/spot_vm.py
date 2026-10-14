@@ -62,6 +62,33 @@ class SpotVM(Service, Base):
     def _is_preemptible(self, instance) -> bool:
         return getattr(instance, "preemptible_instance_config", None) is not None
 
+    def _tag_blob_looks_managed(self, text: str) -> bool:
+        folded = text.casefold()
+        return (
+            "oke" in folded
+            or "instancepool" in folded
+            or "instance_pool" in folded
+            or "instance-pool" in folded
+        )
+
+    def _is_managed_or_oke_node(self, instance) -> bool:
+        """Skip OKE node-pool / instance-pool members (CSI PVs stay attached)."""
+        for key, value in (instance.freeform_tags or {}).items():
+            if self._tag_blob_looks_managed(f"{key}:{value}"):
+                return True
+        for ns, kv in (instance.defined_tags or {}).items():
+            if not isinstance(kv, dict):
+                continue
+            for key, value in kv.items():
+                if self._tag_blob_looks_managed(f"{ns}:{key}:{value}"):
+                    return True
+        meta = getattr(instance, "metadata", None) or {}
+        if isinstance(meta, dict):
+            for key, value in meta.items():
+                if self._tag_blob_looks_managed(f"{key}:{value}"):
+                    return True
+        return False
+
     def _tags_protect(self, tags: dict) -> bool:
         if not tags:
             return False
@@ -235,6 +262,8 @@ class SpotVM(Service, Base):
                     if instance.lifecycle_state not in self.default_instance_state:
                         continue
                     if not self._is_preemptible(instance):
+                        continue
+                    if self._is_managed_or_oke_node(instance):
                         continue
                     if self._should_skip_instance(instance):
                         continue

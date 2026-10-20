@@ -4,7 +4,7 @@ import ast
 import datetime
 import logging
 import os
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from crc.utils import init_logging
 
@@ -19,6 +19,7 @@ class Service:
     logs_dir = "logs"
     # File name of the log file
     logs_file = "crc.log"
+    AGE_KEYS = frozenset({"days", "hours"})
 
     def __init__(self) -> None:
         """
@@ -26,6 +27,120 @@ class Service:
         """
         log_filename = os.path.join(self.logs_dir, self.logs_file)
         init_logging(log_filename)
+
+    def require_positive_age(
+        self, age: Optional[Union[Dict[str, int], int]], label: str = "age"
+    ) -> Dict[str, int]:
+        """
+        Require a non-empty, >0 age gate. ``is_old({})`` returns True, so
+        destructive modules must reject missing/zero ages in ``__init__``.
+        """
+        if not age:
+            raise ValueError(
+                "%s is required and must be greater than zero "
+                "(empty age matches every resource)" % label
+            )
+        if isinstance(age, int):
+            age = {"days": age}
+        if not isinstance(age, dict):
+            raise ValueError("%s must be an int or dict of days/hours" % label)
+        extra = set(age) - self.AGE_KEYS
+        if extra:
+            raise ValueError(
+                "%s has unsupported keys %s; use days and/or hours"
+                % (label, sorted(extra, key=repr))
+            )
+        if not (set(age) & self.AGE_KEYS):
+            raise ValueError("%s must include days and/or hours" % label)
+        normalized: Dict[str, int] = {}
+        for key, value in age.items():
+            try:
+                number = int(value)
+            except (TypeError, ValueError, OverflowError) as e:
+                # OverflowError: e.g. int(inf) from literal {'days': 1e999}
+                raise ValueError("%s %s must be an integer" % (label, key)) from e
+            if number < 0:
+                raise ValueError("%s %s cannot be negative" % (label, key))
+            normalized[key] = number
+        total_hours = normalized.get("days", 0) * 24 + normalized.get("hours", 0)
+        if total_hours <= 0:
+            raise ValueError("%s must be greater than zero" % label)
+        return normalized
+
+    def _lookup_custom_age_tag(
+        self,
+        tags: Union[Dict[str, str], List[Dict[str, str]]],
+        key: str,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Return ``(present, raw_value)`` for ``custom_age_tag_key``.
+
+        ``present`` is True whenever the key exists on the resource (including
+        empty / unparseable values). Distinguishes "tag absent" from
+        "tag present but bad" — ``get_retention_age`` alone cannot.
+        """
+        if not key or not tags:
+            return False, None
+        if isinstance(tags, list):
+            for tag in tags:
+                if tag.get("Key") == key:
+                    return True, tag.get("Value")
+            return False, None
+        # Dict / GCP ScalarMapContainer
+        if key in tags:
+            return True, tags.get(key)
+        return False, None
+
+    def validated_retention_age(
+        self,
+        tags: Union[Dict[str, str], List[Dict[str, str]]],
+        key: str,
+    ) -> Optional[Dict[str, int]]:
+        """
+        Parse ``custom_age_tag_key`` and require a positive age.
+
+        Returns ``None`` when the tag is absent (caller should use ``--age``).
+        Raises ``ValueError`` when the tag is present but empty, unparseable,
+        invalid, or zero — callers must skip the resource (fail closed), not
+        fall back to ``--age``.
+        """
+        if not key:
+            return None
+        present, raw_str = self._lookup_custom_age_tag(tags, key)
+        if not present:
+            return None
+        if raw_str is None or str(raw_str).strip() == "":
+            logging.warning(
+                "Custom age tag %r is present but empty (skipping resource)", key
+            )
+            raise ValueError("custom age tag %r is present but empty" % key)
+        # Parse here (not via _parse_literal) so TypeError/etc. become
+        # ValueError for spot callers. Leave _parse_literal unchanged:
+        # get_retention_age swallows parse errors and returns None (callers
+        # then treat the tag as absent — fail-open to --age). Spot modules
+        # that need fail-closed must use this helper.
+        try:
+            parsed = ast.literal_eval(str(raw_str))
+        except (ValueError, SyntaxError, TypeError) as e:
+            logging.warning(
+                "Custom age tag %r=%r is unparseable (skipping resource): %s",
+                key,
+                raw_str,
+                e,
+            )
+            raise ValueError(
+                "custom age tag %r is present but unparseable: %r" % (key, raw_str)
+            ) from e
+        try:
+            return self.require_positive_age(parsed, "custom age tag")
+        except ValueError as e:
+            logging.warning(
+                "Invalid custom age tag %r for key %r (skipping resource): %s",
+                parsed,
+                key,
+                e,
+            )
+            raise
 
     def get_min_age(self, dict1, dict2):
         """

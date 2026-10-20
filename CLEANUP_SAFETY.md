@@ -42,12 +42,18 @@ facts change.
 
 - `Service.is_old({})` returns **True**. An empty / missing age with no other
   gate means every otherwise-matching resource is treated as old enough.
-- Strict rejection of unknown keys, zero durations, and typos exists mainly in
-  `crc/aws/disk.py` (`_normalize_age`). Shared `Service.is_old` still treats
-  `{'days': 0}` as “older than 0” and returns True. AWS spot
-  (`crc/aws/spot_instance_requests.py`), Azure spot (`crc/azu/spot_vm.py`), and
-  other `is_old` callers accept a `{'days': 0}` custom tag or `--age`. README
-  notes the stricter check is AWS-disk-specific.
+- Strict rejection of unknown keys, zero durations, and typos exists in
+  `crc/aws/disk.py` (`_normalize_age`) and in spot modules via
+  `Service.require_positive_age` for `--age`, plus
+  Spot modules use `Service.validated_retention_age` for custom age tags
+  (absent → `--age`; present but empty/unparseable/invalid/zero → raise
+  `ValueError` so callers **skip**, including TypeError / `inf`
+  OverflowError). Other modules that still call `get_retention_age` alone
+  **fail open**: parse errors become `None` and the resource is judged by
+  `--age` / detach_age. Shared `Service.is_old` still treats empty age as
+  match-all for callers that do not use those helpers. `--max_age` /
+  `MAX_AGE` can still shorten a floor inside `is_old` (including to zero);
+  do not set `MAX_AGE` to a zero duration in Jenkins.
 
 **When adding a new destructive module**
 
@@ -112,36 +118,66 @@ facts change.
 
 ## AWS Spot Instance Requests
 
-**On main**
+**On main (this branch)**
 
-- Tags for YBA fleets often live on the spot request; filtering is on the
-  request.
-- `delete()` already runs cancel before terminate. A failed cancel is only
-  dropped from a “finalized” list; the terminate loop still walks every
-  instance in `instance_id_to_operate`, so cancel-fail does not skip terminate.
-- The module does not read request `Type`, does not inspect
-  `DeleteOnTermination`, and does not delete leftover EBS volumes. For
-  `Type=persistent`, terminate-without-successful-cancel can leave the request
-  open so AWS launches a replacement.
-
-**Not implemented**
-
-- Skip terminate when cancel fails.
-- After terminate, delete EBS volumes with `DeleteOnTermination=false`.
+- Tags for YBA fleets live on the spot request; filtering is on the request.
+  Untagged requests are always skipped (fail-closed).
+- `--age` is required and must be >0 (`Service.require_positive_age`).
+- Order: tag DoT=false volumes → cancel → terminate → wait for EBS
+  `available` → delete volumes. Tagging runs before cancel so a CreateTags
+  failure leaves the request untouched. A failed cancel does **not**
+  terminate (avoids relaunch for `Type=persistent`).
+- Cancelled requests that still have an `InstanceId` (and match tags/age) are
+  cleaned up: terminate the instance if still running, then delete
+  `DeleteOnTermination=false` volumes. That finishes a prior CRC run that
+  cancelled but failed later steps, **and** also cleans hand-cancelled
+  requests whose instance AWS left running. Untagged cancelled requests stay
+  skipped.
+- Before terminate (and when BDMs are still visible on a shutting-down
+  instance), each `DeleteOnTermination=false` volume is tagged
+  `crc_leftover_of=<spot-request-id>` plus filter/exception/notags copies under
+  `crc_leftover_tag_*` (prefixed so volume-owned tags are never overwritten;
+  prefixed keys are always overwritten on retag so sticky values cannot linger
+  after a failed invalidate). Later runs rediscover available orphans via
+  `describe_volumes` (per-request and a gated region sweep). Before delete,
+  each volume's **own** tags are checked for `--exception_tags` / `--notags`
+  and the same sensitive `yb_task` values as `crc/aws/disk.py`. The sweep
+  skips in-use volumes and re-checks filter/exception/notags/untagged/age
+  (live request tags + CreateTime when present; otherwise scope copies +
+  volume CreateTime) plus volume-owned protection tags. If cancel/terminate
+  fails after tagging, the leftover marker **and** every `crc_leftover_tag_*`
+  key are cleared (DeleteTags / per-key / overwrite to `terminate-failed` on
+  ClientError/BotoCoreError).
+  Cancel failures catch ClientError and BotoCoreError. Ambiguous terminate
+  transport errors re-check instance state and keep the marker only when
+  confirmed `shutting-down`/`terminated`/gone; otherwise invalidate. Sweep
+  isolates per-volume errors. Already-cancelled requests whose instance is
+  gone and that have no tagged leftovers are skipped (not re-reported).
+  Closed/failed requests may still be cancelled again and counted until AWS
+  drops them.
+- Influx: requests+instances under VMS; leftover volumes under DISKS.
 
 ---
 
-## Leftover disks on other clouds
+## Leftover disks on Azure Spot
 
-**Not implemented.** Azure `SpotVM._delete_vm` deletes the VM and primary NIC
-only; it never reads `delete_option`. There is no GCP/OCI spot leftover-disk
-cleanup under `crc/`.
+**On main (this branch)**
 
-| Cloud | “Won’t auto-delete” signal | Intended cleanup |
-|-------|----------------------------|------------------|
-| Azure Spot | `delete_option` is Detach (not Delete) | Delete the managed disk |
-| GCP Spot / preemptible | `autoDelete=false` | Delete the disk |
-| OCI preemptible | Attached block volume not removed with terminate | Delete the volume |
+| Cloud | “Won’t auto-delete” signal | Cleanup |
+|-------|----------------------------|---------|
+| Azure Spot | `delete_option` is Detach or unset (Azure default) | Delete managed disk after `begin_delete_vm_and_wait` |
+
+Requires a positive `--age`. Custom age tags: absent → `--age`; present but
+empty/unparseable/invalid/zero → skip the VM. Azure skips untagged Spot VMs
+(same as `crc.azu.vm.VM`). Only managed disks with an ARM id are queued
+(ephemeral OS disks are skipped). Leftover Detach disks are skipped when they
+live outside `--resource_group`, or when `disks.get` shows
+`--exception_tags` / `--notags` on the disk itself (same as `crc/azu/disk.py`).
+
+**Gap:** leftover disk refs are taken from the VM before delete. If
+`_delete_disk` fails after the VM is gone, the disk is not rediscovered on a
+later `spot_instances` run (no Azure equivalent of `crc_leftover_of` yet). A
+separate `--resource disk` run may still catch it if the disk's own tags match.
 
 ---
 
@@ -161,10 +197,9 @@ cleanup under `crc/`.
 | Path | Notes |
 |------|--------|
 | `crc.py` | CLI wiring, opt-in gates, cloud/resource loop |
-| `crc/service.py` | Shared `is_old` / retention tag parsing — empty age is True; zero-age not rejected |
+| `crc/service.py` | Shared `is_old` / `require_positive_age` / retention tags — empty age is True unless a module rejects it |
 | `crc/aws/disk.py` | AWS EBS; `_normalize_age`; detach_age via CloudWatch; per-region errors logged (region-list auth failures still raise) |
 | `crc/gcp/disk.py` | GCP disks; `detach_age` via `last_detach_timestamp`; `--age` ignored; custom label replaces detach_age |
-| `crc/aws/spot_instance_requests.py` | On main: cancel then terminate (cancel-fail still terminates). Gap: persistent `Type`; leftover DoT=false EBS |
+| `crc/aws/spot_instance_requests.py` | cancel→terminate→DoT=false EBS; cancel-fail skips terminate; age required; cancelled+InstanceId retried |
 | `crc/aws/connectivity.py` | Skip unreachable regions |
-| `crc/azu/spot_vm.py` | On main: Spot VM + primary NIC. Gap: leftover Detach disks |
-| `crc/gcp/` / `crc/oci/` | Labels/freeform tags; spot leftover-disk cleanup not present |
+| `crc/azu/spot_vm.py` | Spot VM + NIC + Detach disks; age required; untagged skipped |

@@ -692,9 +692,17 @@ def test_bug_360_main_logs_run_start_and_result_around_each_cleaner_pass(
 
     scan_case = Case("scan-pass", ("--cloud", "aws", "--resource", "vm", "--scan_tag", "k=v"))
     caplog.clear()
-    run_oracle(scan_case, monkeypatch)
+    oracle_scan = run_oracle(scan_case, monkeypatch)
     assert caplog.records == []
     caplog.clear()
-    run_new(scan_case, monkeypatch)
-    assert caplog.records == []
+    new_scan = run_new(scan_case, monkeypatch)
+    assert new_scan == oracle_scan
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.INFO, "RUN START cloud=aws resource=vm operation=scan dry_run=true"),
+        (
+            logging.INFO,
+            "RESULT cloud=aws resource=vm operation=scan dry_run=true selected=0 "
+            "done=0 failed=0 skipped=0 regions=0 regions_skipped=0 duration_s=0",
+        ),
+    ]
 

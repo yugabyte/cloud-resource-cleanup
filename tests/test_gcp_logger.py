@@ -219,7 +219,7 @@ def test_disk_adapter_failure_is_recorded(caplog: pytest.LogCaptureFixture) -> N
 
 
 def test_ip_logs_regions_actions_and_skips(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.DEBUG)
     client = ips.FakeClient(
         {"r1": [ips.addr("ip-a"), ips.addr("other"), ips.addr("ip-used", "IN_USE")], "r2": []}
     )

@@ -141,10 +141,10 @@ Run log (module logger.py, imported as "from crc.core import logger"). Pure stdl
 per-run lines of the LOG rungs; the contract is in docs/refactor/LOGGING.md. Log text only: it never
 decides what a cleaner selects or deletes.
 
-- `RunLog`: counters and log lines of one cleaner run (methods region, region_skipped, action, skip, fail, finish); a run made by `current()` without `begin()` is unattached and logs nothing.
-- `begin()`: start a run, make it current and log the RUN START line (non-empty options as sorted compact JSON); takes an injectable clock.
+- `RunLog`: counters and log lines of one cleaner run (methods hold_header, region, region_skipped, action, skip, fail, finish); a run made by `current()` without `begin()` is unattached and logs nothing.
+- `begin()`: start a run, make it current and hold the RUN START line until the root logger has handlers (non-empty options as sorted compact JSON); takes an injectable clock.
 - `current()`: the current run, or a fresh unattached `RunLog` so cleaners and tests never crash.
-- `finish()`: end the current run and log the SKIPPED lines per reason, the ERRORS and FAILED lines when a failure was recorded, then the RESULT line; a no-op when no run began.
+- `finish()`: end the current run and log any held RUN START line, the SKIPPED lines per reason, the ERRORS and FAILED lines when a failure was recorded, then the RESULT line; a no-op when no run began.
 
 ## Safety Invariants
 

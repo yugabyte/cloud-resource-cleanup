@@ -27,6 +27,10 @@ _OPTION_KEYS = (
 
 Clock = Callable[[], float]
 
+# Never call logging.log/info/...: on a root logger without handlers they run basicConfig(),
+# which adds a stderr handler that later prints every record a second time.
+_LOG = logging.getLogger("crc.run")
+
 
 @dataclass(frozen=True, slots=True)
 class _Failure:
@@ -79,16 +83,28 @@ class RunLog:
         self._regions_skipped = 0
         self._skips: dict[str, int] = {}
         self._failures: list[_Failure] = []
+        self._header: str | None = None
+
+    def hold_header(self, line: str) -> None:
+        """Keep the RUN START line until the root logger has handlers, then emit it once."""
+        self._header = line
+        self._emit_header(force=False)
+
+    def _emit_header(self, force: bool) -> None:
+        if self.attached and self._header is not None and (force or logging.getLogger().handlers):
+            line, self._header = self._header, None
+            _LOG.log(logging.INFO, line)
 
     def _log(self, level: int, message: str) -> None:
         if self.attached:
-            logging.log(level, message)
+            self._emit_header(force=False)
+            _LOG.log(level, message)
 
     def region(self, region: str, scanned: int, selected: int, seconds: float) -> None:
-        """Count a walked region and log its progress line."""
+        """Count a walked region; log its line at INFO, or DEBUG when nothing was selected."""
         self._regions += 1
         self._log(
-            logging.INFO,
+            logging.INFO if selected else logging.DEBUG,
             f"REGION cloud={self.cloud} resource={self.resource} region={region} "
             f"scanned={scanned} selected={selected} seconds={int(seconds)}",
         )
@@ -128,6 +144,7 @@ class RunLog:
 
     def finish(self) -> None:
         """Log SKIPPED lines, the ERRORS list when any, and the RESULT line."""
+        self._emit_header(force=True)
         where = f"cloud={self.cloud} resource={self.resource}"
         for reason in sorted(self._skips):
             self._log(logging.INFO, f"SKIPPED {where} reason={reason} count={self._skips[reason]}")
@@ -170,7 +187,7 @@ def begin(
         f"dry_run={_flag(dry_run)}",
     ]
     parts.extend(f"{key}={_json(options[key])}" for key in _OPTION_KEYS if options.get(key))
-    logging.info(" ".join(parts))
+    run.hold_header(" ".join(parts))
     return run
 
 

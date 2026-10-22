@@ -4,7 +4,8 @@ Owner-approved 2026-10-22. The LOG rungs (`LOG-0`, `LOG-AWS1`, `LOG-AWS2`, `LOG-
 `LOG-GCP`, `LOG-OCI`, listed in `docs/refactor/PLAN.md`) change log text and levels only.
 They never change what is selected, deleted, stopped, posted to Slack or written to
 InfluxDB, add no CLI flag and keep every exit code. Bug rows: `BUG-356` to `BUG-362` in
-`docs/refactor/BUGS.md` (plus `BUG-353`, OCI tag dict level only).
+`docs/refactor/BUGS.md` (plus `BUG-353`, OCI tag dict level only). Rung `LOG-FIX` fixes `BUG-363` (the run log must not run
+`logging.basicConfig()`) and adjusts the REGION level and the `--scan_tag` path.
 
 ## Why
 
@@ -29,6 +30,7 @@ and swallowed with no end-of-run list.
 | BUG-360 | no run header and no single machine-readable result line |
 | BUG-361 | no per-region progress or timing |
 | BUG-362 | per-resource errors are logged where they happen and swallowed; no end-of-run list or count |
+| BUG-363 | the run log called module-level `logging.*`, which runs `basicConfig()` on a root logger without handlers (the CLI calls `begin()` before `init_logging`) and floods the console with duplicated lines (introduced by LOG-0; severity high) |
 
 ## Rules
 
@@ -48,7 +50,15 @@ and swallowed with no end-of-run list.
 
 ## Line formats
 
-All lines go through the root logger (`logging.info` style, like the rest of the code).
+The run log writes through the named logger `logging.getLogger("crc.run")`, which propagates to
+the root logger. It never calls a module-level `logging.log/info/...` function: on a root logger
+without handlers those run `logging.basicConfig()`, which adds a stderr handler without level
+(BUG-363). The same holds for every log call that can run before `init_logging` in the CLI path
+(`crc/cli/dispatch.py` uses a module logger). `crc/cli` calls `begin()` before any cleaner is
+built, and logging is only initialised when a cleaner is built (`Service.__init__`), so
+`RUN START` is held until the first run-log line is emitted after the root logger has handlers
+and is then emitted once, before that line. When the run ends without root handlers, `finish()`
+still emits `RUN START` and then `RESULT` through the named logger.
 
 ```
 RUN START cloud=<cloud> resource=<resource> operation=<delete|stop> dry_run=<true|false> <key>=<json> ...
@@ -63,6 +73,11 @@ RESULT cloud=<c> resource=<r> operation=<op> dry_run=<true|false> selected=<n> d
 - `RUN START` options: each non-empty one of `age`, `filter_tags`, `exception_tags`,
   `notags`, `name_regex`, `exception_regex`, `custom_age_tag_key`, `resource_group`,
   `project_id`, in that order, as `json.dumps(value, sort_keys=True, separators=(",", ":"))`.
+- `REGION` is logged at INFO, or at DEBUG when `selected=0` (a region that was walked but
+  selected nothing; a skipped region never logs one). It is still counted in `regions=`.
+- `--scan_tag` (`crc/cli/scan.py`) is wrapped like a cleaner pass: one `RUN START` / `RESULT`
+  pair per cloud with `resource=vm operation=scan dry_run=true` (scan enforces a dry run). It
+  selects and deletes nothing, so `RESULT` shows `selected=0 done=0`.
 - `ACTION` kind is one of `would_delete`, `deleted`, `would_stop`, `stopped`; one line per
   resource acted on (or that would be in a dry run).
 - `RunLog.skip(reason)` counts a skipped resource under a short snake_case reason (for

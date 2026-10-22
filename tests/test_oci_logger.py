@@ -119,7 +119,7 @@ def test_vm_adapter_reports_regions_actions_skips_and_result(
     assert _lines(caplog, "REGION", "ACTION", "SKIPPED", "ERRORS", "FAILED", "RESULT") == [
         (logging.INFO, f"ACTION {kind} cloud=oci resource=vm region=r1 id=a name=name-a"),
         (logging.INFO, "REGION cloud=oci resource=vm region=r1 scanned=4 selected=1 seconds=0"),
-        (logging.INFO, "REGION cloud=oci resource=vm region=r2 scanned=0 selected=0 seconds=0"),
+        (logging.DEBUG, "REGION cloud=oci resource=vm region=r2 scanned=0 selected=0 seconds=0"),
         (logging.INFO, "SKIPPED cloud=oci resource=vm reason=filter_mismatch count=1"),
         (logging.INFO, "SKIPPED cloud=oci resource=vm reason=state count=1"),
         (logging.INFO, "SKIPPED cloud=oci resource=vm reason=too_young count=1"),

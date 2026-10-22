@@ -9,6 +9,8 @@ from crc.cli.context import RunContext, make_crc
 from crc.cli.inputs import Options, Targets
 from crc.core import logger
 
+_LOG = logging.getLogger(__name__)
+
 Handler = Callable[[Any, Any, Options, Targets], None]
 
 AWS_DISK_OPT_IN_MESSAGE = (
@@ -89,7 +91,7 @@ def _kms(crc: Any, cloud: Any, options: Options, targets: Targets) -> None:
 
 def _spot_instance_requests(crc: Any, cloud: Any, options: Options, targets: Targets) -> None:
     if crc.cloud != "aws":
-        logging.warning(
+        _LOG.warning(
             "spot_instance_requests is AWS-only; skipped for %s (use --resource spot_instances)",
             crc.cloud,
         )
@@ -101,13 +103,13 @@ def _spot_instance_requests(crc: Any, cloud: Any, options: Options, targets: Tar
 
 def _spot_instances(crc: Any, cloud: Any, options: Options, targets: Targets) -> None:
     if crc.cloud == "aws":
-        logging.warning(
+        _LOG.warning(
             "For AWS use --resource spot_instance_requests "
             "(cancel request before terminate). Skipping spot_instances."
         )
         return
     if crc.cloud in ("gcp", "oci") and targets.cloud_arg == "all":
-        logging.warning(
+        _LOG.warning(
             "GCP/OCI spot_instances require explicit --cloud %s "
             "(not --cloud all); skipped. Azure spot_instances still runs "
             "under --cloud all for backward compatibility.",

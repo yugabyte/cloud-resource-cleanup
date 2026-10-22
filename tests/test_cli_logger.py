@@ -6,7 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from crc.cli import dispatch
+from crc.cli import dispatch, scan
+from crc.cli.context import RunContext
 from crc.cli.inputs import Options, Targets
 from crc.core import logger
 
@@ -131,3 +132,25 @@ def test_unknown_resource_has_no_run(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     dispatch.run_dispatch(Mock(), _options(), _targets(["aws"], ["nothing"]))
     assert caplog.records == []
+
+
+def test_scan_logs_run_start_and_result_per_cloud(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caplog.set_level(logging.INFO)
+    crc = Mock()
+    crc.scan_instances_with_tag.return_value = []
+    monkeypatch.setattr(scan, "make_crc", lambda context, cloud: crc)
+    context = RunContext(False, None, None, None, "proj", "rg", None, None)
+    options = _options(scan_tag="auto_clean=false", project_id="proj", resource_group="rg")
+    with pytest.raises(SystemExit) as exc_info:
+        scan.run_scan(context, options, _targets(["aws", "gcp"], ["vm"]))
+    assert exc_info.value.code == 0
+    lines = _run_lines(caplog)
+    assert [line.split()[:5] for line in lines] == [
+        ["RUN", "START", "cloud=aws", "resource=vm", "operation=scan"],
+        ["RESULT", "cloud=aws", "resource=vm", "operation=scan", "dry_run=true"],
+        ["RUN", "START", "cloud=gcp", "resource=vm", "operation=scan"],
+        ["RESULT", "cloud=gcp", "resource=vm", "operation=scan", "dry_run=true"],
+    ]
+    assert 'resource_group="rg" project_id="proj"' in lines[0]

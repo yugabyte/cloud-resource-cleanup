@@ -6,7 +6,9 @@ from dataclasses import replace
 from typing import Any, NoReturn
 
 from crc.cli.context import RunContext, make_crc
+from crc.cli.dispatch import _run_options
 from crc.cli.inputs import Options, Targets
+from crc.core import logger
 from crc.notifications import notify_cleanup
 
 
@@ -102,6 +104,17 @@ def _report_items(cloud: Any, items: list[dict[str, Any]], context: RunContext, 
 
 
 def _scan_cloud(cloud: Any, context: RunContext, options: Options, tag: tuple[str, str]) -> bool:
+    """Scan one cloud and report between its RUN START and RESULT lines; True when it has hits."""
+    logger.begin(str(cloud), "vm", "scan", bool(context.dry_run), _run_options(options))
+    try:
+        return _scan_and_report(cloud, context, options, tag)
+    finally:
+        logger.finish()
+
+
+def _scan_and_report(
+    cloud: Any, context: RunContext, options: Options, tag: tuple[str, str]
+) -> bool:
     """Scan one cloud and report; return True when it has hits."""
     tag_key, tag_value = tag
     print(f"\nScanning {cloud.upper()} for tag {tag_key}={tag_value}...")

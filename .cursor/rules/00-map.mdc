@@ -1,0 +1,18 @@
+---
+description: Repository map and hard rules for CRC
+alwaysApply: true
+---
+
+# CRC map
+
+Read `AGENTS.md` first. It is the short map of this repo, the commands
+(`make check`) and the hard rules.
+
+- Plan and rungs: `docs/refactor/PLAN.md`; progress: `docs/refactor/STATUS.md`.
+- Architecture and "add a cleaner" guide: `ARCHITECTURE.md`.
+- Safety invariants: `CLEANUP_SAFETY.md`.
+- Project skill: `.cursor/skills/crc-python-refactor/SKILL.md`.
+
+Do not change behaviour, CLI flags or JSON flag values, except in a
+behaviour-fix rung for the bugs it names (`.cursor/skills/crc-python-refactor/BEHAVIOUR_FIX.md`).
+Never call real cloud APIs. Never weaken safety tests. Stay within the current rung.

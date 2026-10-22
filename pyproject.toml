@@ -1,0 +1,129 @@
+[project]
+name = "cloud-resource-cleanup"
+version = "0.1.0"
+description = "Delete and stop leftover cloud resources across AWS, Azure, GCP and OCI."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+# ---------------------------------------------------------------------------
+# LEGACY RATCHET: this list may only shrink. It names, file by file, the
+# modules that existed before the refactor and are therefore exempt from ruff
+# and mypy. Any file not listed (new code under crc/core, crc/notify, new
+# tests) is checked. Each rung removes the modules it refactors, in the same
+# change that refactors them. Never add an entry and never use a directory or
+# glob. The mypy override below must list the same modules.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    "tests/test_aws_disk.py",
+    "tests/test_aws_spot_instance_requests.py",
+    "tests/test_azu_spot_vm.py",
+    "tests/test_gcp_spot_vm.py",
+    "tests/test_oci_spot_vm.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "FURB", "SIM", "PERF", "C901", "PLR", "RUF"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-statements = 40
+max-args = 6
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+# `mypy` with no arguments checks these paths. crc.py is left out because, as a
+# top-level module, it is also named `crc` and clashes with the crc/ package;
+# the CLI rung must resolve that (for example by moving its logic into crc/).
+files = ["crc", "tests"]
+exclude = ['^crc\.py$']
+
+# LEGACY RATCHET: this list may only shrink. Each rung removes the modules it
+# refactors. Keep it in sync with ruff `extend-exclude` above (crc.py is not
+# listed here because mypy never checks it, see `files`).
+[[tool.mypy.overrides]]
+module = [
+    "tests.test_aws_disk",
+    "tests.test_aws_spot_instance_requests",
+    "tests.test_azu_spot_vm",
+    "tests.test_gcp_spot_vm",
+    "tests.test_oci_spot_vm",
+]
+ignore_errors = true
+
+# SDKs without stubs or py.typed: only the SDK, never a repository module.
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["oci", "oci.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["googleapiclient", "googleapiclient.*"]
+ignore_missing_imports = true
+
+[tool.importlinter]
+root_package = "crc"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Cloud packages are independent"
+type = "independence"
+modules = ["crc.aws", "crc.azu", "crc.gcp", "crc.oci"]
+
+[[tool.importlinter.contracts]]
+name = "Core never imports cloud packages or services"
+type = "forbidden"
+source_modules = ["crc.core"]
+forbidden_modules = [
+    "crc.aws",
+    "crc.azu",
+    "crc.gcp",
+    "crc.oci",
+    "crc.notifications",
+    "crc.service",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core never imports cloud or telemetry SDKs"
+type = "forbidden"
+source_modules = ["crc.core"]
+forbidden_modules = [
+    "boto3",
+    "botocore",
+    "azure",
+    "google",
+    "oci",
+    "slack_sdk",
+    "influxdb_client",
+]
+
+[[tool.importlinter.contracts]]
+name = "Notify never imports cloud packages or services"
+type = "forbidden"
+source_modules = ["crc.notify"]
+forbidden_modules = [
+    "crc.aws",
+    "crc.azu",
+    "crc.gcp",
+    "crc.oci",
+    "crc.service",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core never imports notify"
+type = "forbidden"
+source_modules = ["crc.core"]
+forbidden_modules = ["crc.notify"]

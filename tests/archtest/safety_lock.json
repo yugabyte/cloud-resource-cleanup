@@ -1,0 +1,342 @@
+{
+  "locks": {
+    "SAF-003": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskDeletePathTests::test_had_errors_logs_without_raising",
+        "sha256": "dc63a1ec9e5d47dfe93f83bac62673d639b4d569c46ec928f06c7fd9716de573"
+      }
+    ],
+    "SAF-007": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskAgeGateTests::test_rejects_unknown_or_zero_age_units",
+        "sha256": "42f2d8f1fbe295cc3e28461870d49f8e5be50109aacbf7ee71166a013d5c3e44"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotFilterTests::test_requires_positive_age",
+        "sha256": "a29c2863369691d7474d6570b2808a9cceb7fd364a2aefb8daf084a5f452bc01"
+      }
+    ],
+    "SAF-008": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_invalid_custom_age_tag_skips_request",
+        "sha256": "b1572019570fb330c44de8c9db1a19f4d915226282a2a92cca01d21db2e0f9c9"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_unparseable_custom_age_tag_skips_request",
+        "sha256": "97b20a0e0cc01b0e693059628af53657bc40991cd2b3018c035c7d85ac8aeee0"
+      },
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpSpotDetectTests::test_invalid_custom_age_skips_even_when_old",
+        "sha256": "7a6f7fe3d97aa51fd405d6a63b211753f02a54c63cae3bffef498a165bef23e7"
+      }
+    ],
+    "SAF-011": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskAgeGateTests::test_requires_an_age_gate",
+        "sha256": "e4a754c3a900c4604a4ecd668e833292364a1bce1a48a1175717ac3d10344ccf"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotFilterTests::test_requires_positive_age",
+        "sha256": "a29c2863369691d7474d6570b2808a9cceb7fd364a2aefb8daf084a5f452bc01"
+      }
+    ],
+    "SAF-012": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskAgeGateTests::test_rejects_unknown_or_zero_age_units",
+        "sha256": "42f2d8f1fbe295cc3e28461870d49f8e5be50109aacbf7ee71166a013d5c3e44"
+      },
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskCreationFloorTests::test_zero_custom_age_tag_skips_volume",
+        "sha256": "7587ff3b2e90373ab9948fb3b409703ce1186702117369f422404e8009542dc2"
+      }
+    ],
+    "SAF-013": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskCreationFloorTests::test_max_age_env_cannot_shorten_detach_floor",
+        "sha256": "4bd38e41d910fda1ccddb43a746ade3a0f77d80b162b248e3c6975078bba0e3e"
+      }
+    ],
+    "SAF-015": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskDetachAgeTests::test_incomplete_status_keeps_the_volume",
+        "sha256": "f7cd399774fb948faeae98eca9e0baf2ea36f3c45e25f9a4c7a84e42975398ca"
+      },
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskDetachAgeTests::test_cloudwatch_failure_drops_the_batch",
+        "sha256": "58e17d4281f23be4ecdde14b966712f0425b086d7dde5a51f670ff02964d1e7c"
+      }
+    ],
+    "SAF-017": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskDeletePathTests::test_age_gate_message_does_not_claim_last_detach",
+        "sha256": "ed1c2e653f7ef17c765138f787b1f02f94f16348a42dfedb154cf2bd06a95a56"
+      }
+    ],
+    "SAF-018": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskAgeGateTests::test_detach_age_alone_is_enough",
+        "sha256": "5b44bc57d361543af3fc8eae8bd4c226e7f87d9916be19f6e9901519694ef721"
+      },
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskAgeGateTests::test_requires_an_age_gate",
+        "sha256": "e4a754c3a900c4604a4ecd668e833292364a1bce1a48a1175717ac3d10344ccf"
+      }
+    ],
+    "SAF-019": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskAgeGateTests::test_detach_age_only_still_floors_on_create_time",
+        "sha256": "e9fb24f34bed9871e58a5761f9cd332889a74f45dab22be47697f0316ebae6fa"
+      }
+    ],
+    "SAF-020": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskDetachAgeTests::test_merge_metric_pages_keeps_earlier_values",
+        "sha256": "570d2899e6f957bd71a0376c94c3422c3e24815169e4405ee174480a40e4c17e"
+      },
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskDetachAgeTests::test_paginates_next_token",
+        "sha256": "36585f77eeb52b881688aaaab4528deb124bfeead40d89e8a7152f66273d864b"
+      }
+    ],
+    "SAF-025": [
+      {
+        "test": "tests/test_aws_disk.py::AwsDiskCreationFloorTests::test_detach_age_only_uses_max_of_retention_and_detach",
+        "sha256": "ec2374b57ddd96c61931fecb7db6cafbf1f9a2b86ac7195e608a98b9a38d57d2"
+      }
+    ],
+    "SAF-026": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotFilterTests::test_matches_tags_on_request_not_instance",
+        "sha256": "877eebd78f7d60a322d6c9da00b3ad31af9dbab75a4df874f596ab559dc293ce"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotFilterTests::test_skips_untagged_even_without_filters",
+        "sha256": "39eba2a8590068594edd3eefbacdd0b4818c003674a32a74cb261013485c7edf"
+      }
+    ],
+    "SAF-027": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotFilterTests::test_requires_positive_age",
+        "sha256": "a29c2863369691d7474d6570b2808a9cceb7fd364a2aefb8daf084a5f452bc01"
+      }
+    ],
+    "SAF-028": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_cancel_before_terminate_and_delete_leftover_volume",
+        "sha256": "140e4d618f14ae651758e51196b8d4e4b7f1fe9899e16f061bc489c751545c18"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_failed_cancel_does_not_terminate_persistent",
+        "sha256": "91f50cf8caf3e0ce6aebbf2f4e0620ec28ca4f945e6086b00ed53946025afd1b"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_failed_volume_tag_does_not_terminate",
+        "sha256": "d84a260c01472d8ee0971d2a100f5605c0aee497e0965be4d404a8167c82b84a"
+      }
+    ],
+    "SAF-029": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotFilterTests::test_retries_cancelled_with_instance",
+        "sha256": "14b277b0345b68554a0b28c36ab8af44c507d28ac1475e00903f0b7afafa6fa4"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_already_cancelled_skips_cancel_then_terminates",
+        "sha256": "5c9eef344ddc2fadd2b592322c37131df44dbd131d47669b1ed08077e40caa47"
+      }
+    ],
+    "SAF-030": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_scope_tags_overwrite_existing_prefix_keys",
+        "sha256": "a76dffd4020c4da31bbb0ef8e39efbcb214bc249a018db4c2471a0e466568de8"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_tags_bdm_volumes_when_instance_shutting_down",
+        "sha256": "154ed1666a78479cbeb5a9398150a644e5ec2b6f501bca731004e26d5e66d98c"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_retry_uses_tagged_leftover_volumes",
+        "sha256": "e91b1f651fa14e7ae0a6857f58b54809acee676007ac7bd4fe24602d98398fc4"
+      }
+    ],
+    "SAF-031": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_volume_exception_tag_skips_leftover_delete",
+        "sha256": "78155cf6a89a0c65a8c11a0249fa733eaab69b5e0bb98efb110d7d0799827f63"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_volume_sensitive_yb_task_skips_leftover_delete",
+        "sha256": "383a83d68c4c985634c19fb72cf6fdec741239254d0194869963d98df9640dfd"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_sweep_skips_volume_own_exception_on_live_request",
+        "sha256": "3017a30f9041a5af4ee406107ef7de3e1c0766c7fa75c0c73b2a3f09a9ba3a57"
+      }
+    ],
+    "SAF-032": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_terminate_failure_clears_leftover_tag",
+        "sha256": "11d100dd89f0868e23053f4f8c67a355112f68f5c0a2fcba2ac02d92595b5fff"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_cancel_botocore_error_invalidates_marker",
+        "sha256": "33cbf5d579cb5e1ba6ab9d5c456993c79b2d5ddd07961a594f8699f9f6ed0f05"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_terminate_failure_sentinel_when_delete_tags_denied",
+        "sha256": "3f2827564b705156dbf83a152dd2c526832619914cf7e8f9605ab4c7e502ce32"
+      }
+    ],
+    "SAF-033": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_botocore_terminate_error_invalidates_marker",
+        "sha256": "ac5e0ddcb6331be6ce238667e8743c5a433abe25075097da185147429d91cf82"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_botocore_terminate_error_keeps_marker_if_shutting_down",
+        "sha256": "443f4f1032074f07cafd772ce7eab81a3d66e9d1da86fad144c31e025a61d3c4"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_botocore_terminate_unknown_state_invalidates_marker",
+        "sha256": "85dd785b41212ed37471d38517e4a9e6ba363e19dfb6fdbecb3a21033b7eb684"
+      }
+    ],
+    "SAF-035": [
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_skips_cancelled_when_instance_already_done",
+        "sha256": "5b963e3ee2ffcb58f2ee8ece7a46524861feb83f0e4d664db3604ce2802d17d5"
+      },
+      {
+        "test": "tests/test_aws_spot_instance_requests.py::SpotCleanupOrderTests::test_retry_already_gone_volume_not_recounted",
+        "sha256": "8dbb53a4e20a213450fcd3a66e68401ef7631808114c124cdc4e843fe964b9a7"
+      }
+    ],
+    "SAF-038": [
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDetachedDiskTests::test_collects_detach_os_and_data_disks",
+        "sha256": "d8ba3a27c32351fdaea663e3fa4615b36791b11ca4f2a5075b88d88317e4f7d1"
+      },
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDetachedDiskTests::test_delete_option_empty_is_detach_default",
+        "sha256": "9a38bc44c06dcb31859634248b93ff964b40cb14eb90a506b3005045d8682d56"
+      },
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDeleteOrderTests::test_delete_vm_removes_leftover_disks_after_vm",
+        "sha256": "517d5229fdeff75961b7ba20aa88f3ba2d5145ba945c1a259e995a965735c7fd"
+      }
+    ],
+    "SAF-039": [
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpNonAutodeleteDiskTests::test_collects_auto_delete_false_only",
+        "sha256": "5b3ea5e46602a4d1fc879aac21ab9ec5d6c55dc1ae38c3efd1abeaddc5f985c7"
+      },
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpDeleteOrderTests::test_delete_waits_for_zone_op_before_disk",
+        "sha256": "9f19c876666d05d0ed332c806feb698dc7972c3acd8db2dd425817da75a60965"
+      }
+    ],
+    "SAF-040": [
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_attached_volumes_collected_detached_skipped",
+        "sha256": "5e276e0694b8a1bf123541a47b1f7b591c7fc0fbab1b0ac068e4ec86efeab373"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_delete_terminates_waits_then_deletes_volume",
+        "sha256": "b69c64b75c435f465ef6458f1c49c902673d379675f2a762fbe9a83b87b73e01"
+      }
+    ],
+    "SAF-041": [
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDetachedDiskTests::test_requires_positive_age",
+        "sha256": "c69693cf45be19b4acb107017a1052aee268f5767f2972974b54d222fadbcea7"
+      },
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpSpotDetectTests::test_requires_positive_age",
+        "sha256": "2a10728e0864ed6e067a425e54b13f721ac8d7e90d4d37d28e5ad9cb62449a72"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_requires_positive_age",
+        "sha256": "278a69cfbebc830b626c04b83c434bdd959e17eaa71785843fada4ce5c2385dd"
+      }
+    ],
+    "SAF-042": [
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDetachedDiskTests::test_untagged_always_skipped",
+        "sha256": "c46999086372e93f38af2edb73f09f3e02a57a347a909926703174935236ab71"
+      }
+    ],
+    "SAF-043": [
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpSpotDetectTests::test_empty_filter_allows_unlabeled",
+        "sha256": "7af09120385ba3f8353e32738d55c2560f00d17aeb1e4a42bb34d0fcf469e594"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_filter_requires_tags_on_instance",
+        "sha256": "42604a61ebcff6f1baf584f912f64e8103918130cb6824efa2d0439a80b3643e"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_empty_filter_allows_untagged",
+        "sha256": "de14506019f929e705221079cc3af7c4c636087a41ae08f6ad6ffc90d343c720"
+      }
+    ],
+    "SAF-044": [
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDeleteOrderTests::test_disk_exception_tag_skips_delete",
+        "sha256": "8c376bbbcf0b6bd833878b2f3b3c806726e4b24438b0d0d73273b1640dc83b4e"
+      },
+      {
+        "test": "tests/test_azu_spot_vm.py::AzureDeleteOrderTests::test_disk_outside_resource_group_skipped",
+        "sha256": "aff88d834ad18eb97a4e3c9bf597b530f2df64a5c0acb1e0eef9b3cd055f5c3d"
+      },
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpDeleteOrderTests::test_disk_exception_labels_skip_delete",
+        "sha256": "63ae881c06cb979be9f0ae8322b029ed047839d334e3adb38caa331346531495"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_volume_exception_tags_skip_delete",
+        "sha256": "221397f5e4a7aa7feab9a19607f24616498f4bdbc9fe22b8f5c5bffe92f111ac"
+      }
+    ],
+    "SAF-045": [
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpDeleteOrderTests::test_gke_node_skipped",
+        "sha256": "f665a7d7dcb16962f1a949a868c551fd6cc7ac934cb669926a19628d12df12e8"
+      },
+      {
+        "test": "tests/test_gcp_spot_vm.py::GcpDeleteOrderTests::test_mig_created_by_non_list_sequence",
+        "sha256": "71ae16d7a9a386869a3a0d118f23978aba93a32f33f2e7a0978399b7486f1e72"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciPreemptibleDetectTests::test_oke_freeform_tag_skipped",
+        "sha256": "a1f2f449735e47ad33e76f6f26c91815843a01ed18b8569514b2935807412534"
+      },
+      {
+        "test": "tests/test_oci_spot_vm.py::OciPreemptibleDetectTests::test_instance_pool_defined_tag_skipped",
+        "sha256": "d221d1adc7da33f90f36992da5dbe0962bd6d93cc2b6651d8239817025764738"
+      }
+    ],
+    "SAF-046": [
+      {
+        "test": "tests/test_oci_spot_vm.py::OciLeftoverVolumeTests::test_skip_terminate_when_attachment_list_fails",
+        "sha256": "bc55f3f4dcb3753b05adb317f2daf4539d2d0cf77869f46e3e29a9fabf9d5479"
+      }
+    ]
+  },
+  "gaps": [
+    "SAF-001",
+    "SAF-002",
+    "SAF-004",
+    "SAF-005",
+    "SAF-006",
+    "SAF-009",
+    "SAF-010",
+    "SAF-014",
+    "SAF-016",
+    "SAF-021",
+    "SAF-022",
+    "SAF-023",
+    "SAF-024",
+    "SAF-034",
+    "SAF-036",
+    "SAF-037"
+  ]
+}

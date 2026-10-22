@@ -1,74 +1,347 @@
 # Copyright (c) Yugabyte, Inc.
 
+"""GCP disk cleaner.
+
+`DiskCleaner` implements the `crc.core.cleaner.Cleaner` contract: `plan()` lists the zones of
+the project and their disks and filters them, `apply()` deletes the planned disks.
+`Disk` is the legacy class `crc.py` uses; it keeps its constructor, attributes and result
+shapes and runs the cleaner disk by disk, in the exact call order of the original implementation.
+"""
+
+import datetime
 import logging
-import re
-from datetime import datetime
-from typing import Dict, List
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, ClassVar, Protocol, cast
 
 from google.cloud import compute_v1
 from googleapiclient import discovery
 
+from crc.core import age as core_age
+from crc.core import logger, policy
+from crc.core.cleaner import Candidate, Cleaner, Operation, Plan, Result, RunContext
+from crc.core.registry import register
+from crc.gcp._scan import ZoneScan, log_action
 from crc.service import Service
+
+_SERVICE_NAME = "compute"
+_SERVICE_VERSION = "v1"
+_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
+_NOT_TAGGED = "not_tagged"
+
+Clock = Callable[[], datetime.datetime]
+Deleted = list[str] | dict[str, list[str]]
+
+
+class DiskView(Protocol):
+    """The four fields of a GCP disk this cleaner reads."""
+
+    @property
+    def users(self) -> Sequence[str]:
+        """Instances the disk is attached to; empty when unattached."""
+        ...
+
+    @property
+    def name(self) -> str:
+        """Name of the disk."""
+        ...
+
+    @property
+    def labels(self) -> Mapping[str, str]:
+        """Labels of the disk; empty when unlabelled."""
+        ...
+
+    @property
+    def last_detach_timestamp(self) -> str:
+        """RFC 3339 time the disk was last detached; empty when never attached."""
+        ...
+
+
+class GcpDiskClient(Protocol):
+    """The Compute Engine calls this cleaner uses. `close()` ends the session the first
+    `list_zones` or `delete_disk` call opened."""
+
+    def list_zones(self, project_id: str) -> Sequence[Mapping[str, str]]:
+        """The `items` of the zones listing (one page, as dictionaries with a `name`)."""
+        ...
+
+    def list_disks(self, project_id: str, zone: str) -> Iterable[DiskView]:
+        """Disks of one zone."""
+        ...
+
+    def delete_disk(self, project_id: str, zone: str, disk: str) -> object:
+        """Delete one disk of a zone."""
+        ...
+
+    def close(self) -> None:
+        """Close the session; a no-op when none is open."""
+        ...
+
+
+class ComputeDiskClient:
+    """`GcpDiskClient` on google-api-python-client (zones, deletes) and google-cloud-compute
+    (disk listing); as on `main` one discovery service serves a run."""
+
+    def __init__(self) -> None:
+        self._service: Any = None
+        self._disks: compute_v1.DisksClient | None = None
+
+    def _compute(self) -> Any:
+        if self._service is None:
+            self._service = discovery.build(_SERVICE_NAME, _SERVICE_VERSION)
+        return self._service
+
+    def list_zones(self, project_id: str) -> Sequence[Mapping[str, str]]:
+        request = self._compute().zones().list(project=project_id)
+        zones: Sequence[Mapping[str, str]] = request.execute()["items"]
+        self._disks = compute_v1.DisksClient()
+        return zones
+
+    def list_disks(self, project_id: str, zone: str) -> Iterable[DiskView]:
+        if self._disks is None:
+            self._disks = compute_v1.DisksClient()
+        disks: Iterable[DiskView] = self._disks.list(project=project_id, zone=zone)
+        return disks
+
+    def delete_disk(self, project_id: str, zone: str, disk: str) -> object:
+        return self._compute().disks().delete(project=project_id, zone=zone, disk=disk).execute()
+
+    def close(self) -> None:
+        service, self._service = self._service, None
+        if service is not None:
+            service.close()
+
+
+@dataclass(frozen=True, slots=True)
+class DiskSettings:
+    """Filters and options of one run: only the fields `main` reads."""
+
+    project_id: str
+    filter_labels: Mapping[str, Sequence[str]] | None
+    exception_labels: Mapping[str, Sequence[str]] | None
+    exception_regex: Sequence[str] | None
+    custom_age_tag_key: str
+    detach_age: core_age.AgeSpec | int
+    slack_notify_users: bool = False
+    slack_user_label: str = ""
+
+
+def _frozen_groups(groups: dict[str, list[str]] | None) -> dict[str, tuple[str, ...]] | None:
+    if groups is None:
+        return None
+    return {owner: tuple(names) for owner, names in groups.items()}
+
+
+def _record(deleted: Deleted, settings: DiskSettings, name: str, labels: Mapping[str, str]) -> None:
+    """Record a deleted (or listed) disk by name, or by `slack_user_label` (`not_tagged`)."""
+    if not settings.slack_notify_users:
+        cast(list[str], deleted).append(name)
+        return
+    groups = cast(dict[str, list[str]], deleted)
+    label = settings.slack_user_label
+    owner = labels.get(label, _NOT_TAGGED)
+    groups.setdefault(owner, []).append(name)
+
+
+def _log_summary(deleted: Deleted, *, dry_run: bool) -> None:
+    if not deleted:
+        logging.warning("No GCP disk to delete.")
+    if not dry_run:
+        logging.warning(f"number of GCP disks deleted: {len(deleted)}")
+        logging.warning(f"List of GCP disk deleted: {deleted}")
+    else:
+        logging.warning(
+            f"List of GCP disk (Total: {len(deleted)}) which will be deleted: {deleted}"
+        )
+
+
+class DiskCleaner:
+    """Deletes unattached disks with a `last_detach_timestamp` that are at least `detach_age`
+    (or the custom age label) old, match `filter_labels` (any key; empty matches all) and are
+    not excluded by `exception_regex` (`re.match` on the name) or `exception_labels`.
+    Applies to every zone of the project."""
+
+    cloud = "gcp"
+    kind = "disk"
+
+    def __init__(self, client: GcpDiskClient, settings: DiskSettings) -> None:
+        self._client = client
+        self._settings = settings
+
+    def supports(self, operation: Operation) -> bool:
+        return operation is Operation.DELETE
+
+    def zones(self) -> Sequence[Mapping[str, str]]:
+        """Zones of the project (read-only call)."""
+        return self._client.list_zones(self._settings.project_id)
+
+    def plan(self, context: RunContext) -> Plan:
+        """List every zone and filter. Makes no mutating call."""
+        settings = self._settings
+        candidates: list[Candidate] = []
+        try:
+            for zone_obj in self.zones():
+                zone = zone_obj["name"]
+                candidates.extend(self.plan_zone(zone, lambda: context.now))
+        finally:
+            self._client.close()
+        by_owner: dict[str, list[str]] | None = {} if settings.slack_notify_users else None
+        deleted: Deleted = by_owner if by_owner is not None else []
+        for candidate in candidates:
+            _record(deleted, settings, candidate.id, candidate.tags)
+        if context.dry_run:
+            for candidate in candidates:
+                log_action("delete", candidate, dry_run=True)
+            _log_summary(deleted, dry_run=True)
+        return Plan(candidates=tuple(candidates), by_owner=_frozen_groups(by_owner))
+
+    def apply(self, plan: Plan, context: RunContext) -> Result:
+        """Delete the planned disks one by one; a failed delete is logged and skipped."""
+        settings = self._settings
+        by_owner: dict[str, list[str]] | None = {} if settings.slack_notify_users else None
+        deleted: Deleted = by_owner if by_owner is not None else []
+        succeeded: list[str] = []
+        try:
+            succeeded.extend(
+                candidate.id
+                for candidate in plan.candidates
+                if self.apply_disk(candidate.region, candidate, deleted, dry_run=context.dry_run)
+            )
+            _log_summary(deleted, dry_run=context.dry_run)
+        finally:
+            self._client.close()
+        return Result(succeeded=tuple(succeeded), by_owner=_frozen_groups(by_owner))
+
+    def plan_zone(self, zone: str, clock: Clock) -> Iterator[Candidate]:
+        """List one zone lazily and yield the disks to delete, in the order of `main`: attached,
+        exception regex and labels, filter labels, detach timestamp, age; then the REGION line."""
+        scan = ZoneScan(zone)
+        for disk in self._client.list_disks(self._settings.project_id, zone):
+            scan.scanned += 1
+            reason = self._reject(disk, clock)
+            if reason is not None:
+                logger.current().skip(reason)
+                continue
+            scan.selected += 1
+            yield Candidate(
+                id=disk.name, name=disk.name, region=zone, tags=policy.normalize_tags(disk.labels)
+            )
+        scan.finish()
+
+    def _reject(self, disk: DiskView, clock: Clock) -> str | None:
+        if disk.users:
+            return "attached"
+        if reason := self._exception_reason(disk):
+            return reason
+        if not self._has_matching_filter_label(disk):
+            return "filter_mismatch"
+        if not disk.last_detach_timestamp:
+            return "never_detached"
+        return None if self._older_than_detach_age(disk, clock) else "too_young"
+
+    def apply_disk(
+        self, zone: str, candidate: Candidate, deleted: Deleted, *, dry_run: bool
+    ) -> bool:
+        """Delete one disk (nothing in a dry run) and record it; an error is logged and the
+        disk is not recorded. Returns whether it was recorded."""
+        try:
+            if not dry_run:
+                self._client.delete_disk(self._settings.project_id, zone, candidate.id)
+                logging.info(f"Deleting disk {candidate.id}")
+            _record(deleted, self._settings, candidate.id, candidate.tags)
+        except Exception as e:
+            logging.error(f"Error occurred while deleting disk {candidate.id}: {e}")
+            logger.current().fail(zone, candidate.id, e)
+            return False
+        log_action("delete", candidate, dry_run=dry_run)
+        return True
+
+    def _exception_reason(self, disk: DiskView) -> str | None:
+        settings = self._settings
+        if settings.exception_regex:
+            patterns = [f"{p}" for p in settings.exception_regex]
+            if policy.exception_regex_match_matches(patterns, disk.name):
+                return "exception_regex"
+        if settings.exception_labels:
+            tags = policy.normalize_tags(disk.labels)
+            if policy.exception_tags_any(tags, settings.exception_labels):
+                return "exception_tag"
+        return None
+
+    def _has_matching_filter_label(self, disk: DiskView) -> bool:
+        if not self._settings.filter_labels:
+            return True
+        tags = policy.normalize_tags(disk.labels)
+        return policy.filter_tags_any_key(tags, self._settings.filter_labels)
+
+    def _older_than_detach_age(self, disk: DiskView, clock: Clock) -> bool:
+        detached = datetime.datetime.strptime(disk.last_detach_timestamp, _TIME_FORMAT)
+        now = clock().astimezone(detached.tzinfo)
+        logging.debug(disk.labels)
+        settings = self._settings
+        retention_age = core_age.get_retention_age(
+            cast(dict[str, str], disk.labels), settings.custom_age_tag_key
+        )
+        if retention_age:
+            logging.info(f"Updating age for disk: {disk.name}")
+        # An int is a number of days, which `is_old` accepts.
+        default_age = cast(core_age.AgeSpec, settings.detach_age)
+        return core_age.is_old(policy.effective_age(retention_age, default_age), now, detached)
+
+
+@register("gcp", "disk")
+def build_disk_cleaner(context: RunContext) -> Cleaner:
+    """Registry factory. Options: `project_id`, `filter_tags` (labels), `exception_tags`
+    (labels), `exception_regex`, `custom_age_tag_key`, `detach_age`, `slack_notify_users`
+    and `slack_user_label`."""
+    options = context.options
+    project_id = options.get("project_id")
+    if not project_id:
+        raise ValueError("project_id is required for GCP disk cleanup")
+    settings = DiskSettings(
+        project_id=project_id,
+        filter_labels=options.get("filter_tags"),
+        exception_labels=options.get("exception_tags"),
+        exception_regex=options.get("exception_regex"),
+        custom_age_tag_key=options.get("custom_age_tag_key") or "",
+        detach_age=options.get("detach_age") or {},
+        slack_notify_users=bool(options.get("slack_notify_users")),
+        slack_user_label=options.get("slack_user_label") or "",
+    )
+    return DiskCleaner(ComputeDiskClient(), settings)
 
 
 class Disk(Service):
-    """
-    This class provides an implementation of the Service class for managing Disk on Google Cloud.
-    By Default this will clean Disks.
+    """Legacy entry point used by `crc.py`: deletes unattached GCP disks (see `DiskCleaner`);
+    in a dry run it only lists them. `age`, `notags` and `name_regex` are stored, never used.
+
+    Attributes: `service_name`, `service_version`, `time_format`, `default_disk_state`,
+    `disk_names_to_delete` (a list of names, or with `slack_notify_users` a dict of owner to
+    names), and the constructor arguments. `get_deleted` and `count` read the result.
     """
 
-    # Initialize class variables
-    service_name = "compute"
-    """
-    The service name used for the Google Cloud API.
-    """
+    service_name = _SERVICE_NAME
+    service_version = _SERVICE_VERSION
+    time_format = _TIME_FORMAT
+    default_disk_state: ClassVar[list[str]] = ["Unattached"]
 
-    service_version = "v1"
-    """
-    The version of the service used for the Google Cloud API.
-    """
-
-    time_format = "%Y-%m-%dT%H:%M:%S.%f%z"
-    """
-    The format of timestamps used for comparison.
-    """
-
-    default_disk_state = ["Unattached"]
-    """
-    The default_disk_state variable specifies the default state of disks when querying for disks.
-    """
-
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917 - the eleven parameters are the public signature
         self,
         dry_run: bool,
         project_id: str,
-        filter_labels: Dict[str, List[str]],
-        exception_labels: Dict[str, List[str]],
+        filter_labels: dict[str, list[str]],
+        exception_labels: dict[str, list[str]],
         age: int,
         custom_age_tag_key: str,
-        detach_age: int,
-        notags: Dict[str, List[str]],
-        name_regex: List[str],
-        exception_regex: List[str],
+        detach_age: core_age.AgeSpec | int,
+        notags: dict[str, list[str]],
+        name_regex: list[str],
+        exception_regex: list[str],
         slack_notify_users: bool,
         slack_user_label: str,
+        client: GcpDiskClient | None = None,
+        clock: Clock = datetime.datetime.now,
     ) -> None:
-        """
-        Initialize the Disk management class.
-
-        :param dry_run: A boolean variable that indicates whether the class should operate in dry_run mode or not.
-        In dry_run mode, the class will only list the Resources that match the specified filter and exception tags,
-        and also filters Elastic IPs based on absence of certain tags, but will not perform any operations on them.
-        :param project_id: ID of the Google Cloud project.
-        :param filter_labels: Dictionary of labels and their values used to filter Disks for deletion.
-        :param exception_labels: Dictionary of labels and their values used to exclude Disks from deletion.
-        :param age: Age in days of Disks that will be deleted.
-        :param custom_age_tag_key: Tag name to overwrite the age condition.
-        :param detach_age: Age in days the Disks last got detached .
-        :param notags: dictionary containing key-value pairs as filter tags to exclude disks which do not have these tags
-        :param name_regex: A list of regular expressions for incuding disks.
-        :param exception_regex: A list of regular expressions for excluding disks.
-        """
         super().__init__()
         self.dry_run = dry_run
         self.project_id = project_id
@@ -82,163 +355,46 @@ class Disk(Service):
         self.exception_regex = exception_regex
         self.slack_notify_users = slack_notify_users
         self.slack_user_label = slack_user_label
-        if self.slack_notify_users:
-            self.disk_names_to_delete = {}
-        else:
-            self.disk_names_to_delete = []
+        self._client: GcpDiskClient = client or ComputeDiskClient()
+        self._clock = clock
+        self.disk_names_to_delete: Deleted = {} if self.slack_notify_users else []
 
     @property
-    def get_deleted(self):
-        """
-        This is a property decorator that returns the list of items in the disk_names_to_delete list.
-        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
-        """
+    def get_deleted(self) -> Deleted:
+        """Disks deleted (listed in a dry run): names, or owner to names."""
         return self.disk_names_to_delete
 
     @property
-    def count(self):
-        """
-        This is a property decorator that returns the count of items in the disk_names_to_delete list.
-        It's a read-only property, which means it can be accessed like a variable, but cannot be set like a variable.
-        """
+    def count(self) -> int:
+        """Entries of `disk_names_to_delete` (owners with `slack_notify_users`); logs it."""
         count = len(self.disk_names_to_delete)
         logging.info(f"count of items in disk_names_to_delete: {count}")
         return count
 
-    def _is_disk_older_than_detach_age(self, disk):
-        """
-        Check if the disk is older than the specified age
-
-        :param disk: The disk to check age
-        :type disk: dict
-        :return: True if the disk is older than the specified age, False otherwise
-        :rtype: bool
-        """
-        timestamp = disk.last_detach_timestamp
-        detached_timestamp = datetime.strptime(timestamp, self.time_format)
-        dt = datetime.now().astimezone(detached_timestamp.tzinfo)
-        logging.info(disk.labels)
-        retention_age = self.get_retention_age(disk.labels, self.custom_age_tag_key)
-        if retention_age:
-            logging.info(f"Updating age for disk: {disk.name}")
-        return self.is_old(retention_age or self.detach_age, dt, detached_timestamp)
-
-    def _has_matching_filter_label(self, disk):
-        """
-        Check if the disk has any labels that match the filter
-        This method return True if filter_labels is empty
-
-        :param disk: The disk to check for filter labels
-        :type disk: dict
-        :return: True if the disk has a label that matches the filter, False otherwise
-        :rtype: bool
-        """
-        if not self.filter_labels:
-            return True
-        return any(
-            key in disk.labels and (not value or disk.labels[key] in value)
-            for key, value in self.filter_labels.items()
+    def _cleaner(self) -> DiskCleaner:
+        settings = DiskSettings(
+            project_id=self.project_id,
+            filter_labels=self.filter_labels,
+            exception_labels=self.exception_labels,
+            exception_regex=self.exception_regex,
+            custom_age_tag_key=self.custom_age_tag_key,
+            detach_age=self.detach_age,
+            slack_notify_users=self.slack_notify_users,
+            slack_user_label=self.slack_user_label,
         )
+        return DiskCleaner(self._client, settings)
 
-    def _should_skip_disk(self, disk):
-        """
-        Check if the disk should be skipped based on the exception tags and disks that do not have the specified notags.
-        :return: True if the disk should be skipped, False otherwise
-        :rtype: bool
-        """
-        in_exception_labels = False
-        if self.exception_regex:
-            for ex_reg in self.exception_regex:
-                if re.match(r"{}".format(ex_reg), disk.name):
-                    return True
-
-        if self.exception_labels:
-            in_exception_labels = any(
-                key in disk.labels and (not value or disk.labels[key] in value)
-                for key, value in self.exception_labels.items()
-            )
-            if in_exception_labels:
-                return True
-
-    def delete(
-        self,
-        disk_state: List[str] = default_disk_state,
-    ) -> None:
-        """
-        Delete disks that match the specified filter_tags and do not match the specified exception_tags and notags filter.
-        In dry_run mode, this method will only list the disks that match the specified filter and exception tags and notags filter,
-        but will not perform any operations on them.
-
-        :param disk_state: List of valid statuses of disks to delete.
-        :type disk_state: List[str]
-        """
-        with discovery.build(self.service_name, self.service_version) as service:
-            request = service.zones().list(project=self.project_id)
-            zones = request.execute()["items"]
-            disks_client = compute_v1.DisksClient()
-
-            for zone_obj in zones:
+    def delete(self, disk_state: list[str] = default_disk_state) -> None:
+        """Delete (or, in a dry run, only list) the matching disks of every zone, disk by disk.
+        `disk_state` is accepted and ignored, as on main."""
+        cleaner = self._cleaner()
+        try:
+            for zone_obj in cleaner.zones():
                 zone = zone_obj["name"]
-                disks = disks_client.list(project=self.project_id, zone=zone)
-                for disk in disks:
-                    if disk.users:
-                        continue
-                    if self._should_skip_disk(disk):
-                        continue
-                    if not self._has_matching_filter_label(disk):
-                        continue
-                    if not disk.last_detach_timestamp:
-                        continue
-                    if self._is_disk_older_than_detach_age(disk):
-                        try:
-                            if not self.dry_run:
-                                service.disks().delete(
-                                    project=self.project_id,
-                                    zone=zone,
-                                    disk=disk.name,
-                                ).execute()
-                                logging.info(f"Deleting disk {disk.name}")
-                            if self.slack_notify_users:
-                                if self.slack_user_label in disk.labels:
-                                    if (
-                                        disk.labels[self.slack_user_label]
-                                        in self.disk_names_to_delete
-                                    ):
-                                        self.disk_names_to_delete[
-                                            disk.labels[self.slack_user_label]
-                                        ].append(disk.name)
-                                    else:
-                                        self.disk_names_to_delete[
-                                            disk.labels[self.slack_user_label]
-                                        ] = [disk.name]
-                                else:
-                                    if "not_tagged" not in self.disk_names_to_delete:
-                                        self.disk_names_to_delete["not_tagged"] = [
-                                            disk.name
-                                        ]
-                                    else:
-                                        self.disk_names_to_delete["not_tagged"].append(
-                                            disk.name
-                                        )
-                            else:
-                                self.disk_names_to_delete.append(disk.name)
-
-                        except Exception as e:
-                            # log the error message if an exception occurs
-                            logging.error(
-                                f"Error occurred while deleting disk {disk.name}: {e}"
-                            )
-            if not self.disk_names_to_delete:
-                logging.warning(f"No GCP disk to delete.")
-
-            if not self.dry_run:
-                logging.warning(
-                    f"number of GCP disks deleted: {len(self.disk_names_to_delete)}"
-                )
-                logging.warning(
-                    f"List of GCP disk deleted: {self.disk_names_to_delete}"
-                )
-            else:
-                logging.warning(
-                    f"List of GCP disk (Total: {len(self.disk_names_to_delete)}) which will be deleted: {self.disk_names_to_delete}"
-                )
+                for candidate in cleaner.plan_zone(zone, self._clock):
+                    cleaner.apply_disk(
+                        zone, candidate, self.disk_names_to_delete, dry_run=self.dry_run
+                    )
+            _log_summary(self.disk_names_to_delete, dry_run=self.dry_run)
+        finally:
+            self._client.close()

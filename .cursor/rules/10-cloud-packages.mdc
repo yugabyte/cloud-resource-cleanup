@@ -1,0 +1,21 @@
+---
+description: Rules for cloud provider packages
+globs: crc/aws/**,crc/azu/**,crc/gcp/**,crc/oci/**
+alwaysApply: false
+---
+
+# Cloud packages
+
+- Cloud packages must not import each other (import-linter enforces it).
+- Depend on `crc.core` only; do not reach into `crc.py`.
+- Each resource implements `plan()` (read-only) and `apply()` (mutating) and is
+  registered with the registry decorator once `crc/core` exists.
+- Inject SDK clients; do not build them at import time.
+- Destructive resources need a real age gate; fail closed on bad age, tags or
+  telemetry. Keep destructive call order from `CLEANUP_SAFETY.md`.
+- Do not catch broad `Exception` silently. Catch specific SDK errors, log the
+  resource id, chain with `raise ... from e`.
+- No extra retry layer on top of SDK retries.
+- Legacy modules are listed in `pyproject.toml`; when you refactor one, remove
+  it from the lists. Never add one.
+- Tests mock the SDK; never call a real cloud API.

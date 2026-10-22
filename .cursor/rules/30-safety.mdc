@@ -1,0 +1,17 @@
+---
+description: Rules for safety documentation and tests
+globs: CLEANUP_SAFETY.md,tests/**
+alwaysApply: false
+---
+
+# Safety and tests
+
+- `CLEANUP_SAFETY.md` is authoritative for destructive behaviour. Do not edit
+  it unless the task says so.
+- Never delete, skip, xfail or loosen an existing test. Add or strengthen only.
+- Tests are offline: mock `boto3`, Azure, GCP and OCI clients. No credentials.
+- Assert fail-closed branches and destructive call order, not only happy paths.
+- Use `parametrize`, `pytest.raises(..., match=...)`, `monkeypatch`, `tmp_path`
+  and function-scoped fixtures. No `autouse` session fixtures.
+- `tests/archtest/` is a guardrail owned by CODEOWNERS.
+- The test count must not go down.

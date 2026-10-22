@@ -1,6 +1,13 @@
 # Copyright (c) Yugabyte, Inc.
 
+"""Azure credential and the compute/network clients of one resource group.
+
+Reads the `AZURE_CREDENTIALS_*` environment variables (and `AZURE_RESOURCE_GROUP` when no
+resource group is passed). Each client is built on first use and then reused.
+"""
+
 import os
+from typing import Any
 
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute import ComputeManagementClient
@@ -8,67 +15,42 @@ from azure.mgmt.network import NetworkManagementClient
 
 
 class Base:
-    """
-    This module contains functions to authenticate and connect to Azure, and clients to manage Azure resources
-    """
+    """Authenticate to Azure and hand out clients to manage Azure resources."""
 
     def __init__(self, resource_group: str) -> None:
-        """
-        Initialize the class with environment variables for Azure credentials.
-        """
-        self.compute_client = (
-            {}
-        )  # Dictionary to store the ComputeManagementClient object, used to implement the singleton pattern
-        self.network_client = (
-            {}
-        )  # Dictionary to store the NetworkManagementClient object, used to implement the singleton pattern
+        """Read the Azure credentials from the environment and build the credential."""
+        # Empty dicts mean "not built yet" (the singleton pattern of main). The clients are `Any`
+        # because each caller narrows them with its own Protocol of the calls it uses.
+        self.compute_client: Any = {}
+        self.network_client: Any = {}
 
-        # Environment variables for Azure credentials
-        self.subscription_id = os.environ[
-            "AZURE_CREDENTIALS_SUBSCRIPTION_ID"
-        ]  # The subscription ID for the Azure subscription you want to manage resources in.
-        self.tenant_id = os.environ[
-            "AZURE_CREDENTIALS_TENANT_ID"
-        ]  # The tenant ID for the Azure Active Directory associated with your subscription.
-        self.client_id = os.environ[
-            "AZURE_CREDENTIALS_CLIENT_ID"
-        ]  # The client ID for the Azure application that will authenticate to Azure.
-        self.secret = os.environ[
-            "AZURE_CREDENTIALS_CLIENT_SECRET"
-        ]  # The client secret for the Azure application that will authenticate to Azure.
-        self.resource_group = (
-            resource_group if resource_group else os.environ["AZURE_RESOURCE_GROUP"]
-        )  # The name of the resource group you want to manage resources in.
+        self.subscription_id: str = os.environ["AZURE_CREDENTIALS_SUBSCRIPTION_ID"]
+        self.tenant_id: str = os.environ["AZURE_CREDENTIALS_TENANT_ID"]
+        self.client_id: str = os.environ["AZURE_CREDENTIALS_CLIENT_ID"]
+        self.secret: str = os.environ["AZURE_CREDENTIALS_CLIENT_SECRET"]
+        self.resource_group: str = resource_group or os.environ["AZURE_RESOURCE_GROUP"]
 
         self.credential = ClientSecretCredential(
-            tenant_id=self.tenant_id,  # The tenant ID associated with the Azure subscription
-            client_id=self.client_id,  # The client ID for the Azure application that will authenticate to Azure
-            client_secret=self.secret,  # The client secret for the Azure application that will authenticate to Azure
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.secret,
         )
 
-    def get_compute_client(self):
-        """
-        Return the ComputeManagementClient object for managing Azure compute resources.
-        This method uses the singleton pattern to ensure that only one instance of the client is created,
-        and that the same instance is returned every time this method is called.
-        """
+    def get_compute_client(self) -> Any:
+        """Return the shared `ComputeManagementClient`, creating it on the first call."""
         if self.compute_client:
             return self.compute_client
-        self.compute_client = ComputeManagementClient(
+        client = ComputeManagementClient(
             credential=self.credential,
             subscription_id=self.subscription_id,
         )
-        return self.compute_client
+        self.compute_client = client
+        return client
 
-    def get_network_client(self):
-        """
-        Return the NetworkManagementClient object for managing Azure network resources.
-        This method uses the singleton pattern to ensure that only one instance of the client is created,
-        and that the same instance is returned every time this method is called.
-        """
+    def get_network_client(self) -> Any:
+        """Return the shared `NetworkManagementClient`, creating it on the first call."""
         if self.network_client:
             return self.network_client
-        self.network_client = NetworkManagementClient(
-            self.credential, self.subscription_id
-        )
-        return self.network_client
+        client = NetworkManagementClient(self.credential, self.subscription_id)
+        self.network_client = client
+        return client

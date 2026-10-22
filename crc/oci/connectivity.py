@@ -11,7 +11,7 @@ from oci.exceptions import ConnectTimeout, RequestException, ServiceError
 
 # ServiceError covers throttling/5xx responses from OCI; ConnectTimeout/RequestException
 # cover network-level failures reaching a region's endpoint.
-CONNECTIVITY_ERRORS = (
+CONNECTIVITY_ERRORS: tuple[type[BaseException], ...] = (
     ConnectTimeout,
     RequestException,
     ServiceError,
@@ -19,6 +19,7 @@ CONNECTIVITY_ERRORS = (
 
 
 def log_skipped_region(region: str, context: str, exc: BaseException) -> None:
+    """Log the warning that a region (or one call in it) was skipped for a connectivity error."""
     logging.warning(
         "Region %s: skipped %s — network/connectivity (%s): %s",
         region,

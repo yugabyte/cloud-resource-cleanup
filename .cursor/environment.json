@@ -1,0 +1,3 @@
+{
+  "install": "if command -v python3.11 >/dev/null; then python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt; else python3 -m pip install --user -r requirements.txt -r requirements-dev.txt; fi"
+}

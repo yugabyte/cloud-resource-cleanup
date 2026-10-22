@@ -1,0 +1,19 @@
+---
+description: Rules for crc/core and crc/notify
+globs: crc/core/**,crc/notify/**
+alwaysApply: false
+---
+
+# Core and notifiers
+
+- `crc.core` never imports `crc.aws`, `crc.azu`, `crc.gcp`, `crc.oci` or a
+  cloud SDK (`boto3`, `azure`, `google`, `oci`).
+- Policy and age code is pure: plain data in, decision out, no I/O, no
+  environment reads, no clock reads except through an injected `now`.
+- Use `typing.Protocol`, frozen `@dataclass(frozen=True, slots=True)` DTOs and
+  full type annotations. Must pass `mypy --strict` and ruff.
+- No `async`, `pydantic`, singletons or `Result` wrappers.
+- Parse and validate CLI values at the boundary; keep JSON-style flag values
+  such as `'{"days": 1}'` working.
+- `crc.notify` consumes the report model only; it must not import cloud code.
+- Keep functions small: complexity 10, 40 statements, 6 arguments.

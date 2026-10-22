@@ -1,7 +1,15 @@
 # Copyright (c) Yugabyte, Inc.
 
+"""OCI config-based authentication and per-region client caches shared by the OCI cleaners.
+
+`Base` builds the API signing key config and caches one compute, block storage and identity
+client per region. The OCI SDK has no type stubs, so the clients it returns are `Any` and the
+callers narrow them behind their own Protocols.
+"""
+
 import logging
 import os
+from typing import Any
 
 import oci
 
@@ -11,7 +19,9 @@ HOME_REGION = "us-sanjose-1"
 TENANCY_OCID = "ocid1.tenancy.oc1..aaaaaaaa6w2zfjmzecayfzpuwufo5jsiedlap7hce6chuvess7eu2mofvlva"
 USER_OCID = "ocid1.user.oc1..aaaaaaaahymi5wmb25sh24g6ldpfccgngqzz2gjbnz5coruofn5jfwe2v5aq"
 FINGERPRINT = "bf:15:88:6c:01:e4:53:fd:63:08:d7:83:c3:32:ec:b8"
-COMPARTMENT_ID = "ocid1.compartment.oc1..aaaaaaaaebaxkyhmnbwgmj2zgovsax6vseien7w62tgohejnwg4ydyiqhybq"
+COMPARTMENT_ID = (
+    "ocid1.compartment.oc1..aaaaaaaaebaxkyhmnbwgmj2zgovsax6vseien7w62tgohejnwg4ydyiqhybq"
+)
 
 # Static fallback list used only if the tenancy's subscribed regions can't be
 # fetched (e.g. transient IdentityClient failure).
@@ -35,11 +45,9 @@ class Base:
         key_content = os.environ.get("OCI_PRIVATE_KEY_CONTENT")
         key_file = os.environ.get("OCI_PRIVATE_KEY_FILE")
         if not key_content and not key_file:
-            raise KeyError(
-                "Either OCI_PRIVATE_KEY_CONTENT or OCI_PRIVATE_KEY_FILE must be set"
-            )
+            raise KeyError("Either OCI_PRIVATE_KEY_CONTENT or OCI_PRIVATE_KEY_FILE must be set")
 
-        self.config = {
+        self.config: dict[str, str] = {
             "user": self.user_id,
             "tenancy": self.tenancy_id,
             "fingerprint": self.fingerprint,
@@ -47,22 +55,22 @@ class Base:
         }
         if key_content:
             self.config["key_content"] = key_content
-        else:
+        elif key_file:
             self.config["key_file"] = key_file
 
-        self._compute_clients = {}  # region -> ComputeClient, singleton per region
-        self._blockstorage_clients = {}  # region -> BlockstorageClient, singleton per region
-        self._regional_identity_clients = {}  # region -> IdentityClient, singleton per region
-        self._availability_domains = {}  # region -> [ad names], cached per region
-        self._identity_client = None
+        self._compute_clients: dict[str, Any] = {}  # region -> ComputeClient, singleton per region
+        self._blockstorage_clients: dict[str, Any] = {}  # region -> BlockstorageClient, per region
+        self._regional_identity_clients: dict[str, Any] = {}  # region -> IdentityClient, per region
+        self._availability_domains: dict[str, list[str]] = {}  # region -> [ad names], cached
+        self._identity_client: Any = None
 
-    def get_identity_client(self):
+    def get_identity_client(self) -> Any:
         if self._identity_client:
             return self._identity_client
         self._identity_client = oci.identity.IdentityClient(self.config)
         return self._identity_client
 
-    def get_all_regions(self):
+    def get_all_regions(self) -> list[str]:
         """
         Returns the list of region names the tenancy is subscribed to.
         Falls back to a static single-region list on connectivity failure,
@@ -70,20 +78,16 @@ class Base:
         """
         try:
             identity_client = self.get_identity_client()
-            subscriptions = identity_client.list_region_subscriptions(
-                self.tenancy_id
-            ).data
-            regions = [sub.region_name for sub in subscriptions]
+            subscriptions = identity_client.list_region_subscriptions(self.tenancy_id).data
+            regions: list[str] = [sub.region_name for sub in subscriptions]
             logging.info(f"Retrieved list of OCI regions: {regions}")
             return regions
         except CONNECTIVITY_ERRORS as e:
             log_skipped_region(self.region, "list_region_subscriptions", e)
-            logging.warning(
-                f"Falling back to static region list: {DEFAULT_REGION_FALLBACK}"
-            )
+            logging.warning(f"Falling back to static region list: {DEFAULT_REGION_FALLBACK}")
             return DEFAULT_REGION_FALLBACK
 
-    def get_compute_client(self, region: str):
+    def get_compute_client(self, region: str) -> Any:
         """
         Return a cached ComputeClient for the given region, creating one if needed.
         """
@@ -94,7 +98,7 @@ class Base:
         self._compute_clients[region] = client
         return client
 
-    def get_blockstorage_client(self, region: str):
+    def get_blockstorage_client(self, region: str) -> Any:
         """
         Return a cached BlockstorageClient for the given region, creating one if needed.
         """
@@ -105,7 +109,7 @@ class Base:
         self._blockstorage_clients[region] = client
         return client
 
-    def get_regional_identity_client(self, region: str):
+    def get_regional_identity_client(self, region: str) -> Any:
         """
         Return a cached IdentityClient scoped to the given region, creating one if needed.
         """
@@ -116,7 +120,7 @@ class Base:
         self._regional_identity_clients[region] = client
         return client
 
-    def get_availability_domains(self, region: str):
+    def get_availability_domains(self, region: str) -> list[str]:
         """
         Returns the availability domain names present in the given region. Needed
         because list_boot_volume_attachments (unlike list_volume_attachments) is
@@ -125,9 +129,7 @@ class Base:
         if region in self._availability_domains:
             return self._availability_domains[region]
         identity_client = self.get_regional_identity_client(region)
-        ads = identity_client.list_availability_domains(
-            compartment_id=self.tenancy_id
-        ).data
-        ad_names = [ad.name for ad in ads]
+        ads = identity_client.list_availability_domains(compartment_id=self.tenancy_id).data
+        ad_names: list[str] = [ad.name for ad in ads]
         self._availability_domains[region] = ad_names
         return ad_names

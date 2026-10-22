@@ -9,12 +9,14 @@ import logging
 
 from botocore.exceptions import (
     ConnectionClosedError,
-    ConnectionError as BotoConnectionError,
     ReadTimeoutError,
+)
+from botocore.exceptions import (
+    ConnectionError as BotoConnectionError,
 )
 
 # Covers ConnectTimeoutError, EndpointConnectionError, ProxyConnectionError, etc.
-CONNECTIVITY_ERRORS = (
+CONNECTIVITY_ERRORS: tuple[type[BaseException], ...] = (
     BotoConnectionError,
     ReadTimeoutError,
     ConnectionClosedError,

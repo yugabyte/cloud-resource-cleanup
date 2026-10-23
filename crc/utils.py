@@ -3,6 +3,8 @@
 import logging
 import os
 
+from crc.core import logger as run_log
+
 LOG_FORMATTER = "%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(threadName)s %(message)s"
 
 _NOISY_LOGGERS = ("azure", "msrest", "urllib3")
@@ -42,4 +44,5 @@ def init_logging(filename: str, log_level: str = "debug") -> None:
     for name in _NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
+    run_log.logging_ready()
     logging.info(f"Logging initialized with file: {filename} and level: {log_level.upper()}")

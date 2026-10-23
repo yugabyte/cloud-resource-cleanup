@@ -244,3 +244,94 @@ def test_region_with_nothing_selected_is_debug_and_still_counted(
     caplog.clear()
     logger.finish()
     assert "regions=3 regions_skipped=0" in caplog.messages[-1]
+
+
+def test_logging_ready_without_current_run_is_a_noop(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    logger.logging_ready()
+    assert _records(caplog) == []
+
+
+def test_logging_ready_emits_held_header_once() -> None:
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    messages: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            messages.append(record.getMessage())
+
+    run_logger = logging.getLogger("crc.run")
+    collector = Collect(level=logging.DEBUG)
+    run_logger.addHandler(collector)
+    run_logger.setLevel(logging.DEBUG)
+    root.handlers = []
+    try:
+        logger.begin("aws", "vm", "delete", True, {})
+        assert messages == []
+        root.addHandler(logging.NullHandler())
+        logger.logging_ready()
+        logger.logging_ready()
+        header = "RUN START cloud=aws resource=vm operation=delete dry_run=true"
+        assert messages == [header]
+        logger.current().region("r", 1, 1, 0.0)
+        logger.finish()
+        assert sum(m.startswith("RUN START") for m in messages) == 1
+    finally:
+        root.handlers = saved
+        run_logger.removeHandler(collector)
+        run_logger.setLevel(logging.NOTSET)
+
+
+def test_logging_ready_after_header_already_emitted_is_idempotent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    logger.begin("aws", "vm", "delete", True, {})
+    logger.logging_ready()
+    logger.logging_ready()
+    assert [m for _, m in _records(caplog)] == [
+        "RUN START cloud=aws resource=vm operation=delete dry_run=true"
+    ]
+
+
+def test_logging_ready_leaves_unattached_current_run_silent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    logger.current().hold_header("RUN START x")
+    logger.logging_ready()
+    assert _records(caplog) == []
+
+
+def test_failed_line_with_multi_line_message_is_one_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run = logger.begin("azure", "vm", "delete", False, {})
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    message = "(ResourceNotFound) gone\nCode: ResourceNotFound\r\n  Message: not here  \n\n"
+    run.fail("westus", "vm-1", RuntimeError(message))
+    run.fail(None, "vm-2", "first\nsecond")
+    logger.finish()
+    failed = [m for _, m in _records(caplog) if m.startswith("FAILED")]
+    assert failed == [
+        "FAILED cloud=azure resource=vm region=westus id=vm-1 error=RuntimeError: "
+        "(ResourceNotFound) gone | Code: ResourceNotFound | Message: not here",
+        "FAILED cloud=azure resource=vm region=- id=vm-2 error=first | second",
+    ]
+    assert all("\n" not in m for _, m in _records(caplog))
+
+
+def test_failed_line_with_single_line_message_is_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run = logger.begin("aws", "vm", "delete", False, {})
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    run.fail("us-east-1", "i-1", ValueError("bad value: 3"))
+    logger.finish()
+    assert (
+        logging.ERROR,
+        "FAILED cloud=aws resource=vm region=us-east-1 id=i-1 error=ValueError: bad value: 3",
+    ) in _records(caplog)

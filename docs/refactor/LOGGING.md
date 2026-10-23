@@ -5,7 +5,9 @@ Owner-approved 2026-10-22. The LOG rungs (`LOG-0`, `LOG-AWS1`, `LOG-AWS2`, `LOG-
 They never change what is selected, deleted, stopped, posted to Slack or written to
 InfluxDB, add no CLI flag and keep every exit code. Bug rows: `BUG-356` to `BUG-362` in
 `docs/refactor/BUGS.md` (plus `BUG-353`, OCI tag dict level only). Rung `LOG-FIX` fixes `BUG-363` (the run log must not run
-`logging.basicConfig()`) and adjusts the REGION level and the `--scan_tag` path.
+`logging.basicConfig()`) and adjusts the REGION level and the `--scan_tag` path. Rung
+`LOG-FIX2` fixes `BUG-364` (`RUN START` emitted as soon as `init_logging` adds the root
+handlers) and `BUG-365` (`FAILED` line collapses multi-line exception messages to one line).
 
 ## Why
 
@@ -31,6 +33,8 @@ and swallowed with no end-of-run list.
 | BUG-361 | no per-region progress or timing |
 | BUG-362 | per-resource errors are logged where they happen and swallowed; no end-of-run list or count |
 | BUG-363 | the run log called module-level `logging.*`, which runs `basicConfig()` on a root logger without handlers (the CLI calls `begin()` before `init_logging`) and floods the console with duplicated lines (introduced by LOG-0; severity high) |
+| BUG-364 | the LOG-FIX hold for `RUN START` released the line only on the next `RunLog` call, not when `init_logging` added the handlers, so cleaners printed `RUN START` after their own work lines (introduced by LOG-FIX) |
+| BUG-365 | `FAILED` lines appended multi-line exception messages unchanged, breaking one `FAILED` record into several console lines (introduced by LOG-0) |
 
 ## Rules
 
@@ -56,9 +60,12 @@ without handlers those run `logging.basicConfig()`, which adds a stderr handler 
 (BUG-363). The same holds for every log call that can run before `init_logging` in the CLI path
 (`crc/cli/dispatch.py` uses a module logger). `crc/cli` calls `begin()` before any cleaner is
 built, and logging is only initialised when a cleaner is built (`Service.__init__`), so
-`RUN START` is held until the first run-log line is emitted after the root logger has handlers
-and is then emitted once, before that line. When the run ends without root handlers, `finish()`
-still emits `RUN START` and then `RESULT` through the named logger.
+`RUN START` is held and printed as soon as logging is initialised: `crc.utils.init_logging`
+calls `logger.logging_ready()` after adding the root handlers (BUG-364), so the header comes
+before any line of the cleaner itself. Fallbacks: the first run-log line emitted after the root
+logger has handlers releases a still-held header, and when the run ends without root handlers
+`finish()` still emits `RUN START` and then `RESULT` through the named logger. The header is
+printed once.
 
 ```
 RUN START cloud=<cloud> resource=<resource> operation=<delete|stop> dry_run=<true|false> <key>=<json> ...
@@ -87,6 +94,10 @@ RESULT cloud=<c> resource=<r> operation=<op> dry_run=<true|false> selected=<n> d
   the existing warning line stays.
 - `RunLog.fail(region, resource_id, error)` records a failure; the existing per-resource
   error line stays where it is.
+- `FAILED` is always one line (BUG-365): the exception message is split on line breaks, each
+  part stripped, empty parts dropped and the rest joined with ` | `; the
+  `error=<ExceptionType>: <message>` format is otherwise unchanged. The per-resource error
+  lines are not changed.
 - `finish()` logs, in this order: one INFO `SKIPPED` line per reason sorted by reason; if
   there are failures, ERROR `ERRORS count=<n>` and one ERROR `FAILED` line per failure in
   order; then always INFO `RESULT`.

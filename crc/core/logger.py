@@ -47,10 +47,15 @@ def _flag(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _one_line(text: str) -> str:
+    parts = (part.strip() for part in text.splitlines())
+    return " | ".join(part for part in parts if part)
+
+
 def _error_text(error: BaseException | str) -> str:
     if isinstance(error, BaseException):
-        return f"{type(error).__name__}: {error}"
-    return str(error)
+        return f"{type(error).__name__}: {_one_line(str(error))}"
+    return _one_line(str(error))
 
 
 class RunLog:
@@ -89,6 +94,10 @@ class RunLog:
         """Keep the RUN START line until the root logger has handlers, then emit it once."""
         self._header = line
         self._emit_header(force=False)
+
+    def release_header(self) -> None:
+        """Emit the held RUN START line now (logging has just been initialised)."""
+        self._emit_header(force=True)
 
     def _emit_header(self, force: bool) -> None:
         if self.attached and self._header is not None and (force or logging.getLogger().handlers):
@@ -189,6 +198,15 @@ def begin(
     parts.extend(f"{key}={_json(options[key])}" for key in _OPTION_KEYS if options.get(key))
     run.hold_header(" ".join(parts))
     return run
+
+
+def logging_ready() -> None:
+    """Emit the held RUN START line of the current run, if any. Call once handlers exist.
+
+    A no-op when no run began or its header was already emitted, so calling it twice is safe.
+    """
+    if _current is not None:
+        _current.release_header()
 
 
 def current() -> RunLog:

@@ -101,6 +101,7 @@ levels only; their contract (formats, levels, parity-test rule) is in `docs/refa
 | LOG-GCP | BUG-358, BUG-361, BUG-362 | no |
 | LOG-OCI | BUG-353 (tag dict level only), BUG-358, BUG-361, BUG-362 | no |
 | LOG-FIX | BUG-363 (run log must not run `basicConfig`; owner-approved 2026-10-22); REGION at DEBUG when nothing selected; `--scan_tag` run header and result (operation=scan) | no |
+| LOG-FIX2 | BUG-364 (`RUN START` printed when logging is initialised, not on the next run-log line), BUG-365 (`FAILED` line always one line); owner-approved 2026-10-23 | no |
 
 Progress is logged in `docs/refactor/STATUS.md`. Reviews go to
 `docs/refactor/reviews/<rung>.md`.

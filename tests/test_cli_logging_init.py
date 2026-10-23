@@ -75,6 +75,7 @@ def test_cli_path_with_init_logging_in_cleaner_adds_no_stray_handler(
 
     def cleaner(*args: Any) -> None:
         init_logging(str(log_file))
+        logging.getLogger("crc.fake").info("cleaner own line")
         run = logger.current()
         logging.getLogger("botocore").debug("retrying request")
         run.region("us-east-2", 2, 0, 0.1)
@@ -101,9 +102,12 @@ def test_cli_path_with_init_logging_in_cleaner_adds_no_stray_handler(
     assert len(starts) == 1 and len(results) == 1 and starts[0] < results[0]
     first_region = next(i for i, line in enumerate(lines) if "REGION cloud=" in line)
     assert starts[0] < first_region
+    own = [i for i, line in enumerate(lines) if "cleaner own line" in line]
+    assert len(own) == 1 and starts[0] < own[0] < results[0]
 
     file_text = log_file.read_text()
     assert file_text.count("RUN START") == 1
+    assert file_text.index("RUN START") < file_text.index("cleaner own line")
     assert file_text.count("RESULT cloud=") == 1
     assert "retrying request" in file_text
     assert "region=us-east-2 scanned=2 selected=0" in file_text

@@ -2,22 +2,25 @@
 
 ## Purpose
 
-Documentation that is not user-facing CLI help (that lives in the root `README.md`). Today it holds
-only `docs/refactor/`, the plan, status, bug register and reviews of the Python refactor.
+Reference documentation that is not user-facing CLI help (that is the root `README.md`) and not an
+agent entry point (that is `AGENTS.md`). Docs here state what the code does today.
 
 ## Public API
 
-- `docs/refactor/`: plan, status, catalogues, bug register and reviews (see `docs/refactor/README.md`).
-- Root `AGENTS.md`, `ARCHITECTURE.md` and `CLEANUP_SAFETY.md` stay in the repository root.
+- `logging.md`: the run-log contract (line formats, levels, rules).
+- `refactor/BUGS.md`: register of known bugs, `BUG-NNN` rows; `refactor/bugs/` holds pending rows.
+- `archive/`: archived history (plan, status, reviews, filter variants). Frozen; read only
+  when a bug row or a code comment sends you there. Its links may point to paths that moved.
 
 ## Safety Invariants
 
 - `CLEANUP_SAFETY.md` is authoritative for destructive behaviour; documents here never override it.
-- `docs/refactor/PLAN.md` is a guardrail file in `.github/CODEOWNERS`; do not edit it unless a task asks.
 - State only what the code does; cite `file:line` instead of describing behaviour from memory.
 
 ## Extension Rules
 
-1. Add refactor documents under `docs/refactor/` and list them in that README.
-2. Any new directory under `docs/` needs a `README.md` with the four sections (ARCH-002).
-3. Record every bug or quirk in `docs/refactor/BUGS.md`, not in free-form notes.
+1. Add a current-state document as `docs/<topic>.md` and link it from `AGENTS.md` or the document
+   that needs it. Every relative link and every backticked repo path (`crc/...`, `tests/...`,
+   `docs/...`) must resolve (ARCH-011); write a path that exists only on `main` as `main:<path>`.
+2. Record every bug in `refactor/BUGS.md` with the next free ID, not in free-form notes.
+3. Do not add history or progress logs; use the PR description and git history.

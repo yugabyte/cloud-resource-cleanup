@@ -1,8 +1,8 @@
-"""Lane rules of LOG-AWS2 (AWS KMS, snapshot, keypairs, Elastic IPs, VPC) for the log rewriter.
+"""Log rules of the AWS KMS, snapshot, keypair, Elastic IP cleaners.
 
 Pass ``rules=RULES`` to ``expected_logs`` / ``expected_outcome`` of ``tests/helpers_log_fix.py``
-for the bug IDs of this lane. ``RULES`` is the core rules plus BUG-357 and BUG-359, and a
-BUG-356 entry that applies the core rule and then the keypair skip lines of this lane.
+for the bug IDs of these cleaners. ``RULES`` is the core rules plus BUG-357 and BUG-359, and a
+BUG-356 entry that applies the core rule and then the keypair skip lines.
 """
 
 import logging

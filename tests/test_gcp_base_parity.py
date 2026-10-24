@@ -147,7 +147,7 @@ def _run(
     with caplog.at_level(logging.DEBUG):
         try:
             result = module.get_gcp_regions(case.project)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
             error = (type(exc).__name__, str(exc))
     logs = [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
     return Outcome(sdk.calls, result, logs, capsys.readouterr().out, error)

@@ -10,7 +10,14 @@ from crc.azu.vm import VmCleaner, VmSettings
 from crc.core.cleaner import Operation, Plan, RunContext
 from tests.helpers_azure_vm import NOW, STOPPED, FakeAzure, vm
 
-MUTATING = ("vm_begin_delete", "vm_result", "nic_begin_delete", "nic_result", "begin_power_off")
+MUTATING = (
+    "vm_begin_delete",
+    "vm_result",
+    "nic_begin_delete",
+    "nic_result",
+    "begin_power_off",
+    "begin_deallocate",
+)
 FILTER = {"env": ["ci"]}
 
 
@@ -43,8 +50,8 @@ def test_plan_never_mutates(operation: Operation, dry_run: bool) -> None:
 def test_plan_lists_then_reads_status_of_each_selected_vm() -> None:
     azure = FakeAzure([vm("a"), vm("b", {"x": "1"}), vm("c", hours=0.1)])
     cleaner_for(azure).plan(context())
-    names = [c[0] for c in azure.calls if c[0] in ("list_all", "instance_view")]
-    assert names == ["list_all", "instance_view"]
+    names = [c[0] for c in azure.calls if c[0] in ("list", "instance_view")]
+    assert names == ["list", "instance_view"]
     assert ("instance_view", "rg", "a") in azure.calls
 
 
@@ -69,7 +76,7 @@ def test_plan_reports_skipped_reasons() -> None:
         "other": "does not match filter_tags",
         "young": "not older than age",
         "stopped": "status does not contain an allowed state",
-        "broken": "status unavailable",
+        "broken": "no_power_state",
     }
 
 
@@ -121,13 +128,13 @@ def test_apply_deletes_vm_then_its_nic_in_plan_order() -> None:
     ]
 
 
-def test_apply_stop_powers_off_only() -> None:
+def test_apply_stop_deallocates_only() -> None:
     azure = FakeAzure([vm("a")])
     cleaner = cleaner_for(azure)
     ctx = context(Operation.STOP)
     result = cleaner.apply(cleaner.plan(ctx), ctx)
     assert result.succeeded == ("a",)
-    assert mutations(azure) == [("begin_power_off", "rg", "a")]
+    assert mutations(azure) == [("begin_deallocate", "rg", "a")]
 
 
 def test_apply_dry_run_calls_nothing() -> None:
@@ -164,11 +171,11 @@ def test_supports_delete_and_stop() -> None:
     assert cleaner.supports(Operation.STOP)
 
 
-def test_state_allowed_matches_substring_of_second_status() -> None:
+def test_state_skip_reason_compares_the_power_state_exactly() -> None:
     azure = FakeAzure([vm("a", statuses=("VM running", "VM stopped"))])
     cleaner = cleaner_for(azure)
-    assert cleaner.state_allowed("a", ["stopped"])
-    assert not cleaner.state_allowed("a", ["running"])
+    assert cleaner.state_skip_reason("a", ["stopped"]) is None
+    assert cleaner.state_skip_reason("a", ["running"]) == "status does not contain an allowed state"
 
 
 def test_decide_reads_the_clock_only_for_the_age_check() -> None:

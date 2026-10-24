@@ -12,6 +12,7 @@ from typing import Any
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
+from azure.mgmt.resource.resources import ResourceManagementClient
 
 
 class Base:
@@ -23,6 +24,7 @@ class Base:
         # because each caller narrows them with its own Protocol of the calls it uses.
         self.compute_client: Any = {}
         self.network_client: Any = {}
+        self.resource_client: Any = {}
 
         self.subscription_id: str = os.environ["AZURE_CREDENTIALS_SUBSCRIPTION_ID"]
         self.tenant_id: str = os.environ["AZURE_CREDENTIALS_TENANT_ID"]
@@ -53,4 +55,12 @@ class Base:
             return self.network_client
         client = NetworkManagementClient(self.credential, self.subscription_id)
         self.network_client = client
+        return client
+
+    def get_resource_client(self) -> Any:
+        """Return the shared `ResourceManagementClient` (creation times), built on first use."""
+        if self.resource_client:
+            return self.resource_client
+        client = ResourceManagementClient(self.credential, self.subscription_id)
+        self.resource_client = client
         return client

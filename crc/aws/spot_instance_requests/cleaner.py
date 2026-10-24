@@ -9,37 +9,23 @@ leftover volumes, region by region, in the order of the original implementation.
 
 import datetime
 import logging
-import time
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Sequence
 from functools import partial
-from typing import Any
-
-from botocore.exceptions import ClientError
 
 from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.aws.spot_instance_requests.cleanup import CleanupEnv, cleanup_one, sweep_region
-from crc.aws.spot_instance_requests.client import (
-    ClientFactory,
-    RegionLister,
-    SpotClient,
-    all_regions,
-    boto3_client,
-)
+from crc.aws.spot_instance_requests.client import SpotClient
 from crc.aws.spot_instance_requests.model import (
     SKIP_CONTEXT,
     RequestMatch,
     SpotSettings,
     SpotState,
-    Waiter,
 )
 from crc.aws.spot_instance_requests.preview import preview_request, preview_sweep
-from crc.aws.spot_instance_requests.requests import (
-    build_filter,
-    describe_all_requests,
-    filtered_requests,
-)
-from crc.core import age as core_age
+from crc.aws.spot_instance_requests.regions import guarded_cleanup, guarded_sweep, list_matches
+from crc.aws.spot_instance_requests.requests import build_filter
+from crc.aws.spot_instance_requests.runtime import SpotRuntime, settings_from_options
+from crc.aws.spot_instance_requests.summary import log_summary
 from crc.core import logger
 from crc.core.cleaner import (
     Candidate,
@@ -52,91 +38,16 @@ from crc.core.cleaner import (
 from crc.core.registry import register
 from crc.core.report import DISK
 
-Clock = Callable[[], datetime.datetime]
-_UTC_CLOCK = partial(datetime.datetime.now, datetime.UTC)
-
-
-@dataclass(frozen=True, slots=True)
-class SpotRuntime:
-    """Injected collaborators: SDK client factory, region lister, clock and wait."""
-
-    client_factory: ClientFactory = boto3_client
-    list_regions: RegionLister = all_regions
-    clock: Clock = _UTC_CLOCK
-    waiter: Waiter = field(default_factory=Waiter)
-
-
-def log_summary(state: SpotState, *, dry_run: bool) -> None:
-    """The closing log lines of main (warnings)."""
-    if not state.spot_requests_to_delete:
-        logging.warning("No SpotInstanceRequest to delete.")
-    label = "which will be deleted" if dry_run else "deleted"
-    logging.warning(
-        "List of AWS SpotInstanceRequest (Total: %s) %s: %s",
-        len(state.spot_requests_to_delete),
-        label,
-        state.spot_requests_to_delete,
-    )
-    logging.warning(
-        "List of AWS SpotInstanceRequest Instances (Total: %s) %s: %s",
-        len(state.instance_ids_to_delete),
-        label,
-        state.instance_ids_to_delete,
-    )
-    logging.warning(
-        "List of AWS leftover EBS volumes (DeleteOnTermination=false) (Total: %s) %s: %s",
-        len(state.volumes_to_delete),
-        label,
-        state.volumes_to_delete,
-    )
-
-
-def list_matches(
-    settings: SpotSettings,
-    client: SpotClient,
-    region: str,
-    now: datetime.datetime,
-    spot_filter: list[dict[str, Any]],
-) -> list[RequestMatch] | None:
-    """Matching requests of one region, or None when listing failed (logged, region skipped)."""
-    started = time.monotonic()
-    try:
-        details = describe_all_requests(client, spot_filter)
-    except ClientError as e:
-        logging.error(
-            "Region %s: describe_spot_instance_requests failed (%s): %s",
-            region,
-            e.response.get("Error", {}).get("Code", "Unknown"),
-            e,
-        )
-        logger.current().fail(region, "-", e)
-        return None
-    except Exception as e:
-        logging.error("Region %s: describe_spot_instance_requests failed: %s", region, e)
-        logger.current().fail(region, "-", e)
-        return None
-    matches = filtered_requests(settings, now, details, region)
-    scanned = len(details.get("SpotInstanceRequests", []))
-    logger.current().region(region, scanned, len(matches), time.monotonic() - started)
-    return matches
-
-
-def guarded_sweep(region: str, sweep: Callable[[], None]) -> None:
-    """Run a region sweep; an error is logged and does not stop the run."""
-    try:
-        sweep()
-    except Exception as e:
-        logging.error("Region %s: failed sweeping tagged leftover volumes: %s", region, e)
-        logger.current().fail(region, "-", e)
-
-
-def guarded_cleanup(region: str, request_id: str, action: Callable[[], None]) -> None:
-    """Run the cleanup of one request; an error is logged and does not stop the run."""
-    try:
-        action()
-    except Exception as e:
-        logging.error("Region %s: failed cleaning spot request %s: %s", region, request_id, e)
-        logger.current().fail(region, request_id, e)
+__all__ = [
+    "SpotRequestCleaner",
+    "SpotRuntime",
+    "build_spot_request_cleaner",
+    "guarded_cleanup",
+    "guarded_sweep",
+    "list_matches",
+    "log_summary",
+    "settings_from_options",
+]
 
 
 def _candidate(match: RequestMatch, region: str) -> Candidate:
@@ -188,7 +99,7 @@ class SpotRequestCleaner:
         spot_filter = build_filter(self.settings)
         try:
             regions = list(self.runtime.list_regions())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - region listing failure recorded, empty plan, nothing is deleted
             logging.error("Failed to list AWS regions for EC2: %s", e)
             logger.current().fail(None, "-", e)
             return Plan()
@@ -276,17 +187,6 @@ class SpotRequestCleaner:
         for match in matches:
             guarded_cleanup(env.region, match.request_id, partial(cleanup_one, env, client, match))
         guarded_sweep(env.region, partial(sweep_region, env, client, now))
-
-
-def settings_from_options(options: Any) -> SpotSettings:
-    """Build the settings from `RunContext.options` (age is required and positive)."""
-    return SpotSettings(
-        filter_tags=options.get("filter_tags") or {},
-        exception_tags=options.get("exception_tags") or {},
-        notags=options.get("notags") or {},
-        age=core_age.require_positive_age(options.get("age")),
-        custom_age_tag_key=options.get("custom_age_tag_key"),
-    )
 
 
 @register("aws", "spot_instance_requests")

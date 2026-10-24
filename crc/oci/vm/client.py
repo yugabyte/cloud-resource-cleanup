@@ -41,6 +41,16 @@ class SdkInstance(Protocol):
         ...
 
     @property
+    def defined_tags(self) -> Mapping[str, Any] | None:
+        """Defined tags (namespace -> key -> value), or `None`; read only by the OKE guard."""
+        ...
+
+    @property
+    def metadata(self) -> object:
+        """Instance metadata (a dict when present); read only by the OKE guard."""
+        ...
+
+    @property
     def time_created(self) -> datetime.datetime:
         """Creation time."""
         ...

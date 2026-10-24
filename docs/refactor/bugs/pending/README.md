@@ -2,18 +2,18 @@
 
 ## Purpose
 
-Per-rung bug and quirk rows not yet merged into `docs/refactor/BUGS.md` (see `docs/refactor/bugs/README.md`).
+Bug and quirk rows not yet merged into `docs/refactor/BUGS.md` (see `docs/refactor/bugs/README.md`).
 
 ## Public API
 
-- `docs/refactor/BUGS.md` (rows `BUG-001`..`BUG-354`): every pending file was folded into `BUGS.md`.
+- `docs/refactor/BUGS.md` (rows `BUG-001` and up): every pending file has been folded into `docs/refactor/BUGS.md`; this directory holds only this README.
 
 ## Safety Invariants
 
-- Rows use the `BUGS.md` columns with ID `NEW`, and cite `main` file:line.
-- No row is a fix; behaviour stays as on `main` until a behaviour-fix rung.
+- Rows use the `docs/refactor/BUGS.md` columns with ID `NEW`, and cite the current `file:line` in `crc/`.
+- No row is a fix; behaviour stays as it is until a fix with its own test and `docs/refactor/BUGS.md` status.
 
 ## Extension Rules
 
-1. Add one `<rung>.md` per rung.
-2. Never reuse or renumber IDs after the rows move to `BUGS.md`.
+1. Add one `<topic>.md` per change.
+2. Never reuse or renumber IDs after the rows move to `docs/refactor/BUGS.md`.

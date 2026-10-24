@@ -1,7 +1,7 @@
-"""Expected-log rules of the LOG-OCI lane (BUG-353, BUG-358, BUG-361, BUG-362).
+"""Expected-log rules of the OCI cleaners (BUG-353, BUG-358, BUG-361, BUG-362).
 
 Pass ``rules=RULES`` to ``expected_logs`` / ``expected_outcome`` of ``tests/helpers_log_fix.py``
-in the OCI tests. Contract: ``docs/refactor/LOGGING.md``.
+in the OCI tests. Contract: ``docs/logging.md``.
 """
 
 import logging

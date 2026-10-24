@@ -1,10 +1,10 @@
-"""Engine: run registered cleaners for a selection. Pure orchestration, nothing is wired yet.
+"""Engine: run registered cleaners for a selection. Pure orchestration; `crc/cli` calls it.
 
 For each `(cloud, kind)` the engine builds the cleaner from the registry, checks
 `supports(operation)`, calls `plan()` and calls `apply()` only when `context.dry_run` is
-False. Exceptions from a cleaner propagate (no catch-all), as in `crc.py`. Notifiers run
+False. Exceptions from a cleaner propagate (no catch-all). Notifiers run
 after each cleaner in the order given; only notifiers marked `fail_open` have their errors
-logged and swallowed (`crc.py` swallows Influx and per-message Slack failures).
+logged and swallowed (Influx and per-message Slack failures).
 """
 
 import logging
@@ -13,36 +13,15 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from crc.core.cleaner import Plan, Result, RunContext
+from crc.core.kinds import KINDS
 from crc.core.registry import Registry
-from crc.core.report import (
-    DISK,
-    IP,
-    KEYPAIR,
-    KMS,
-    NIC,
-    SNAPSHOT,
-    SPOT_INSTANCE_REQUEST,
-    VM,
-    Report,
-)
+from crc.core.report import Report
 from crc.core.selection import Selection
 
 logger = logging.getLogger(__name__)
 
-# Report label of each resource kind, the labels `crc.py` passes to its notifiers.
-# `vpc` has no notification in `crc.py`; its label is a placeholder for the wiring rung.
-KIND_LABELS: dict[str, str] = {
-    "disk": DISK,
-    "ip": IP,
-    "keypair": KEYPAIR,
-    "vm": VM,
-    "kms": KMS,
-    "nic": NIC,
-    "snapshot": SNAPSHOT,
-    "spot_instance_requests": SPOT_INSTANCE_REQUEST,
-    "spot_instances": VM,
-    "vpc": "VPC",
-}
+# Report label of each resource kind, the labels the notifiers receive (table: crc/core/kinds.py).
+KIND_LABELS: dict[str, str] = {kind.name: kind.label for kind in KINDS}
 
 
 class Notifier(Protocol):
@@ -116,6 +95,4 @@ def run(
     """Run every selected cleaner in order; the first exception from a cleaner ends the run."""
     for warning in selection.warnings:
         logger.warning("%s", warning)
-    return [
-        _run_one(cloud, kind, context, registry, notifiers) for cloud, kind in selection.items
-    ]
+    return [_run_one(cloud, kind, context, registry, notifiers) for cloud, kind in selection.items]

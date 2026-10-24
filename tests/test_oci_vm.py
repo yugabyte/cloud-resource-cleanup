@@ -12,8 +12,9 @@ from oci.exceptions import ConnectTimeout
 
 from crc.core.cleaner import Operation, Plan, RunContext
 from crc.core.registry import DEFAULT_REGISTRY
-from crc.oci.vm import VM, VmCleaner, VmRuntime, VmSettings, build_vm_cleaner
+from crc.oci.vm import VmCleaner, VmSettings, build_vm_cleaner
 from crc.oci.vm.client import ComputeApi, OciComputeApi, SdkInstance
+from tests.helpers_ad_vm_engine import done_ids, run_vm
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
 FILTER = {"env": ["ci"]}
@@ -280,29 +281,17 @@ def test_factory_reads_the_options(monkeypatch: pytest.MonkeyPatch) -> None:
     assert stop_built._settings.instance_states == ("RUNNING",)
 
 
-def test_adapter_runs_the_cleaner_with_injected_api(oci_env: None) -> None:
+def test_engine_runs_the_cleaner_with_injected_api(oci_env: None) -> None:
     api = FakeApi(instances=[inst("a"), inst("b", hours=1)])
-    runtime = VmRuntime(
-        api_factory=lambda region: api, list_regions=lambda: ["r1"], clock=lambda: NOW
-    )
-    vm = _vm(runtime)
-    vm.delete()
-    assert vm.get_deleted == ["name-a"]
-    assert vm.get_stopped == []
-    assert vm.delete_count == 1
+    outcome = run_vm("oci", _cleaner(api))
+    assert done_ids(outcome) == ["name-a"]
     assert api.calls == [("list_instances",), ("terminate_instance", "a")]
 
 
-def test_adapter_stop_fills_the_stop_list(oci_env: None) -> None:
+def test_engine_stop_acts_on_the_stop_operation(oci_env: None) -> None:
     api = FakeApi(instances=[inst("a")])
-    runtime = VmRuntime(
-        api_factory=lambda region: api, list_regions=lambda: ["r1"], clock=lambda: NOW
-    )
-    vm = _vm(runtime)
-    vm.stop()
-    assert vm.get_stopped == ["name-a"]
-    assert vm.get_deleted == []
-    assert vm.stopped_count == 1
+    outcome = run_vm("oci", _cleaner(api), operation=Operation.STOP)
+    assert done_ids(outcome) == ["name-a"]
     assert api.calls[-1] == ("stop_instance", "a")
 
 
@@ -312,8 +301,9 @@ def oci_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
 
 
-def _vm(runtime: VmRuntime) -> VM:
-    return VM(False, FILTER, {}, {"hours": 5}, "", {}, runtime)
+def _cleaner(api: FakeApi) -> VmCleaner:
+    settings = VmSettings(filter_tags=FILTER, age={"hours": 5}, custom_age_tag_key="")
+    return VmCleaner(lambda region: api, lambda: ["r1"], settings, engine=True)
 
 
 def test_sdk_api_pages_through_every_result_page() -> None:

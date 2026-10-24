@@ -82,7 +82,7 @@ class SpotVMCleaner:
     def _list(self, zone: str) -> list[InstanceView] | None:
         try:
             return list(self._client.list_instances(self._settings.project_id, zone))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-region isolation, failure logged and recorded, region skipped
             logging.error("Zone %s: failed listing GCP instances: %s", zone, e)
             logger.current().region_skipped(zone, e)
             return None
@@ -119,7 +119,7 @@ class SpotVMCleaner:
                 tags=dict(getattr(instance, "labels", None) or {}),
                 extra={LEFTOVER_DISKS: tuple(leftover)},
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-instance isolation, failure logged and recorded, instance kept
             _log_failure(getattr(instance, "name", "?"), e, zone)
             return None
 
@@ -135,7 +135,7 @@ class SpotVMCleaner:
                 candidates.extend(self.scan_zone(zone, lambda: context.now))
             if context.dry_run:
                 for candidate in candidates:
-                    self.preview_instance(candidate, instances, disks)
+                    self.preview_instance(candidate, instances, disks, lambda: context.now)
         finally:
             self._client.close()
         if context.dry_run:
@@ -148,14 +148,20 @@ class SpotVMCleaner:
         disks: list[str] = []
         try:
             for candidate in plan.candidates:
-                self.apply_instance(candidate, instances, disks, dry_run=context.dry_run)
+                self.apply_instance(
+                    candidate, instances, disks, dry_run=context.dry_run, clock=lambda: context.now
+                )
         finally:
             self._client.close()
         log_summary(instances, disks, dry_run=context.dry_run)
         return Result(succeeded=tuple(instances), related={DISK: tuple(disks)})
 
     def preview_instance(
-        self, candidate: Candidate, instances: list[str], disks: list[str]
+        self,
+        candidate: Candidate,
+        instances: list[str],
+        disks: list[str],
+        clock: Clock,
     ) -> None:
         """Dry run of one VM: record it, then record the leftover disks that pass the label
         check (a read of each disk). Any error is logged."""
@@ -166,13 +172,19 @@ class SpotVMCleaner:
             disks.extend(
                 disk_label(settings, ref, candidate.region)
                 for ref in _leftover(candidate)
-                if disk_ok_to_delete(self._client, settings, ref, candidate.region)
+                if disk_ok_to_delete(self._client, settings, ref, candidate.region, clock)
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-instance isolation, failure logged and recorded, disks kept
             _log_failure(candidate.name, e, candidate.region)
 
     def apply_instance(
-        self, candidate: Candidate, instances: list[str], disks: list[str], *, dry_run: bool
+        self,
+        candidate: Candidate,
+        instances: list[str],
+        disks: list[str],
+        *,
+        dry_run: bool,
+        clock: Clock,
     ) -> None:
         """Delete one VM and wait for the operation, then its leftover disks, recording each
         as it is done. A VM whose delete fails or does not complete is not recorded and its
@@ -185,12 +197,12 @@ class SpotVMCleaner:
             instances.append(candidate.id)
             log_action("delete", candidate, dry_run=dry_run)
             for ref in _leftover(candidate):
-                if not disk_ok_to_delete(self._client, settings, ref, zone):
+                if not disk_ok_to_delete(self._client, settings, ref, zone, clock):
                     continue
                 label = remove_leftover_disk(self._client, settings, ref, zone, dry_run=dry_run)
                 if label is not None:
                     disks.append(label)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-instance isolation, failure logged and recorded
             _log_failure(candidate.name, e, zone)
 
     def _delete_and_wait(self, candidate: Candidate) -> bool:

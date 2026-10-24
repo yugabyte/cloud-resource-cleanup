@@ -8,7 +8,7 @@ from crc.core import registry
 from crc.core.cleaner import Operation, Plan, Result, RunContext
 from crc.core.registry import DuplicateCleanerError, Registry, UnknownCleanerError
 
-CONTEXT = RunContext(True, Operation.DELETE, {}, datetime.datetime(2026, 1, 1))
+CONTEXT = RunContext(True, Operation.DELETE, {}, datetime.datetime(2026, 1, 1))  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 
 
 class StubCleaner:
@@ -133,4 +133,3 @@ def test_default_registry_functions_use_default_instance(
     monkeypatch.undo()
     assert registry.DEFAULT_REGISTRY is not isolated
     assert registry.DEFAULT_REGISTRY.clouds() == registered_before
-

@@ -7,10 +7,11 @@ run on a table of values and compared on the return value, the exception type an
 """
 
 import argparse
+import contextlib
+import functools
 import importlib.util
 import sys
 from collections.abc import Callable
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -19,8 +20,11 @@ import pytest
 
 from crc.cli import args as cli_args
 from crc.cli import validate as cli_validate
+from tests import helpers_ag_cli_added as added_table
+from tests import helpers_ag_cli_args as added_args
+from tests.helpers_ag_cli_added import ADDED_FLAGS
+from tests.helpers_oracle import load_legacy_crc
 
-ORACLE = Path(__file__).parent / "legacy" / "crc_main.txt"
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ["-c", "aws"]
 MIN_CASES = 600
@@ -54,12 +58,13 @@ DEFAULTS_EXPECTED: dict[str, Any] = {
 
 @pytest.fixture(scope="module")
 def oracle() -> ModuleType:
-    loader = SourceFileLoader("legacy_crc_main", str(ORACLE))
-    spec = importlib.util.spec_from_file_location("legacy_crc_main", ORACLE, loader=loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_legacy_crc("legacy_crc_main")
+
+
+@functools.cache
+def _oracle_parser(oracle: ModuleType) -> argparse.ArgumentParser:
+    with pytest.MonkeyPatch.context() as patch:
+        return _built_parser(oracle.get_argparser, patch)
 
 
 def _run(
@@ -67,16 +72,18 @@ def _run(
     argv: list[str],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    strip_to: argparse.ArgumentParser | None = None,
 ) -> tuple[Any, ...]:
     monkeypatch.setattr(sys, "argv", ["crc.py", *argv])
     monkeypatch.setenv("COLUMNS", "100")
     capsys.readouterr()
     try:
-        result = parse()
+        with added_args.stripping(strip_to) if strip_to else contextlib.nullcontext():
+            result = parse()
     except SystemExit as exc:
         captured = capsys.readouterr()
         return ("exit", exc.code, captured.out, captured.err)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         captured = capsys.readouterr()
         return ("raised", type(exc), str(exc), captured.out, captured.err)
     captured = capsys.readouterr()
@@ -89,8 +96,9 @@ def _compare(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> tuple[Any, ...]:
+    """Exact comparison with the oracle, on the parser without the flags listed as ADDED."""
     old = _run(oracle.get_argparser, argv, monkeypatch, capsys)
-    new = _run(cli_args.get_argparser, argv, monkeypatch, capsys)
+    new = _run(cli_args.get_argparser, argv, monkeypatch, capsys, _oracle_parser(oracle))
     assert new == old
     return new
 
@@ -516,7 +524,7 @@ def test_help_lists_every_flag(
     assert "--kms_pending_window" in outcome[2]
 
 
-class _Built(Exception):
+class _BuiltError(Exception):
     def __init__(self, parser: argparse.ArgumentParser) -> None:
         super().__init__()
         self.parser = parser
@@ -526,10 +534,10 @@ def _built_parser(
     parse: Callable[[], dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> argparse.ArgumentParser:
     def stop(self: argparse.ArgumentParser, *_: Any, **__: Any) -> None:
-        raise _Built(self)
+        raise _BuiltError(self)
 
     monkeypatch.setattr(argparse.ArgumentParser, "parse_args", stop)
-    with pytest.raises(_Built) as built:
+    with pytest.raises(_BuiltError) as built:
         parse()
     monkeypatch.undo()
     return built.value.parser
@@ -547,11 +555,195 @@ def test_raw_parser_definition_matches_main(
     old = _built_parser(oracle.get_argparser, monkeypatch)
     new = _built_parser(cli_args.get_argparser, monkeypatch)
     assert [getattr(new, f) for f in PARSER_FIELDS] == [getattr(old, f) for f in PARSER_FIELDS]
-    assert len(new._actions) == len(old._actions) == len(DEFAULTS_EXPECTED) + 1
-    for old_action, new_action in zip(old._actions, new._actions, strict=True):
+    assert len(old._actions) == len(DEFAULTS_EXPECTED) + 1
+    added_args.check_additions(new, old)
+    by_dest = {action.dest: action for action in new._actions}
+    for old_action in old._actions:
+        new_action = by_dest[old_action.dest]
         assert type(new_action) is type(old_action)
         for field in ACTION_FIELDS:
+            if field in ("choices", "help") and (
+                added_args.added_choices(old_action.option_strings)
+                or added_args.removed_choices(old_action.option_strings)
+            ):
+                continue
             assert getattr(new_action, field) == getattr(old_action, field), (old_action, field)
+
+
+def test_added_flags_have_their_listed_default_help_and_forms(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for flag in ADDED_FLAGS:
+        parsed = _run(cli_args.get_argparser, BASE, monkeypatch, capsys)
+        assert parsed[0] == "ok"
+        assert dict(parsed[1])[flag.dest] == flag.default, flag.option
+        for argv, value in flag.examples:
+            outcome = _run(cli_args.get_argparser, [*BASE, *argv], monkeypatch, capsys)
+            assert outcome[0] == "ok", (flag.option, outcome)
+            assert dict(outcome[1])[flag.dest] == value, (flag.option, argv)
+        helped = _run(cli_args.get_argparser, ["-h"], monkeypatch, capsys)
+        assert flag.option in helped[2]
+        assert " ".join(flag.help.split()) in " ".join(helped[2].split())
+
+
+def test_added_resource_choices_parse_and_are_listed_in_help(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for resource in added_table.ADDED_RESOURCES:
+        outcome = _run(
+            cli_args.get_argparser, [*BASE, "--resource", resource.kind], monkeypatch, capsys
+        )
+        assert outcome[0] == "ok"
+        assert dict(outcome[1])["resource"] == resource.kind
+    if added_table.RESOURCE_HELP is not None:
+        helped = _run(cli_args.get_argparser, ["-h"], monkeypatch, capsys)
+        assert " ".join(added_table.RESOURCE_HELP.split()) in " ".join(helped[2].split())
+
+
+def test_no_oracle_abbreviation_changed_meaning(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new long flag must not make a unique prefix of an oracle flag (`--dry`) ambiguous."""
+    old = _built_parser(oracle.get_argparser, monkeypatch)
+    new = _built_parser(cli_args.get_argparser, monkeypatch)
+    assert added_args.abbreviation_problems(new, old) == []
+
+
+def _parser_with(
+    oracle: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    resource_choice: str | None = None,
+    fake_flag: bool = True,
+) -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
+    """An oracle parser and a copy with a fake flag; the checker runs on an empty ADDED table."""
+    old = _built_parser(oracle.get_argparser, monkeypatch)
+    new = _built_parser(oracle.get_argparser, monkeypatch)
+    if fake_flag:
+        new.add_argument("--fake_flag", default=None, help="fake")
+    if resource_choice is not None:
+        action = next(a for a in new._actions if "--resource" in a.option_strings)
+        action.choices = [*(action.choices or []), resource_choice]
+    for name, empty in (
+        ("ADDED_FLAGS", ()),
+        ("ADDED_CHOICES", ()),
+        ("ADDED_RESOURCES", ()),
+        ("RESOURCE_HELP", None),
+        ("REMOVED_RESOURCES", ()),
+    ):
+        monkeypatch.setattr(added_args, name, empty)
+    return new, old
+
+
+def test_unlisted_flag_fails_with_the_instruction_to_extend_added(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch)
+    with pytest.raises(AssertionError, match=r"ADDED table in tests/helpers_ag_cli_added\.py"):
+        added_args.check_additions(new, old)
+    added_args.strip_additions(new, old)
+    assert any(a.dest == "fake_flag" for a in new._actions)
+
+
+def test_unlisted_resource_choice_fails_with_the_instruction_to_extend_added(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch, "fake_kind")
+    monkeypatch.setattr(added_args, "ADDED_FLAGS", (_FAKE_FLAG,))
+    with pytest.raises(AssertionError, match=r"ADDED table in tests/helpers_ag_cli_added\.py"):
+        added_args.check_additions(new, old)
+    added_args.strip_additions(new, old)
+    action = next(a for a in new._actions if "--resource" in a.option_strings)
+    assert "fake_kind" in (action.choices or [])
+
+
+def test_listed_flag_and_resource_pass_and_the_rest_stays_exact(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch, "fake_kind")
+    action = next(a for a in new._actions if "--resource" in a.option_strings)
+    action.help = "new help"
+    monkeypatch.setattr(added_args, "ADDED_FLAGS", (_FAKE_FLAG,))
+    monkeypatch.setattr(
+        added_args, "ADDED_RESOURCES", (added_table.AddedResource("fake_kind", ("aws",)),)
+    )
+    monkeypatch.setattr(added_args, "RESOURCE_HELP", "new help")
+    added_args.check_additions(new, old)
+    added_args.strip_additions(new, old)
+    assert [a.dest for a in new._actions] == [a.dest for a in old._actions]
+    assert next(a for a in new._actions if "--resource" in a.option_strings).help == (
+        next(a for a in old._actions if "--resource" in a.option_strings).help
+    )
+
+
+@pytest.mark.parametrize("change", ["default", "choice_removed", "type", "dest", "flag_removed"])
+def test_a_changed_oracle_flag_always_fails(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch, fake_flag=False)
+    cloud = next(a for a in new._actions if "--cloud" in a.option_strings)
+    if change == "default":
+        cloud.default = "gcp"
+    elif change == "choice_removed":
+        cloud.choices = list(cloud.choices or [])[:-1]
+    elif change == "type":
+        cloud.type = int
+    elif change == "dest":
+        cloud.dest = "cloud_name"
+    else:
+        new._actions.remove(cloud)
+    with pytest.raises(AssertionError):
+        added_args.check_additions(new, old)
+
+
+def _without_resource(parser: argparse.ArgumentParser, kind: str) -> None:
+    action = next(a for a in parser._actions if "--resource" in a.option_strings)
+    action.choices = [c for c in action.choices or [] if c != kind]
+
+
+def test_bug_083_unlisted_resource_removal_fails(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch, fake_flag=False)
+    _without_resource(new, "keypair")
+    with pytest.raises(AssertionError, match=r"REMOVED_RESOURCES in tests/helpers_ag_cli_added"):
+        added_args.check_additions(new, old)
+
+
+def test_bug_083_listed_resource_removal_passes_and_is_put_back_for_the_oracle_compare(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch, fake_flag=False)
+    _without_resource(new, "vpc")
+    monkeypatch.setattr(
+        added_args, "REMOVED_RESOURCES", (added_table.RemovedResource("vpc", "BUG-083"),)
+    )
+    added_args.check_additions(new, old)
+    added_args.strip_additions(new, old)
+    action = next(a for a in new._actions if "--resource" in a.option_strings)
+    assert "vpc" in (action.choices or [])
+
+
+def test_bug_083_a_listed_removal_that_is_still_a_choice_fails(
+    oracle: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new, old = _parser_with(oracle, monkeypatch, fake_flag=False)
+    monkeypatch.setattr(
+        added_args, "REMOVED_RESOURCES", (added_table.RemovedResource("vpc", "BUG-083"),)
+    )
+    with pytest.raises(AssertionError, match="REMOVED"):
+        added_args.check_additions(new, old)
+
+
+def test_bug_083_resource_vpc_exits_2_with_the_invalid_choice_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    outcome = _run(cli_args.get_argparser, [*BASE, "--resource", "vpc"], monkeypatch, capsys)
+    assert outcome[:2] == ("exit", 2)
+    assert "argument -r/--resource: invalid choice: 'vpc' (choose from " in outcome[3]
+    assert "'vpc'," not in outcome[3].split("choose from", 1)[1]
+
+
+_FAKE_FLAG = added_table.AddedFlag("--fake_flag", "fake_flag", None, "fake")
 
 
 def test_crc_py_reexports_the_same_functions() -> None:
@@ -637,7 +829,7 @@ NAMES = ["age", "filter_tags", "Value of x with key y", "", "n%s"]
 def _outcome(call: Callable[[], Any]) -> tuple[Any, ...]:
     try:
         value = call()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         return ("raised", type(exc), str(exc))
     return ("returned", value)
 
@@ -700,6 +892,15 @@ def test_validator_messages_are_pinned(
         assert result == ("raised", kind, message)
 
 
+def _influx_id(value: Any) -> str:
+    """Test id that is the same in every process: set order and object addresses vary."""
+    if isinstance(value, set):
+        return f"set{sorted(value)!r}"
+    if isinstance(value, _Weird):
+        return "weird-object"
+    return repr(value)
+
+
 INFLUX_VALUES: list[Any] = [
     {"url": "u", "org": "o", "bucket": "b"},
     {"url": "u", "org": "o", "bucket": "b", "resource_suffix": "s"},
@@ -728,7 +929,7 @@ INFLUX_VALUES: list[Any] = [
 ]
 
 
-@pytest.mark.parametrize("value", INFLUX_VALUES, ids=repr)
+@pytest.mark.parametrize("value", INFLUX_VALUES, ids=_influx_id)
 def test_validate_influxdb_inputs_matches_main(oracle: ModuleType, value: Any) -> None:
     old = _outcome(lambda: oracle.validate_influxdb_inputs(value))
     new = _outcome(lambda: cli_validate.validate_influxdb_inputs(value))
@@ -736,7 +937,7 @@ def test_validate_influxdb_inputs_matches_main(oracle: ModuleType, value: Any) -
 
 
 @pytest.mark.parametrize("field", ["url", "org", "bucket", "other", "", "URL", "resource_suffix"])
-@pytest.mark.parametrize("value", INFLUX_VALUES, ids=repr)
+@pytest.mark.parametrize("value", INFLUX_VALUES, ids=_influx_id)
 def test_validate_influxdb_input_matches_main(oracle: ModuleType, field: str, value: Any) -> None:
     old = _outcome(lambda: oracle._validate_influxdb_input(value, field))
     new = _outcome(lambda: cli_validate._validate_influxdb_input(value, field))

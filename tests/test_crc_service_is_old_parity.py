@@ -13,7 +13,7 @@ import pytest
 from tests.helpers_crc_service import both, make_oracle_cls, set_max_age
 from tests.helpers_log_fix import expected_outcome
 
-CREATED = datetime.datetime(2026, 1, 1, 12, 0, 0)
+CREATED = datetime.datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 
 
 @pytest.fixture
@@ -102,10 +102,10 @@ def test_is_old_parity(
 @pytest.mark.parametrize(
     ("now", "created"),
     [
-        (datetime.datetime(2026, 1, 3, tzinfo=datetime.UTC), datetime.datetime(2026, 1, 1)),
-        (datetime.datetime(2026, 1, 3), datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)),
+        (datetime.datetime(2026, 1, 3, tzinfo=datetime.UTC), datetime.datetime(2026, 1, 1)),  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
+        (datetime.datetime(2026, 1, 3), datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)),  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
         (datetime.datetime(2026, 1, 3, tzinfo=datetime.UTC), None),
-        (None, datetime.datetime(2026, 1, 1)),
+        (None, datetime.datetime(2026, 1, 1)),  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
         ("2026-01-03", "2026-01-01"),
         (
             datetime.datetime(2026, 1, 3, tzinfo=datetime.UTC),

@@ -1,12 +1,11 @@
 """Parity: `crc.azu.spot_vm` against main (`tests/legacy/azu_spot_vm.txt`).
 
 Both run against the same fake Azure SDK (the SDK classes `crc.azu._base` builds are replaced,
-so the real `Base` runs in both). Through the legacy adapter, SDK calls (in order), results, log
-records, stdout and raised errors must be identical for every case. The registered `Cleaner`
-path (factory with a `RunContext`, `plan()` then `apply()` unless dry run) is compared on
-results, errors, stdout, the list/instance_view/mutating calls and log records (as a multiset in
-a real run: the Cleaner checks every VM before the first delete). The module lists no regions,
-so there is no region fallback or region auth error to cover.
+so the real `Base` runs in both). The registered `Cleaner` path (through `crc.core.engine.run`
+and through `plan()` / `apply()`) is compared on results, errors, stdout, the
+list/instance_view/mutating calls and log records (as a multiset in a real run: the Cleaner
+checks every VM before the first delete). The module lists no regions, so there is no region
+fallback or region auth error to cover.
 """
 
 import collections
@@ -21,9 +20,10 @@ from typing import Any
 
 import pytest
 
-from crc.azu.spot_vm import SpotVM
+from crc.azu.spot_vm import build_spot_vm_cleaner
 from crc.core.cleaner import Operation, RunContext
 from crc.core.registry import get
+from tests.helpers_ad_spot_engine import run_through_engine
 from tests.helpers_azure_spot import (
     DEALLOCATED,
     NOW,
@@ -43,7 +43,7 @@ DAY = datetime.timedelta(days=1)
 HOUR = datetime.timedelta(hours=1)
 KEEP = {"keep": ["true"]}
 
-BUGS = {"BUG-356"}  # log-only divergences of the LOG-AZU rung
+BUGS = {"BUG-356"}  # log-only divergences from the oracle
 
 
 def boom(text: str = "boom") -> Exception:
@@ -346,10 +346,6 @@ def _legacy(case: Case) -> Any:
     return _load_oracle().SpotVM(**_args(case))
 
 
-def _new(case: Case) -> Any:
-    return SpotVM(**_args(case), clock=lambda: NOW)
-
-
 def _records(caplog: pytest.LogCaptureFixture) -> list[tuple[str, int, str]]:
     return [
         (r.name, r.levelno, re.sub(r"0x[0-9a-f]+", "0x", r.getMessage())) for r in caplog.records
@@ -365,7 +361,7 @@ def _setup(
     vms = list(case.vms)
     if case.id == "age-naive-time-created-raises":
         vms = [vm("s1", age=None)]
-        vms[0].time_created = datetime.datetime(2026, 2, 1)
+        vms[0].time_created = datetime.datetime(2026, 2, 1)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
     azure = FakeAzure(
         vms,
         list_error=case.list_error,
@@ -391,7 +387,7 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(
         azure.calls,
@@ -409,53 +405,8 @@ def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level("DEBUG")
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_matches_main(
-    case: Case,
-    debug_logs: None,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
-    assert new.error == old.error
-    assert (new.deleted, new.nics, new.disks) == (old.deleted, old.nics, old.disks)
-    assert new.logs == expected_logs(old.logs, BUGS, RULES)
-    assert new.stdout == old.stdout
-    assert (new.error is not None) == case.fails_in_plan
-
-
-def test_leftover_disk_skip_lines_diverge_from_main_in_level_only(
-    debug_logs: None,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """BUG-356 (LOG-AZU): the per-leftover-disk skip lines are DEBUG, text unchanged."""
-    diverging = 0
-    for case in CASES:
-        old = _run(_legacy, case, monkeypatch, caplog, capsys)
-        new = _run(_new, case, monkeypatch, caplog, capsys)
-        skips = [r for r in old.logs if r[2].startswith("Skipping leftover Spot disk")]
-        if skips:
-            diverging += 1
-            assert new.logs != old.logs
-            assert [r for r in new.logs if r[2].startswith("Skipping leftover Spot disk")] == [
-                (name, logging.DEBUG, message) for name, _, message in skips
-            ]
-    assert diverging
-
-
-def _run_cleaner(
-    case: Case,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> Outcome:
-    azure = _setup(case, monkeypatch, caplog, capsys)
-    ctx = RunContext(
+def _context(case: Case) -> RunContext:
+    return RunContext(
         dry_run=case.dry_run,
         operation=Operation.DELETE,
         options={
@@ -468,6 +419,46 @@ def _run_cleaner(
         },
         now=NOW,
     )
+
+
+def _run_engine(
+    case: Case,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> Outcome:
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    ctx = _context(case)
+    error: tuple[str, str] | None = None
+    deleted: list[str] = []
+    related: Mapping[str, tuple[str, ...]] = {}
+    try:
+        outcome = run_through_engine("azure", "spot_instances", build_spot_vm_cleaner, ctx)
+        if outcome.result is None:
+            deleted, related = [c.id for c in outcome.plan.candidates], outcome.plan.related
+        else:
+            deleted, related = list(outcome.result.succeeded), outcome.result.related
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
+        error = (type(e).__name__, str(e))
+    return Outcome(
+        azure.calls,
+        deleted,
+        list(related.get("NIC", ())),
+        list(related.get("Disk", ())),
+        _records(caplog),
+        capsys.readouterr().out,
+        error,
+    )
+
+
+def _run_cleaner(
+    case: Case,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> Outcome:
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    ctx = _context(case)
     error: tuple[str, str] | None = None
     deleted: list[str] = []
     related: Mapping[str, tuple[str, ...]] = {}
@@ -479,7 +470,7 @@ def _run_cleaner(
         else:
             result = cleaner.apply(plan, ctx)
             deleted, related = list(result.succeeded), result.related
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(
         azure.calls,
@@ -508,17 +499,9 @@ MUTATING = (
 )
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_cleaner_protocol_matches_main(
-    case: Case,
-    debug_logs: None,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+def _assert_matches_main(case: Case, old: Outcome, new: Outcome) -> None:
     assert new.error == old.error
+    assert (new.error is not None) == case.fails_in_plan
     assert new.stdout == old.stdout
     assert _only(new.calls, *READS) == _only(old.calls, *READS)
     if case.fails_in_plan:
@@ -537,6 +520,53 @@ def test_cleaner_protocol_matches_main(
         assert new.logs[-3:] == expected_logs(old.logs, BUGS, RULES)[-3:]
 
 
+@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+def test_engine_matches_main(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_engine(case, monkeypatch, caplog, capsys)
+    _assert_matches_main(case, old, new)
+
+
+def test_leftover_disk_skip_lines_diverge_from_main_in_level_only(
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """BUG-356: the per-leftover-disk skip lines are DEBUG, text unchanged."""
+    diverging = 0
+    for case in CASES:
+        old = _run(_legacy, case, monkeypatch, caplog, capsys)
+        new = _run_engine(case, monkeypatch, caplog, capsys)
+        skips = [r for r in old.logs if r[2].startswith("Skipping leftover Spot disk")]
+        if skips:
+            diverging += 1
+            assert new.logs != old.logs
+            assert [r for r in new.logs if r[2].startswith("Skipping leftover Spot disk")] == [
+                (name, logging.DEBUG, message) for name, _, message in skips
+            ]
+    assert diverging
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+def test_cleaner_protocol_matches_main(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    _assert_matches_main(case, old, new)
+
+
 def test_repeated_delete_accumulates_lists_as_main(
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -544,25 +574,39 @@ def test_repeated_delete_accumulates_lists_as_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = Case("repeat", [vm("s1", os_disk=OS_A)])
-
-    def run_twice(build: Callable[[Case], Any]) -> Outcome:
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        cleaner = build(case)
-        cleaner.delete()
-        cleaner.delete()
-        return Outcome(
-            azure.calls,
-            list(cleaner.get_deleted),
-            list(cleaner.get_deleted_nic),
-            list(cleaner.get_deleted_disks),
-            _records(caplog),
-            capsys.readouterr().out,
-            None,
-        )
-
-    old = run_twice(_legacy)
-    new = run_twice(_new)
-    assert new == old
-    assert new.deleted == ["s1", "s1"]
-    assert new.nics == ["s1-NIC", "s1-NIC"]
-    assert new.disks == [f"{RG}/os-a", f"{RG}/os-a"]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    cleaner = _legacy(case)
+    cleaner.delete()
+    cleaner.delete()
+    old = Outcome(
+        azure.calls,
+        list(cleaner.get_deleted),
+        list(cleaner.get_deleted_nic),
+        list(cleaner.get_deleted_disks),
+        _records(caplog),
+        capsys.readouterr().out,
+        None,
+    )
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    ctx = _context(case)
+    deleted: list[str] = []
+    nics: list[str] = []
+    disks: list[str] = []
+    for _ in range(2):
+        outcome = run_through_engine("azure", "spot_instances", build_spot_vm_cleaner, ctx)
+        assert outcome.result is not None
+        deleted.extend(outcome.result.succeeded)
+        nics.extend(outcome.result.related["NIC"])
+        disks.extend(outcome.result.related["Disk"])
+    assert deleted == old.deleted == ["s1", "s1"]
+    assert nics == old.nics == ["s1-NIC", "s1-NIC"]
+    assert disks == old.disks == [f"{RG}/os-a", f"{RG}/os-a"]
+    assert _only(azure.calls, *READS, *MUTATING) == _only(old.calls, *READS, *MUTATING)
+    new_logs = _records(caplog)
+    old_expected = expected_logs(old.logs, BUGS, RULES)
+    assert [m for m in new_logs if not m[2].startswith("List of Azure ")] == [
+        m for m in old_expected if not m[2].startswith("List of Azure ")
+    ]
+    assert len([m for m in new_logs if m[2].startswith("List of Azure ")]) == len(
+        [m for m in old_expected if m[2].startswith("List of Azure ")]
+    )

@@ -1,9 +1,10 @@
-"""Parity: `crc.aws.elastic_ips.ElasticIPs` against main (`tests/legacy/aws_elastic_ips.txt`).
+"""Parity: the Elastic IP Cleaner, run through `crc.core.engine`, against main's `ElasticIPs`
+(`tests/legacy/aws_elastic_ips.txt`).
 
-Both run against the same fake `boto3.client`; SDK calls (in order), results, log records,
-stdout and raised errors must be identical for every case. The registered `Cleaner` path
-(factory with a `RunContext`, `plan()` then `apply()` unless dry run) is compared on results,
-errors, stdout, release calls and log records.
+Both run against the same fake `boto3.client`; results, errors, stdout, describe and release
+calls and log records must match for every case. The one allowed difference: the cleaner lists
+every region before it releases, so a later listing error stops the run before any release
+(fewer releases, never more). BUG-011 cases assert the fixed outcome exactly.
 """
 
 import datetime
@@ -20,15 +21,16 @@ from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnec
 
 from crc.aws.elastic_ips import (
     ElasticIpCleaner,
-    ElasticIpRuntime,
-    ElasticIPs,
     build_elastic_ip_cleaner,
 )
+from crc.core import engine
 from crc.core.cleaner import Cleaner, Operation, RunContext
-from crc.core.registry import get
+from crc.core.registry import Registry, get
+from crc.core.selection import Selection
+from tests.helpers_wc_aws1_engine import deleted_ids, run_cleaner
 
 ORACLE = Path(__file__).parent / "legacy" / "aws_elastic_ips.txt"
-NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
+NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 TWO = 2
 
 
@@ -72,6 +74,7 @@ class Case:
     release_errors: Mapping[tuple[str, str], Exception] = field(default_factory=dict)
     regions_error: Exception | None = None
     fails_in_plan: bool = False
+    diverges: str | None = None
 
 
 ENV = tags({"env": "test", "owner": "qa"})
@@ -153,17 +156,24 @@ CASES = [
     ),
     Case("exception-none", {"us-west-2": [eip("1.1.1.1", ENV)]}, exception_tags=None),
     Case("exception-empty-tag-list", {"us-west-2": [eip("1.1.1.1", [])]}, exception_tags={"a": []}),
-    Case("notags-raises-type-error", {"us-west-2": [eip("1.1.1.1", ENV)]}, notags={"env": []}),
+    Case(
+        "notags-raises-type-error",
+        {"us-west-2": [eip("1.1.1.1", ENV)]},
+        notags={"env": []},
+        diverges="BUG-011",
+    ),
     Case(
         "notags-raises-in-first-region-skips-later-regions",
         {"us-west-2": [eip("1.1.1.1", ENV)], "eu-west-1": [eip("2.2.2.2", ENV)]},
         notags={"zzz": []},
+        diverges="BUG-011",
     ),
     Case(
         "notags-dry-run-raises",
         {"us-west-2": [eip("1.1.1.1", ENV)]},
         notags={"env": []},
         dry_run=True,
+        diverges="BUG-011",
     ),
     Case(
         "notags-exception-hit-on-first-tag-skips",
@@ -176,6 +186,7 @@ CASES = [
         {"us-west-2": [eip("1.1.1.1", ENV)]},
         notags={"env": []},
         exception_tags={"owner": []},
+        diverges="BUG-011",
     ),
     Case(
         "notags-empty-tag-list-never-skips", {"us-west-2": [eip("1.1.1.1", [])]}, notags={"a": []}
@@ -361,10 +372,6 @@ def _legacy(case: Case) -> Any:
     )
 
 
-def _new(case: Case) -> Any:
-    return ElasticIPs(case.dry_run, case.filter_tags, case.exception_tags, case.notags)
-
-
 def _setup(
     case: Case,
     monkeypatch: pytest.MonkeyPatch,
@@ -392,7 +399,7 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     deleted = list(cleaner.get_deleted)
     count = cleaner.count
@@ -405,22 +412,139 @@ def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_matches_main(
-    case: Case,
-    debug_logs: None,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
-    assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.count == old.count
-    assert new.logs == old.logs
-    assert new.stdout == old.stdout
+BUG_011_OLD = ("TypeError", "'bool' object is not iterable")
+
+_DESCRIBE_W2 = [
+    ("client", "ec2", "us-west-2"),
+    ("describe_regions", "us-west-2"),
+    ("client", "ec2", "us-west-2"),
+    ("describe_addresses", "us-west-2"),
+]
+_KEPT_OUTCOME = Outcome(
+    calls=_DESCRIBE_W2,
+    deleted=[],
+    count=0,
+    logs=[
+        ("root", logging.INFO, "Retrieved list of regions: ['us-west-2']"),
+        ("root", logging.WARNING, "number of AWS Elastic IPs deleted: 0"),
+        ("root", logging.WARNING, "List of AWS Elastic IPs deleted: []"),
+        ("root", logging.INFO, "count of items in deleted_ips: 0"),
+    ],
+    stdout="",
+    error=None,
+)
+
+# BUG-011: notags no longer raises; exact new Outcome (calls, deleted, count, logs,
+# stdout, error) for each diverging case (the oracle still raises the TypeError,
+# asserted in `test_bug_011_notags_no_longer_raises`).
+FIXED_MAIN: Mapping[str, Outcome] = {
+    "notags-raises-type-error": _KEPT_OUTCOME,
+    "notags-raises-in-first-region-skips-later-regions": Outcome(
+        calls=[
+            *_DESCRIBE_W2,
+            ("release_address", "us-west-2", "eipalloc-1.1.1.1"),
+            ("client", "ec2", "eu-west-1"),
+            ("describe_addresses", "eu-west-1"),
+            ("release_address", "eu-west-1", "eipalloc-2.2.2.2"),
+        ],
+        deleted=["1.1.1.1", "2.2.2.2"],
+        count=TWO,
+        logs=[
+            ("root", logging.INFO, "Retrieved list of regions: ['us-west-2', 'eu-west-1']"),
+            ("root", logging.INFO, "Deleted IP: 1.1.1.1"),
+            ("root", logging.INFO, "Deleted IP: 2.2.2.2"),
+            ("root", logging.WARNING, "number of AWS Elastic IPs deleted: 2"),
+            (
+                "root",
+                logging.WARNING,
+                "List of AWS Elastic IPs deleted: ['1.1.1.1', '2.2.2.2']",
+            ),
+            ("root", logging.INFO, "count of items in deleted_ips: 2"),
+        ],
+        stdout="",
+        error=None,
+    ),
+    "notags-dry-run-raises": Outcome(
+        calls=_DESCRIBE_W2,
+        deleted=[],
+        count=0,
+        logs=[
+            ("root", logging.INFO, "Retrieved list of regions: ['us-west-2']"),
+            (
+                "root",
+                logging.WARNING,
+                "List of AWS Elastic IPs (Total: 0) which will be deleted: []",
+            ),
+            ("root", logging.INFO, "count of items in deleted_ips: 0"),
+        ],
+        stdout="",
+        error=None,
+    ),
+    "notags-exception-hit-on-second-tag-raises": _KEPT_OUTCOME,
+}
+
+
+_REGIONS_LOG = ("root", logging.INFO, "Retrieved list of regions: ['us-west-2']")
+_KEPT_ENGINE = Outcome(
+    calls=_DESCRIBE_W2,
+    deleted=[],
+    count=0,
+    logs=[
+        _REGIONS_LOG,
+        ("root", logging.WARNING, "number of AWS Elastic IPs deleted: 0"),
+        ("root", logging.WARNING, "List of AWS Elastic IPs deleted: []"),
+    ],
+    stdout="",
+    error=None,
+)
+
+# The same BUG-011 outcomes through the engine: every region is listed before the first
+# release, the adapter's trailing `count of items` line is gone.
+ENGINE_FIXED: Mapping[str, Outcome] = {
+    "notags-raises-type-error": _KEPT_ENGINE,
+    "notags-exception-hit-on-second-tag-raises": _KEPT_ENGINE,
+    "notags-dry-run-raises": Outcome(
+        calls=_DESCRIBE_W2,
+        deleted=[],
+        count=0,
+        logs=[
+            _REGIONS_LOG,
+            (
+                "root",
+                logging.WARNING,
+                "List of AWS Elastic IPs (Total: 0) which will be deleted: []",
+            ),
+        ],
+        stdout="",
+        error=None,
+    ),
+    "notags-raises-in-first-region-skips-later-regions": Outcome(
+        calls=[
+            *_DESCRIBE_W2,
+            ("client", "ec2", "eu-west-1"),
+            ("describe_addresses", "eu-west-1"),
+            ("client", "ec2", "us-west-2"),
+            ("release_address", "us-west-2", "eipalloc-1.1.1.1"),
+            ("client", "ec2", "eu-west-1"),
+            ("release_address", "eu-west-1", "eipalloc-2.2.2.2"),
+        ],
+        deleted=["1.1.1.1", "2.2.2.2"],
+        count=TWO,
+        logs=[
+            ("root", logging.INFO, "Retrieved list of regions: ['us-west-2', 'eu-west-1']"),
+            ("root", logging.INFO, "Deleted IP: 1.1.1.1"),
+            ("root", logging.INFO, "Deleted IP: 2.2.2.2"),
+            ("root", logging.WARNING, "number of AWS Elastic IPs deleted: 2"),
+            (
+                "root",
+                logging.WARNING,
+                "List of AWS Elastic IPs deleted: ['1.1.1.1', '2.2.2.2']",
+            ),
+        ],
+        stdout="",
+        error=None,
+    ),
+}
 
 
 def _run_cleaner(
@@ -440,19 +564,39 @@ def _run_cleaner(
         },
         now=NOW,
     )
-    cleaner = get("aws", "ip")(ctx)
+    registry = Registry()
+    registry.register("aws", "ip")(build_elastic_ip_cleaner)
     error: tuple[str, str] | None = None
     deleted: list[str] = []
     try:
-        plan = cleaner.plan(ctx)
-        if case.dry_run:
-            deleted = [c.id for c in plan.candidates]
-        else:
-            deleted = list(cleaner.apply(plan, ctx).succeeded)
-    except Exception as e:
+        (outcome,) = engine.run(Selection((("aws", "ip"),)), ctx, registry)
+        deleted = deleted_ids(outcome)
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     logs = [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
     return Outcome(aws.calls, deleted, len(deleted), logs, capsys.readouterr().out, error)
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+def test_engine_dry_run_never_releases(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dry = Case(**{**case.__dict__, "dry_run": True})
+    old = _run(_legacy, dry, monkeypatch, caplog, capsys)
+    new = _run_cleaner(dry, monkeypatch, caplog, capsys)
+    assert not [c for c in new.calls if c[0] == "release_address"]
+    assert not [c for c in old.calls if c[0] == "release_address"]
+    if case.diverges:
+        assert old.error == BUG_011_OLD
+        return
+    assert new.error == old.error
+    assert new.stdout == old.stdout
+    if new.error is None:
+        assert new.deleted == old.deleted
 
 
 def _without_client(calls: Sequence[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
@@ -469,12 +613,21 @@ def test_cleaner_protocol_matches_main(
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
     new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    if case.diverges:
+        assert old.error == BUG_011_OLD
+        old = FIXED_MAIN[case.id]
     assert new.error == old.error
     assert new.stdout == old.stdout
     old_releases = [c for c in old.calls if c[0] == "release_address"]
     new_releases = [c for c in new.calls if c[0] == "release_address"]
     if case.fails_in_plan:
         assert new_releases == []
+        assert [c for c in new.calls if c[0] == "describe_addresses"] == [
+            c for c in old.calls if c[0] == "describe_addresses"
+        ]
+        if len(case.regions) <= 1:
+            assert new.logs == old.logs[:-1]
+            assert _without_client(new.calls) == _without_client(old.calls)
         return
     if new.error is None:
         assert new.deleted == old.deleted
@@ -488,6 +641,9 @@ def test_cleaner_protocol_matches_main(
             assert _without_client(new.calls) == _without_client(old.calls)
     else:
         assert new_releases == old_releases
+        assert new.logs == old.logs[:-1]
+        if len(case.regions) <= 1:
+            assert _without_client(new.calls) == _without_client(old.calls)
 
 
 def _find(case_id: str) -> Case:
@@ -495,13 +651,7 @@ def _find(case_id: str) -> Case:
 
 
 QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
-    (
-        "notags-raises-type-error",
-        lambda o: o.error == ("TypeError", "'bool' object is not iterable"),
-    ),
-    ("notags-dry-run-raises", lambda o: o.error is not None and o.deleted == []),
     ("notags-exception-hit-on-first-tag-skips", lambda o: o.error is None and o.deleted == []),
-    ("notags-exception-hit-on-second-tag-raises", lambda o: o.error is not None),
     ("notags-empty-tag-list-never-skips", lambda o: o.deleted == ["1.1.1.1"]),
     ("notags-on-untagged-ignored", lambda o: o.deleted == []),
     ("untagged-skipped", lambda o: o.deleted == ["2.2.2.2"]),
@@ -544,6 +694,22 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+@pytest.mark.parametrize("case_id", sorted(FIXED_MAIN), ids=sorted(FIXED_MAIN))
+def test_bug_011_notags_no_longer_raises(
+    case_id: str,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    case = _find(case_id)
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    assert old.error == BUG_011_OLD
+    assert new.error is None
+    assert new == ENGINE_FIXED[case_id]
+
+
 @pytest.mark.parametrize(("case_id", "check"), QUIRKS, ids=[q[0] for q in QUIRKS])
 def test_quirk_is_preserved(
     case_id: str,
@@ -555,7 +721,7 @@ def test_quirk_is_preserved(
 ) -> None:
     case = _find(case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert check(old), "oracle no longer shows the quirk"
     assert check(new)
 
@@ -579,10 +745,23 @@ SKIP_SPECS: Sequence[tuple[Any, Any]] = [
 ]
 
 
-def _skip_outcome(obj: Any, tag_list: Any) -> tuple[str, Any]:
+# BUG-011: (SKIP_SPECS index, SKIP_TAGS index) -> new outcome where the oracle raises the
+# TypeError. notags {"env": []} keeps (skips) an address that has an `env` tag; a tag
+# without `Value` is read for notags and raises KeyError, as for AWS VMs.
+_BUG_011_SKIP: Mapping[tuple[int, int], tuple[str, Any]] = {
+    (5, 0): ("ok", True),
+    (5, 2): ("ok", True),
+    (5, 3): ("ok", True),
+    (5, 5): ("KeyError", "'Value'"),
+    (6, 3): ("ok", True),
+    (6, 5): ("KeyError", "'Value'"),
+}
+
+
+def _skip_outcome(decide: Callable[[Any], bool], tag_list: Any) -> tuple[str, Any]:
     try:
-        return ("ok", obj._should_skip_instance(tag_list))
-    except Exception as e:
+        return ("ok", decide(tag_list))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         return (type(e).__name__, str(e))
 
 
@@ -594,8 +773,21 @@ def test_should_skip_instance_matches_main(
     monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
     exception_tags, notags = spec
     old = _load_oracle().ElasticIPs(False, {}, exception_tags, notags)
-    new = ElasticIPs(False, {}, exception_tags, notags)
-    assert _skip_outcome(new, tag_list) == _skip_outcome(old, tag_list)
+    ctx = RunContext(
+        dry_run=False,
+        operation=Operation.DELETE,
+        options={"filter_tags": {}, "exception_tags": exception_tags, "notags": notags},
+        now=NOW,
+    )
+    new = build_elastic_ip_cleaner(ctx)
+    assert isinstance(new, ElasticIpCleaner)
+    old_outcome = _skip_outcome(old._should_skip_instance, tag_list)
+    new_outcome = _skip_outcome(new.should_skip, tag_list)
+    if old_outcome == BUG_011_OLD:
+        assert notags
+        assert new_outcome == _BUG_011_SKIP[(SKIP_SPECS.index(spec), SKIP_TAGS.index(tag_list))]
+    else:
+        assert new_outcome == old_outcome
 
 
 def test_registered_factory_builds_cleaner() -> None:
@@ -613,9 +805,8 @@ def test_runtime_injection_replaces_boto3(
     case = _find("release")
     aws = FakeAws(case)
     monkeypatch.setattr("boto3.client", lambda *a, **k: pytest.fail("boto3 used"))
-    runtime = ElasticIpRuntime(
-        client_factory=lambda region: FakeEc2(aws, region), list_regions=lambda: list(case.regions)
+    cleaner = ElasticIpCleaner(
+        lambda region: FakeEc2(aws, region), lambda: list(case.regions), {}, {}, {}
     )
-    ips = ElasticIPs(False, {}, {}, {}, runtime)
-    ips.delete()
-    assert ips.get_deleted == ["1.1.1.1", "3.3.3.3"]
+    outcome = run_cleaner("aws", "ip", cleaner)
+    assert deleted_ids(outcome) == ["1.1.1.1", "3.3.3.3"]

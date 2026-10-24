@@ -368,7 +368,7 @@ def _run(
         world.base = base
         attributes = _attributes(base)
         results.extend(_step(base, module, step) for step in case.steps)
-    except (Exception, KeyboardInterrupt) as exc:
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(exc).__name__, str(exc))
     logs = [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
     return Outcome(world.calls, results, attributes, logs, capsys.readouterr().out, error)

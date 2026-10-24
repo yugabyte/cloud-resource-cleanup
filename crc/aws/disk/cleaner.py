@@ -5,56 +5,34 @@
 `DiskCleaner` implements the `crc.core.cleaner.Cleaner` contract for available (unattached)
 EBS volumes. Region by region `plan_region()` lists, filters and applies the CloudWatch
 detach-age guard (read-only), `note_dry_run()` records the dry-run candidates and
-`apply_region()` calls `delete_volume`. `Disk` (the package `__init__`) drives the same steps
-region by region in the call and log order of `main`.
+`apply_region()` calls `delete_volume`.
 """
 
 import datetime
 import logging
 import time
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass
+from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from typing import Any, cast
 
 from botocore.exceptions import ClientError
 
-from crc.aws.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
+from crc.aws._common import group_by_region
+from crc.aws.connectivity import CONNECTIVITY_ERRORS
 from crc.core import logger, policy
 from crc.core.cleaner import Candidate, Cleaner, Failure, Operation, Plan, Result, RunContext
 from crc.core.registry import register
 
-from .client import (
-    CloudWatchFactory,
-    Ec2Client,
-    Ec2Factory,
-    RegionLister,
-    all_regions,
-    boto3_cloudwatch,
-    boto3_ec2,
-)
+from .client import DiskRuntime, Ec2Client
 from .detach import DetachGuard
+from .guard import log_summary, region_guard
 from .settings import DiskSettings, build_settings
 from .volumes import Volume, VolumeFilter, server_filters, volume_label
 
-_SKIP_CONTEXT = "EBS disk cleanup"
-_UNAUTHORISED_CODES = {
-    "AuthFailure",
-    "UnauthorizedOperation",
-    "OptInRequired",
-    "InvalidClientTokenId",
-}
+__all__ = ["DiskCleaner", "DiskRuntime", "build_disk_cleaner"]
+
 _SKIP_FAILED = "Region %s: skipping volume %s after error: %s"
 _CONSIDER_FAILED = "Region %s: failed considering volume %s: %s"
-
-
-@dataclass(frozen=True, slots=True)
-class DiskRuntime:
-    """Injected collaborators: the SDK client factories and the region lister."""
-
-    ec2_factory: Ec2Factory = boto3_ec2
-    cloudwatch_factory: CloudWatchFactory = boto3_cloudwatch
-    list_regions: RegionLister = all_regions
 
 
 class DiskCleaner:
@@ -73,6 +51,7 @@ class DiskCleaner:
         self._runtime = runtime
         self.filter = VolumeFilter(settings)
         self.had_errors = False
+        self.partial_succeeded: list[str] = []
         self._scanned = 0
         self.detach_guard = DetachGuard(runtime.cloudwatch_factory, self._flag_error)
         self._clients: dict[str, Ec2Client] = {}
@@ -88,10 +67,12 @@ class DiskCleaner:
         candidates and logs the dry-run summary, as `main` does."""
         self.had_errors = False
         candidates: list[Candidate] = []
+        self.partial_succeeded = []
         for region in self._runtime.list_regions():
             found = self.plan_region(region, context.now)
             if context.dry_run:
                 self.note_dry_run(region, found)
+                self.partial_succeeded.extend(c.id for c in found)
             candidates.extend(found)
         if context.dry_run:
             self.log_summary([c.id for c in candidates], dry_run=True)
@@ -102,40 +83,19 @@ class DiskCleaner:
         delete is logged and kept out of the succeeded list, as on `main`."""
         if context.dry_run:
             return Result()
-        by_region: dict[str, list[Candidate]] = {}
-        for candidate in plan.candidates:
-            by_region.setdefault(candidate.region, []).append(candidate)
         deleted: list[str] = []
+        self.partial_succeeded = deleted
         failed: list[Failure] = []
-        for region, items in by_region.items():
+        for region, items in group_by_region(plan.candidates).items():
             done, errors = self.apply_region(region, items)
             deleted.extend(done)
             failed.extend(errors)
         self.log_summary(deleted, dry_run=False)
         return Result(succeeded=tuple(deleted), failed=tuple(failed))
 
-    @contextmanager
-    def region_guard(self, region: str) -> Iterator[None]:
-        """Region level error policy of `main`: connectivity and unauthorised errors skip the
-        region, any other error is logged and flagged; nothing propagates."""
-        try:
-            yield
-        except CONNECTIVITY_ERRORS as e:
-            log_skipped_region(region, _SKIP_CONTEXT, e)
-            logger.current().region_skipped(region, e)
-        except ClientError as e:
-            code = (e.response.get("Error") or {}).get("Code")
-            if code in _UNAUTHORISED_CODES:
-                logging.warning("Region %s: skipped EBS disk cleanup (%s)", region, code)
-                logger.current().region_skipped(region, str(code))
-                return
-            self.had_errors = True
-            logging.error("Region %s: ClientError during EBS disk cleanup: %s", region, e)
-            logger.current().fail(region, "-", e)
-        except Exception as e:
-            self.had_errors = True
-            logging.error("Region %s: error during EBS disk cleanup: %s", region, e)
-            logger.current().fail(region, "-", e)
+    def region_guard(self, region: str) -> AbstractContextManager[None]:
+        """Region level error policy of `main` (see `guard.region_guard`)."""
+        return region_guard(region, self._flag_error)
 
     def plan_region(self, region: str, now: datetime.datetime) -> list[Candidate]:
         """One region: list, filter, drop recently attached volumes. Read-only."""
@@ -176,7 +136,7 @@ class DiskCleaner:
                     failure = self._delete_volume(client, candidate)
                 except CONNECTIVITY_ERRORS:
                     raise
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - SAF-003 per-volume isolation, failure logged and recorded
                     self._volume_error(_CONSIDER_FAILED, region, candidate.extra.get("VolumeId"), e)
                     continue
                 if failure is None:
@@ -187,24 +147,7 @@ class DiskCleaner:
 
     def log_summary(self, labels: Sequence[str], *, dry_run: bool) -> None:
         """The summary lines `main` logs once all regions are done."""
-        if not dry_run:
-            logging.warning("number of AWS EBS volumes deleted: %s", len(labels))
-            logging.warning("List of AWS EBS volumes deleted: %s", list(labels))
-        else:
-            logging.warning(
-                "List of AWS EBS volumes (Total: %s) which will be deleted: %s",
-                len(labels),
-                list(labels),
-            )
-        if self.had_errors:
-            # Log only: raising after the region loop would exit non-zero and fail the Jenkins
-            # build without undoing work already done.
-            logging.error(
-                "AWS EBS disk cleanup did not complete for every volume; "
-                "see errors above. Deleted/dry-run list may be incomplete "
-                "(count=%s).",
-                len(labels),
-            )
+        log_summary(labels, dry_run=dry_run, had_errors=self.had_errors)
 
     def _list_candidates(
         self, client: Ec2Client, region: str, now: datetime.datetime
@@ -219,7 +162,7 @@ class DiskCleaner:
                         found.append(volume)
                 except CONNECTIVITY_ERRORS:
                     raise
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - SAF-003 per-volume isolation, volume skipped and recorded
                     self._volume_error(_SKIP_FAILED, region, volume.get("VolumeId"), e)
         return found
 
@@ -244,7 +187,7 @@ class DiskCleaner:
             label = volume_label(region, volume)
         except CONNECTIVITY_ERRORS:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - SAF-003 per-volume isolation, volume skipped and recorded
             self._volume_error(_CONSIDER_FAILED, region, volume.get("VolumeId"), e)
             return None
         return Candidate(
@@ -273,5 +216,5 @@ class DiskCleaner:
 @register("aws", "disk")
 def build_disk_cleaner(context: RunContext) -> Cleaner:
     """Registry factory. Options: filter_tags, exception_tags, notags, name_regex,
-    exception_regex, custom_age_tag_key, age and detach_age (as `crc.py` passes them)."""
+    exception_regex, custom_age_tag_key, age and detach_age."""
     return DiskCleaner(build_settings(context.options), DiskRuntime())

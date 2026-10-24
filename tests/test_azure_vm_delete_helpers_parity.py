@@ -199,7 +199,7 @@ def _execute(
     returned: Any = None
     try:
         returned = action(calls, names)
-    except BaseException as e:
+    except BaseException as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(calls, names, _records(caplog), capsys.readouterr().out, error, returned)
 

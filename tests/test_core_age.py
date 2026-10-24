@@ -8,6 +8,7 @@ import pytest
 
 from crc.core import age as core_age
 from crc.core.age import (
+    KEEP_AGE,
     AgeSpec,
     get_min_age,
     get_retention_age,
@@ -221,23 +222,23 @@ def test_validated_retention_age_no_log_when_absent(caplog: pytest.LogCaptureFix
         (AWS_TAGS, "age", {"days": 2}),
         ({"age": "{'hours': 3}"}, "age", {"hours": 3}),
         ({"age": "7"}, "age", 7),
-        ({"age": "{'days': 0}"}, "age", {"days": 0}),
-        ({"age": "{'weeks': 1}"}, "age", {"weeks": 1}),
-        ({"age": "{'days': 1e999}"}, "age", {"days": float("inf")}),
-        ({"age": "not a literal"}, "age", None),
-        ({"age": "{'days': "}, "age", None),
-        ({"age": ""}, "age", None),
-        ({"age": "{[]: 1}"}, "age", None),
+        ({"age": "{'days': 0}"}, "age", KEEP_AGE),  # BUG-016
+        ({"age": "{'weeks': 1}"}, "age", KEEP_AGE),  # BUG-004
+        ({"age": "{'days': 1e999}"}, "age", KEEP_AGE),  # BUG-016
+        ({"age": "not a literal"}, "age", KEEP_AGE),  # BUG-004
+        ({"age": "{'days': "}, "age", KEEP_AGE),  # BUG-004
+        ({"age": ""}, "age", KEEP_AGE),  # BUG-004
+        ({"age": "{[]: 1}"}, "age", KEEP_AGE),  # BUG-004
         ({"other": "1"}, "age", None),
         ({}, "age", None),
         ([], "age", None),
         (None, "age", None),
         (AWS_TAGS, "missing", None),
         (AWS_TAGS, "", None),
-        ([{"Key": "age"}], "age", None),
-        ([{"Key": "age", "Value": ""}], "age", None),
-        ([{"Key": "age", "Value": ""}, {"Key": "age", "Value": "5"}], "age", 5),
-        ([{"Key": "age", "Value": "zzz"}, {"Key": "age", "Value": "5"}], "age", None),
+        ([{"Key": "age"}], "age", KEEP_AGE),  # BUG-004
+        ([{"Key": "age", "Value": ""}], "age", KEEP_AGE),  # BUG-004
+        ([{"Key": "age", "Value": ""}, {"Key": "age", "Value": "5"}], "age", KEEP_AGE),
+        ([{"Key": "age", "Value": "zzz"}, {"Key": "age", "Value": "5"}], "age", KEEP_AGE),
         (["not-a-dict"], "age", None),
     ],
 )
@@ -262,17 +263,16 @@ def test_get_retention_age_logs(caplog: pytest.LogCaptureFixture) -> None:
         "Found 'a' tag: 1",
         "Searching for custom_age_tag_key: a",
     ]
-    assert messages[5] == "Found 'a' tag: zzz"
-    assert messages[6].startswith("Error parsing 'a' tag value 'zzz': ")
-    assert messages[7] == "Searching for custom_age_tag_key: a"
-    assert messages[8] == "Error retrieving 'a' tag: 'str' object has no attribute 'get'"
+    assert messages[5].startswith("Custom age tag 'a'='zzz' is unparseable (skipping resource): ")
+    assert messages[6] == "Searching for custom_age_tag_key: a"
+    assert messages[7] == "Error retrieving 'a' tag: 'str' object has no attribute 'get'"
     levels = {r.getMessage(): r.levelname for r in caplog.records}
     assert levels["No custom_age_tag_key provided to search for."] == "DEBUG"
     assert levels["No tags provided to search for custom_age_tag_key."] == "DEBUG"  # BUG-356
     assert levels["Searching for custom_age_tag_key: a"] == "DEBUG"  # BUG-356
     assert levels["Found 'a' tag: 1"] == "INFO"
-    assert levels[messages[6]] == "ERROR"
-    assert levels[messages[8]] == "ERROR"
+    assert levels[messages[5]] == "DEBUG"  # BUG-004: bad tag at DEBUG, no ERROR line
+    assert levels[messages[7]] == "ERROR"
 
 
 def test_parse_literal(caplog: pytest.LogCaptureFixture) -> None:

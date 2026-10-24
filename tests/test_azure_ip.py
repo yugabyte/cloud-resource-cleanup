@@ -4,9 +4,10 @@ from typing import Any
 
 import pytest
 
-from crc.azu.ip import IP, AzureIpCleaner
+from crc.azu.ip import AzureIpCleaner
 from crc.core.cleaner import Operation, Plan, RunContext
 from tests.helpers_azure_ip import NOW, FakeAzure, ip
+from tests.helpers_wc_azu_engine import candidate_ids, engine_run
 
 ENV = {"env": "test"}
 
@@ -33,7 +34,7 @@ def test_plan_lists_and_never_deletes() -> None:
     azure = FakeAzure([ip("a", ENV), ip("b", ENV, config={"id": "nic"})])
     plan = _cleaner(azure).plan(_context(dry_run=False))
     assert [c.id for c in plan.candidates] == ["a"]
-    assert [(s.id, s.reason) for s in plan.skipped] == [("b", "attached to an IP configuration")]
+    assert [(s.id, s.reason) for s in plan.skipped] == [("b", "in_use")]
     assert _names(azure.calls, "begin_delete") == []
 
 
@@ -111,10 +112,11 @@ def test_apply_empty_plan_logs_empty_summary(caplog: pytest.LogCaptureFixture) -
     ]
 
 
-def test_untagged_with_exception_tags_raises_in_plan() -> None:
+def test_untagged_with_exception_tags_is_a_candidate_in_plan() -> None:
+    """BUG-013: an untagged address has no tags and no longer raises."""
     azure = FakeAzure([ip("a", None)])
-    with pytest.raises(TypeError, match="NoneType"):
-        _cleaner(azure, exception_tags={"env": []}).plan(_context(dry_run=True))
+    plan = _cleaner(azure, exception_tags={"env": []}).plan(_context(dry_run=True))
+    assert [c.id for c in plan.candidates] == ["a"]
 
 
 def test_supports_only_delete() -> None:
@@ -123,11 +125,17 @@ def test_supports_only_delete() -> None:
     assert not cleaner.supports(Operation.STOP)
 
 
-def test_adapter_delete_with_injected_client(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_engine_run_with_injected_client(monkeypatch: pytest.MonkeyPatch) -> None:
     azure = FakeAzure([ip("a", ENV), ip("b", {"x": "y"})])
     azure.install(monkeypatch)
-    adapter = IP("rg", False, {"env": []}, {}, {})
-    adapter.delete()
-    assert adapter.get_deleted == ["a"]
-    assert adapter.count == 1
+    options = {
+        "resource_group": "rg",
+        "filter_tags": {"env": []},
+        "exception_tags": {},
+        "notags": {},
+        "age": {"days": 1},
+    }
+    outcome = engine_run("ip", options, dry_run=False, now=NOW)
+    assert candidate_ids(outcome) == ["a"]
+    assert [section.ids for section in outcome.report.sections] == [("a",)]
     assert _names(azure.calls, "begin_delete") == [("begin_delete", "rg", "a")]

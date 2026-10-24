@@ -1,13 +1,17 @@
-"""Parity: `crc.azu.ip.IP` against main (`tests/legacy/azu_ip.txt`).
+"""Parity: the Azure IP Cleaner, run through `crc.core.engine.run`, against main.
 
-Both run against the same fake Azure network client (the SDK classes `crc.azu._base` builds
-are replaced, so the real `Base` runs in both). SDK calls (in order, including the lazy
-paging of `list_all`), results, log records, stdout and raised errors must be identical for
-every case through the legacy adapter. The registered `Cleaner` path (factory with a
-`RunContext`, `plan()` then `apply()` unless dry run) is compared on results, errors, stdout,
-delete calls and log records. The module lists no regions, so there is no region fallback.
+The oracle is `tests/legacy/azu_ip.txt`. Both run against the same fake Azure network client (the
+SDK classes `crc.azu._base` builds are replaced, so the real `Base` runs in both). SDK calls,
+results, log records, stdout and raised errors must match for every case, except the documented
+divergences. First, every case lists the configured resource group (`list(resource_group)`)
+instead of the subscription (`list_all()`): BUG-074, the oracle's `("list_all",)` call is mapped
+to `("list", group)`. Second, the cases in `DIVERGING` (BUG-013, BUG-076, BUG-077) assert the
+new outcome and that it differs from the oracle. Third, the cleaner lists everything before it
+deletes, so a listing or selection error stops the run before any delete (fewer deletes). The
+registered `Cleaner` protocol (factory, `plan()`, `apply()`) is compared too.
 """
 
+import datetime
 import logging
 import types
 from collections.abc import Callable, Mapping, Sequence
@@ -17,10 +21,11 @@ from typing import Any
 
 import pytest
 
-from crc.azu.ip import IP, AzureIpCleaner, build_ip_cleaner
+from crc.azu.ip import AzureIpCleaner, build_ip_cleaner
 from crc.core.cleaner import Cleaner, Operation, RunContext
 from crc.core.registry import get
 from tests.helpers_azure_ip import NOW, FakeAzure, ip
+from tests.helpers_wc_azu_engine import candidate_ids, engine_run
 
 ORACLE = Path(__file__).parent / "legacy" / "azu_ip.txt"
 ENV = {"env": "test", "owner": "qa"}
@@ -39,6 +44,7 @@ class Case:
     list_error: Exception | None = None
     delete_errors: Mapping[str, Exception] = field(default_factory=dict)
     fails_in_plan: bool = False
+    age: Any = field(default_factory=lambda: {"days": 1})
 
 
 def _many(prefix: str, count: int) -> list[Any]:
@@ -64,6 +70,33 @@ CASES = [
     Case("untagged-with-filter", [ip("a", None), ip("b", {})], filter_tags={"env": []}),
     Case("associated-skipped", [ip("a", ENV, config={"id": "nic"}), ip("b", ENV)]),
     Case("associated-and-dry-run", [ip("a", ENV, config={"id": "nic"})], dry_run=True),
+    Case(
+        "in-use-nat-gateway-skipped",
+        [
+            types.SimpleNamespace(
+                name="a", tags=ENV, ip_configuration=None, nat_gateway={"id": "g"}
+            ),
+            ip("b", ENV),
+        ],
+    ),
+    Case(
+        "in-use-linked-ip-skipped",
+        [
+            types.SimpleNamespace(
+                name="a", tags=ENV, ip_configuration=None, linked_public_ip_address={"id": "l"}
+            ),
+            ip("b", ENV),
+        ],
+    ),
+    Case(
+        "in-use-service-ip-skipped",
+        [
+            types.SimpleNamespace(
+                name="a", tags=ENV, ip_configuration=None, service_public_ip_address={"id": "s"}
+            ),
+            ip("b", ENV),
+        ],
+    ),
     Case("exception-key-only", [ip("a", ENV), ip("b", PROD)], exception_tags={"owner": []}),
     Case(
         "exception-key-and-value",
@@ -194,6 +227,18 @@ CASES = [
         exception_tags={"env": ["test"]},
         notags={"owner": 123},
     ),
+    Case(
+        "young-ip-kept-by-age-gate",
+        [
+            types.SimpleNamespace(
+                name="a",
+                tags=ENV,
+                ip_configuration=None,
+                created_time=NOW.replace(tzinfo=datetime.UTC) - datetime.timedelta(hours=1),
+            ),
+            ip("b", ENV),
+        ],
+    ),
 ]
 
 
@@ -207,6 +252,64 @@ class Outcome:
     error: tuple[str, str] | None
 
 
+@dataclass
+class Diverges:
+    bug: str
+    deleted: list[str]
+    old_error: tuple[str, str] | None
+    old_deleted: list[str] | None = None
+
+
+TYPE_ERROR = ("TypeError", "argument of type 'NoneType' is not iterable")
+ATTRIBUTE_ERROR = (
+    "AttributeError",
+    "'types.SimpleNamespace' object has no attribute 'ip_configuration'",
+)
+
+DIVERGING: dict[str, Diverges] = {
+    "untagged-with-exception-raises": Diverges("BUG-013", ["a"], TYPE_ERROR, []),
+    "untagged-with-notags-raises": Diverges("BUG-013", ["a"], TYPE_ERROR, []),
+    "untagged-raises-even-if-filter-excludes": Diverges("BUG-077", [], TYPE_ERROR, []),
+    "untagged-raises-after-earlier-deletes": Diverges(
+        "BUG-077", ["a", "b", "c", "d"], TYPE_ERROR, ["a", "b"]
+    ),
+    "untagged-raises-in-dry-run": Diverges("BUG-013", ["a", "c"], TYPE_ERROR, ["a"]),
+    "untagged-with-exception-attached-ip-still-raises": Diverges("BUG-013", [], TYPE_ERROR, []),
+    "in-use-nat-gateway-skipped": Diverges("BUG-076", ["b"], None, ["a", "b"]),
+    "in-use-linked-ip-skipped": Diverges("BUG-076", ["b"], None, ["a", "b"]),
+    "in-use-service-ip-skipped": Diverges("BUG-076", ["b"], None, ["a", "b"]),
+    "young-ip-kept-by-age-gate": Diverges("BUG-075", ["b"], None, ["a", "b"]),
+}
+
+
+def _expected_logs(case: Case, deleted: Sequence[str]) -> list[tuple[str, int, str]]:
+    items = list(deleted)
+    if case.dry_run:
+        logs = [
+            (
+                "root",
+                logging.WARNING,
+                f"List of Azure IPs (Total: {len(items)}) which will be deleted: {items}",
+            )
+        ]
+    else:
+        logs = [("root", logging.INFO, f"Deleted IP address: {name}") for name in items]
+        logs.extend(
+            [
+                ("root", logging.WARNING, f"number of Azure IPs deleted: {len(items)}"),
+                ("root", logging.WARNING, f"List of Azure IPs deleted: {items}"),
+            ]
+        )
+    logs.append(("root", logging.INFO, f"count of items in deleted_ips: {len(items)}"))
+    return logs
+
+
+def _scoped(calls: Sequence[tuple[Any, ...]], case: Case) -> list[tuple[Any, ...]]:
+    """The oracle's calls with its subscription-wide listing mapped to the group listing."""
+    group = case.resource_group or "env-rg"
+    return [("list", group) if c == ("list_all",) else c for c in calls]
+
+
 def _load_oracle() -> Any:
     module = types.ModuleType("legacy_azu_ip")
     exec(compile(ORACLE.read_text(), str(ORACLE), "exec"), module.__dict__)
@@ -217,10 +320,6 @@ def _legacy(case: Case) -> Any:
     return _load_oracle().IP(
         case.resource_group, case.dry_run, case.filter_tags, case.exception_tags, case.notags
     )
-
-
-def _new(case: Case) -> Any:
-    return IP(case.resource_group, case.dry_run, case.filter_tags, case.exception_tags, case.notags)
 
 
 def _setup(
@@ -248,7 +347,7 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     deleted = list(cleaner.get_deleted)
     count = cleaner.count
@@ -261,6 +360,48 @@ def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
 
 
+def _expected_engine_calls(case: Case, deleted: Sequence[str]) -> list[tuple[Any, ...]]:
+    group = case.resource_group or "env-rg"
+    wanted = set(deleted)
+    calls: list[tuple[Any, ...]] = [("client", "sub-1"), ("list", group)]
+    calls.extend(("yield", getattr(item, "name", None)) for item in case.ips)
+    if not case.dry_run:
+        for item in case.ips:
+            name = getattr(item, "name", None)
+            if name in wanted:
+                calls.append(("begin_delete", group, name))
+    return calls
+
+
+def _options(case: Case) -> dict[str, Any]:
+    return {
+        "resource_group": case.resource_group,
+        "filter_tags": case.filter_tags,
+        "exception_tags": case.exception_tags,
+        "notags": case.notags,
+        "age": None if case.dry_run else case.age,
+    }
+
+
+def _run_engine(
+    case: Case,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> Outcome:
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    error: tuple[str, str] | None = None
+    deleted: list[str] = []
+    try:
+        deleted = candidate_ids(engine_run("ip", _options(case), dry_run=case.dry_run, now=NOW))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
+        error = (type(e).__name__, str(e))
+    logs = [
+        (r.name, r.levelno, r.getMessage()) for r in caplog.records if r.levelno > logging.DEBUG
+    ]
+    return Outcome(azure.calls, deleted, len(deleted), logs, capsys.readouterr().out, error)
+
+
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_matches_main(
     case: Case,
@@ -270,13 +411,37 @@ def test_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
+    new = _run_engine(case, monkeypatch, caplog, capsys)
+    assert old.logs[-1] == ("root", logging.INFO, f"count of items in deleted_ips: {old.count}")
+    if case.id in DIVERGING:
+        fix = DIVERGING[case.id]
+        assert old.error == fix.old_error, f"{fix.bug}: oracle no longer shows the bug"
+        assert old.deleted == fix.old_deleted, f"{fix.bug}: oracle no longer shows the bug"
+        assert new.error is None
+        assert new.deleted == fix.deleted
+        assert new.count == len(fix.deleted)
+        assert (new.error, new.deleted) != (old.error, old.deleted)
+        assert new.calls == _expected_engine_calls(case, fix.deleted)
+        assert new.logs == _expected_logs(case, fix.deleted)[:-1]
+        assert new.stdout == ""
+        return
     assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.count == old.count
-    assert new.logs == old.logs
     assert new.stdout == old.stdout
+    assert _only(new.calls, "list") == _only(_scoped(old.calls, case), "list")
+    old_yields = _only(old.calls, "yield")
+    assert _only(new.calls, "yield")[: len(old_yields)] == old_yields
+    if old.error is None:
+        assert _only(new.calls, "yield") == old_yields
+    if case.fails_in_plan:
+        assert _only(new.calls, "begin_delete") == []
+        assert new.logs == []
+        return
+    assert _only(new.calls, "begin_delete") == _only(old.calls, "begin_delete")
+    assert new.logs == old.logs[:-1]
+    if new.error is None:
+        assert new.deleted == old.deleted
+        assert new.count == old.count
+        assert new.calls == _expected_engine_calls(case, old.deleted or [])
 
 
 def _run_cleaner(
@@ -289,12 +454,7 @@ def _run_cleaner(
     ctx = RunContext(
         dry_run=case.dry_run,
         operation=Operation.DELETE,
-        options={
-            "resource_group": case.resource_group,
-            "filter_tags": case.filter_tags,
-            "exception_tags": case.exception_tags,
-            "notags": case.notags,
-        },
+        options=_options(case),
         now=NOW,
     )
     error: tuple[str, str] | None = None
@@ -306,9 +466,11 @@ def _run_cleaner(
             deleted = [c.id for c in plan.candidates]
         else:
             deleted = list(cleaner.apply(plan, ctx).succeeded)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
-    logs = [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
+    logs = [
+        (r.name, r.levelno, r.getMessage()) for r in caplog.records if r.levelno > logging.DEBUG
+    ]
     return Outcome(azure.calls, deleted, len(deleted), logs, capsys.readouterr().out, error)
 
 
@@ -326,9 +488,22 @@ def test_cleaner_protocol_matches_main(
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
     new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    if case.id in DIVERGING:
+        fix = DIVERGING[case.id]
+        group = case.resource_group or "env-rg"
+        assert old.error == fix.old_error, f"{fix.bug}: oracle no longer shows the bug"
+        assert old.deleted == fix.old_deleted, f"{fix.bug}: oracle no longer shows the bug"
+        assert new.error is None
+        assert new.deleted == fix.deleted
+        assert new.stdout == ""
+        assert _only(new.calls, "list", "list_all") == [("list", group)]
+        expected_deletes = [] if case.dry_run else [("begin_delete", group, n) for n in fix.deleted]
+        assert _only(new.calls, "begin_delete") == expected_deletes
+        assert new.logs == _expected_logs(case, fix.deleted)[:-1]
+        return
     assert new.error == old.error
     assert new.stdout == old.stdout
-    assert _only(new.calls, "list_all") == _only(old.calls, "list_all")
+    assert _only(new.calls, "list", "list_all") == _only(_scoped(old.calls, case), "list")
     if case.fails_in_plan:
         assert _only(new.calls, "begin_delete") == []
         assert new.logs == []
@@ -344,21 +519,7 @@ def _find(case_id: str) -> Case:
     return next(c for c in CASES if c.id == case_id)
 
 
-TYPE_ERROR = ("TypeError", "argument of type 'NoneType' is not iterable")
-
 QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
-    ("untagged-with-exception-raises", lambda o: o.error == TYPE_ERROR and o.deleted == []),
-    ("untagged-with-notags-raises", lambda o: o.error == TYPE_ERROR and o.deleted == []),
-    ("untagged-raises-even-if-filter-excludes", lambda o: o.error == TYPE_ERROR),
-    (
-        "untagged-raises-after-earlier-deletes",
-        lambda o: (
-            o.error == TYPE_ERROR
-            and o.deleted == ["a", "b"]
-            and [c[0] for c in o.calls if c[0] == "begin_delete"] == ["begin_delete"] * 2
-        ),
-    ),
-    ("untagged-raises-in-dry-run", lambda o: o.error == TYPE_ERROR and o.deleted == ["a"]),
     ("exception-empty-tags-dict", lambda o: o.error is None and o.deleted == ["a"]),
     ("notags-empty-tags-dict", lambda o: o.error is None and o.deleted == ["a"]),
     ("no-filter-includes-untagged", lambda o: o.deleted == ["a", "b", "c"]),
@@ -381,7 +542,10 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
     ),
     ("resource-group-from-env", lambda o: ("begin_delete", "env-rg", "a") in o.calls),
     ("delete-error-not-called-in-dry-run", lambda o: o.error is None and o.deleted == ["a"]),
-    ("missing-ip-configuration-attribute", lambda o: o.error is not None),
+    (
+        "missing-ip-configuration-attribute",
+        lambda o: o.error == ATTRIBUTE_ERROR and o.deleted == [],
+    ),
     ("missing-ip-configuration-not-reached-when-filtered", lambda o: o.error is None),
     ("tag-value-none-does-not-match-empty-string-filter", lambda o: o.deleted == []),
     ("tag-value-none-does-not-match-empty-string-exception", lambda o: o.deleted == ["a"]),
@@ -402,6 +566,74 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+@dataclass
+class FixedQuirk:
+    case_id: str
+    bug: str
+    old_check: Callable[[Outcome], bool]
+    new_check: Callable[[Outcome], bool]
+
+
+FIXED_QUIRKS: Sequence[FixedQuirk] = [
+    FixedQuirk(
+        "untagged-with-exception-raises",
+        "BUG-013",
+        lambda o: o.error == TYPE_ERROR and o.deleted == [],
+        lambda o: o.error is None and o.deleted == ["a"],
+    ),
+    FixedQuirk(
+        "untagged-with-notags-raises",
+        "BUG-013",
+        lambda o: o.error == TYPE_ERROR and o.deleted == [],
+        lambda o: o.error is None and o.deleted == ["a"],
+    ),
+    FixedQuirk(
+        "untagged-raises-even-if-filter-excludes",
+        "BUG-077",
+        lambda o: o.error == TYPE_ERROR,
+        lambda o: o.error is None and o.deleted == [],
+    ),
+    FixedQuirk(
+        "untagged-raises-after-earlier-deletes",
+        "BUG-077",
+        lambda o: (
+            o.error == TYPE_ERROR
+            and o.deleted == ["a", "b"]
+            and [c[0] for c in o.calls if c[0] == "begin_delete"] == ["begin_delete"] * 2
+        ),
+        lambda o: o.error is None and o.deleted == ["a", "b", "c", "d"],
+    ),
+    FixedQuirk(
+        "untagged-raises-in-dry-run",
+        "BUG-013",
+        lambda o: o.error == TYPE_ERROR and o.deleted == ["a"],
+        lambda o: o.error is None and o.deleted == ["a", "c"],
+    ),
+    FixedQuirk(
+        "young-ip-kept-by-age-gate",
+        "BUG-075",
+        lambda o: o.error is None and o.deleted == ["a", "b"],
+        lambda o: o.error is None and o.deleted == ["b"],
+    ),
+]
+
+
+ENGINE_QUIRKS: dict[str, Callable[[Outcome], bool]] = {
+    # Allowed change: the cleaner lists the whole group before it deletes, so a listing error
+    # (even one raised mid-listing) stops the run before any delete.
+    "iteration-error-mid-listing": lambda o: (
+        o.error == ("RuntimeError", "page failed")
+        and o.deleted == []
+        and [c for c in o.calls if c[0] == "begin_delete"] == []
+    ),
+    # The delete error propagates from apply(); earlier IPs were already deleted, in plan order.
+    "delete-error-mid-run-keeps-earlier-record": lambda o: (
+        o.error == ("RuntimeError", "delete failed")
+        and [c[2] for c in o.calls if c[0] == "begin_delete"] == ["ip-0", "ip-1", "ip-2"]
+    ),
+}
+
+
 @pytest.mark.parametrize(("case_id", "check"), QUIRKS, ids=[q[0] for q in QUIRKS])
 def test_quirk_is_preserved(
     case_id: str,
@@ -413,46 +645,72 @@ def test_quirk_is_preserved(
 ) -> None:
     case = _find(case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_engine(case, monkeypatch, caplog, capsys)
     assert check(old), "oracle no longer shows the quirk"
-    assert check(new)
+    assert ENGINE_QUIRKS.get(case_id, check)(new)
 
 
-def test_list_is_subscription_wide_and_delete_uses_configured_group(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    case = _find("delete")
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        build(case).delete()
-        assert ("list_all",) in azure.calls
-        assert ("begin_delete", "rg-test", "a") in azure.calls
-
-
-def test_repeated_delete_accumulates_like_main(
+@pytest.mark.parametrize(
+    "quirk",
+    FIXED_QUIRKS,
+    ids=[f"{q.case_id}[{q.bug}]" for q in FIXED_QUIRKS],
+)
+def test_fixed_quirk(
+    quirk: FixedQuirk,
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    case = _find(quirk.case_id)
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_engine(case, monkeypatch, caplog, capsys)
+    assert quirk.old_check(old), f"{quirk.bug}: oracle no longer shows the bug"
+    assert quirk.new_check(new), f"{quirk.bug}: fix did not produce expected outcome"
+
+
+def test_oracle_lists_subscription_wide_new_code_lists_the_configured_group(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """BUG-074: main lists the subscription, the fix lists only the configured group."""
     case = _find("delete")
-    results = []
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        cleaner = build(case)
-        cleaner.delete()
-        cleaner.delete()
-        results.append(
-            (
-                azure.calls,
-                cleaner.get_deleted,
-                [(r.levelno, r.getMessage()) for r in caplog.records],
-            )
-        )
-    assert results[0] == results[1]
-    assert results[1][1] == ["a", "b", "a", "b"]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    _legacy(case).delete()
+    assert ("list_all",) in azure.calls
+    assert ("begin_delete", "rg-test", "a") in azure.calls
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    candidate_ids(engine_run("ip", _options(case), dry_run=False, now=NOW))
+    assert ("list", "rg-test") in azure.calls
+    assert ("list_all",) not in azure.calls
+    assert ("begin_delete", "rg-test", "a") in azure.calls
+
+
+def test_repeated_run_repeats_the_calls_like_main(
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The oracle accumulates names over two `delete()` calls; each engine run starts afresh."""
+    case = _find("delete")
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    legacy = _legacy(case)
+    legacy.delete()
+    legacy.delete()
+    old_calls = _scoped(azure.calls, case)
+    old_deleted = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Deleted")]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    runs = [
+        candidate_ids(engine_run("ip", _options(case), dry_run=False, now=NOW)) for _ in range(2)
+    ]
+    new_deleted = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Deleted")]
+    assert _only(azure.calls, "list") == _only(old_calls, "list")
+    assert _only(azure.calls, "begin_delete") == _only(old_calls, "begin_delete")
+    assert new_deleted == old_deleted
+    assert legacy.get_deleted == ["a", "b", "a", "b"]
+    assert runs == [["a", "b"], ["a", "b"]]
 
 
 def test_registered_factory_builds_cleaner(monkeypatch: pytest.MonkeyPatch) -> None:

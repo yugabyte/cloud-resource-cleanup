@@ -7,7 +7,9 @@ and constructor arguments, the printed output, the warnings logged, `os.environ[
 after the run and the raised error (type and message) or exit code must be equal.
 """
 
+import contextlib
 import functools
+import importlib
 import importlib.util
 import io
 import itertools
@@ -25,11 +27,19 @@ from typing import Any
 
 import pytest
 
+from crc.cli import bridge
 from crc.cli import clients as cli_clients
 from crc.cli import context as cli_context
 from crc.cli import dispatch as cli_dispatch
 from crc.cli import scan as cli_scan
+from crc.cli.routes import skips
 from crc.core import logger
+from crc.core.cleaner import Candidate, Operation, Plan, Result, RunContext
+from tests import helpers_ag_cli_added as added_table
+from tests import helpers_ag_cli_args as added_args
+from tests.helpers_cli_routes import FakeCleaners
+from tests.helpers_oracle import load_legacy_crc
+from tests.helpers_routed_calls import RoutedCall
 
 ROOT = Path(__file__).resolve().parent.parent
 ORACLE = ROOT / "tests" / "legacy" / "crc_main.txt"
@@ -48,12 +58,14 @@ DEFAULT_ENV: dict[str, str | None] = {
     "GCP_PROJECT": None,
 }
 CLOUD_ARGS = ["aws", "azure", "gcp", "oci", "all"]
+# The kinds of the oracle: every case is compared with `tests/legacy/crc_main.txt`. A kind that
+# is not in the oracle is listed in tests/helpers_ag_cli_added.py and has no oracle to compare
+# with; `test_added_resources_reach_their_cleaner_through_main` covers it instead.
 RESOURCE_ARGS = [
     "disk",
     "ip",
     "keypair",
     "vm",
-    "vpc",
     "kms",
     "nic",
     "spot_instance_requests",
@@ -91,8 +103,12 @@ HIT_ERRORS = {
 }
 MIN_CASES = 8000
 RUN_ORACLE = (
-    "import sys; path = sys.argv[1]; sys.argv = ['crc.py', *sys.argv[2:]]; "
-    "exec(compile(open(path).read(), 'crc.py', 'exec'), {'__name__': '__main__'})"
+    "import sys; sys.argv = ['crc.py', *sys.argv[2:]]; "
+    "from tests.helpers_oracle import load_legacy_crc; load_legacy_crc().main()"
+)
+RUN_NEW = (
+    "import sys; script = sys.argv[1]; sys.argv = ['crc.py', *sys.argv[2:]]; "
+    "from tests.helpers_ag_cli_args import run_script_without_additions as run; run(script)"
 )
 Events = list[Any]
 
@@ -136,7 +152,7 @@ def load_by_path(name: str, path: Path) -> ModuleType:
     return module
 
 
-ORACLE_MODULE = load_by_path("crc_main_oracle_parity", ORACLE)
+ORACLE_MODULE = load_legacy_crc("crc_main_oracle_parity")
 NEW_MODULE = load_by_path("crc_py_main_parity", ROOT / "crc.py")
 
 
@@ -151,6 +167,19 @@ def norm(value: Any) -> Any:
     return value
 
 
+def positional(args: Any, kwargs: Any, index: int, name: str) -> Any:
+    """The constructor argument at `index`, else the keyword `name`."""
+    return args[index] if len(args) > index else kwargs.get(name)
+
+
+def check_spot_target(cloud: Any, project_id: Any, resource_group: Any) -> None:
+    """The real method raises before it builds the adapter; the routes gate likewise."""
+    if cloud == "azure" and not resource_group:
+        raise ValueError("resource_group is required for Azure Spot VM cleanup")
+    if cloud == "gcp" and not project_id:
+        raise ValueError("project_id is required for GCP Spot VM cleanup")
+
+
 class Fakes:
     """The recording fakes of one run; every constructor and call lands in `events`."""
 
@@ -162,6 +191,7 @@ class Fakes:
         self.InfluxDBClient = self.make_client("InfluxDBClient")
         self.CRC = self.make_crc()
         self.Snapshot = self.make_snapshot()
+        self.cleaners: FakeCleaners | None = None
 
     def make_client(self, kind: str) -> type:
         fakes = self
@@ -180,6 +210,8 @@ class Fakes:
         class FakeCRC:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.cloud = args[0] if args else kwargs.get("cloud")
+                self.project_id = positional(args, kwargs, 5, "project_id")
+                self.resource_group = positional(args, kwargs, 6, "resource_group")
                 self.fake_tag = f"CRC#{next(fakes.counter)}"
                 fakes.events.append(("CRC", norm(list(args)), norm(kwargs)))
 
@@ -188,6 +220,8 @@ class Fakes:
                     raise AttributeError(name)
 
                 def record(*args: Any, **kwargs: Any) -> Any:
+                    if name == "delete_spot_instances":
+                        check_spot_target(self.cloud, self.project_id, self.resource_group)
                     fakes.events.append((f"crc.{name}", self.cloud, norm(list(args)), norm(kwargs)))
                     if fakes.case.crc_fail == name:
                         raise RuntimeError(f"{name} failed")
@@ -262,7 +296,7 @@ def execute(main: Callable[[], None], case: Case, fakes: Fakes) -> Outcome:
                     result = ("returned",)
                 except SystemExit as exit_:
                     result = ("exit", exit_.code)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
                     result = ("error", type(error), str(error))
         finally:
             sys.argv = saved_argv
@@ -279,17 +313,168 @@ def run_oracle(case: Case, monkeypatch: pytest.MonkeyPatch) -> Outcome:
     monkeypatch.setattr(module, "WebClient", fakes.WebClient)
     monkeypatch.setattr(module, "InfluxDBClient", fakes.InfluxDBClient)
     monkeypatch.setattr(module, "notify_cleanup", fakes.notify_cleanup)
-    return execute(module.main, case, fakes)
+    outcome = execute(module.main, case, fakes)
+    outcome.events = strip_unused_args(outcome.events)
+    return outcome
 
 
-def run_new(case: Case, monkeypatch: pytest.MonkeyPatch) -> Outcome:
-    fakes = Fakes(case)
+def run_new(
+    case: Case, monkeypatch: pytest.MonkeyPatch, fakes: Fakes | None = None, strip: bool = True
+) -> Outcome:
+    fakes = fakes or Fakes(case)
     monkeypatch.setattr(cli_context, "CRC", fakes.CRC)
-    monkeypatch.setattr(cli_dispatch, "Snapshot", fakes.Snapshot)
     monkeypatch.setattr(cli_clients, "WebClient", fakes.WebClient)
     monkeypatch.setattr(cli_clients, "InfluxDBClient", fakes.InfluxDBClient)
     monkeypatch.setattr(cli_scan, "notify_cleanup", fakes.notify_cleanup)
-    return execute(NEW_MODULE.main, case, fakes)
+    monkeypatch.setattr(
+        cli_scan,
+        "scan_instances_with_tag",
+        lambda crc, key, value: crc.scan_instances_with_tag(key, value),
+    )
+    install_routed_fakes(fakes, monkeypatch)
+    with added_args.stripping() if strip else contextlib.nullcontext():
+        return execute(NEW_MODULE.main, case, fakes)
+
+
+EVENT_WITH_KWARGS = 3
+ROUTED_CALLS: dict[str, RoutedCall] = {
+    "keypair": RoutedCall("delete_keypairs", ("name_regex", "exception_regex", "age")),
+    "ip": RoutedCall("delete_ip", ("filter_tags", "exception_tags", None, None)),
+    "kms": RoutedCall(
+        "delete_kms",
+        (
+            "filter_tags",
+            "exception_tags",
+            "kms_key_description",
+            "kms_user",
+            "kms_pending_window",
+            "age",
+            "custom_age_tag_key",
+        ),
+    ),
+    "vm": RoutedCall(
+        "delete_vm",
+        ("filter_tags", "exception_tags", "age", "custom_age_tag_key", "instance_state"),
+        stop="stop_vm",
+    ),
+    "spot_instance_requests": RoutedCall(
+        "delete_spot_instance_requests",
+        ("filter_tags", "exception_tags", "age", "custom_age_tag_key"),
+    ),
+    "disk": RoutedCall(
+        "delete_disks",
+        (
+            "filter_tags",
+            "exception_tags",
+            "age",
+            "custom_age_tag_key",
+            "detach_age",
+            "name_regex",
+            "exception_regex",
+            None,
+            None,
+        ),
+    ),
+    "snapshot": RoutedCall("Snapshot", ()),
+}
+
+
+def routed_call(cloud: str, kind: str) -> RoutedCall | None:
+    """The oracle call of a routed pair: the shared (AWS) table, or the cloud's own module."""
+    if cloud == "aws":
+        return ROUTED_CALLS.get(kind)
+    try:
+        module = importlib.import_module(f"tests.helpers_routed_{cloud}")
+    except ImportError:
+        return None
+    table: dict[str, RoutedCall] = module.ROUTED_CALLS
+    return table.get(kind)
+
+
+def strip_unused_args(events: Events) -> Events:
+    """Drop the oracle call arguments that the routed adapters never read."""
+    kept: Events = []
+    for event in events:
+        call = None
+        if str(event[0]).startswith("crc.") and len(event) > EVENT_WITH_KWARGS:
+            for kind in bridge.TABLES.get(str(event[1]), {}):
+                candidate = routed_call(str(event[1]), kind)
+                if candidate is not None and str(event[0]).removeprefix("crc.") in (
+                    candidate.method,
+                    candidate.stop,
+                ):
+                    call = candidate
+        if call is not None:
+            args = [a for a, key in zip(event[2], call.keys, strict=False) if key is not None]
+            event = (event[0], event[1], args, event[3])
+        kept.append(event)
+    return kept
+
+
+def snapshot_side_effect(fakes: Fakes) -> Callable[[RunContext], None]:
+    def record(context: RunContext) -> None:
+        kwargs = {
+            "dry_run": context.dry_run,
+            "age_days": context.options["age_days"],
+            "exception_tags": context.options["exception_tags"],
+        }
+        fakes.events.append(("Snapshot", [], norm(kwargs)))
+        fakes.events.append(("Snapshot.delete",))
+
+    return record
+
+
+def install_routed_fakes(fakes: Fakes, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Engine-routed pairs reach a fake cleaner that records what the oracle CRC fake recorded."""
+    cleaners = FakeCleaners().install(monkeypatch)
+    fakes.cleaners = cleaners
+    pairs = [
+        (cloud, kind)
+        for cloud, table in bridge.TABLES.items()
+        for kind, route in table.items()
+        if route.options is not skips.no_options
+        and (cloud, kind) not in added_table.added_routed_pairs()
+    ]
+    for cloud, kind in pairs:
+        call = routed_call(cloud, kind)
+        assert call is not None, f"no ROUTED_CALLS entry for {cloud} {kind}"
+        if kind == "snapshot":
+            cleaners.side_effect[(cloud, kind)] = snapshot_side_effect(fakes)
+            cleaners.plans[(cloud, kind)] = Plan(
+                candidates=tuple(Candidate(f"snap-{i}") for i in range(3))
+            )
+            cleaners.results[(cloud, kind)] = Result(succeeded=("snap-1",))
+            continue
+
+        def record(
+            context: RunContext,
+            cloud: str = cloud,
+            kind: str = kind,
+            call: RoutedCall = call,
+        ) -> None:
+            assert context.dry_run is ("--dry_run" in fakes.case.argv)
+            if kind in {"vm", "spot_instance_requests", "spot_instances", "disk"} or (
+                kind == "ip" and cloud in {"aws", "azure"}
+            ):
+                assert "notags" in context.options
+            if cloud == "azure":
+                assert "resource_group" in context.options
+                assert context.options["resource_group"] == option_value(
+                    fakes.case, "--resource_group"
+                )
+            if context.operation is Operation.STOP:
+                assert "instance_state" not in context.options
+            stop = call.stop if context.operation is Operation.STOP else None
+            method = stop or call.method
+            keys = [key for key in call.keys if key is not None]
+            if stop:
+                keys = keys[:4]
+            args = [norm(context.options.get(key)) for key in keys]
+            fakes.events.append((f"crc.{method}", cloud, args, {}))
+            if fakes.case.crc_fail == method:
+                raise RuntimeError(f"{method} failed")
+
+        cleaners.side_effect[(cloud, kind)] = record
 
 
 def base_argv(
@@ -465,7 +650,6 @@ def failure_cases() -> list[Case]:
         ("keypair", "delete_keypairs"),
         ("nic", "delete_nic"),
         ("vm", "delete_vm"),
-        ("vpc", "delete_vpc"),
         ("kms", "delete_kms"),
         ("spot_instance_requests", "delete_spot_instance_requests"),
         ("spot_instances", "delete_spot_instances"),
@@ -537,22 +721,257 @@ TABLES: dict[str, list[Case]] = {
 ALL_CASES = [case for table in TABLES.values() for case in table]
 
 
+UNSUPPORTED_PAIR_CALLS: dict[str, tuple[tuple[str, ...], str]] = {
+    "crc.delete_keypairs": (("aws",), "Keypair operation is only supported on AWS."),
+    "crc.delete_nic": (("azure",), "NICs operation is only supported on Azure."),
+    "crc.delete_kms": (("aws",), "KMS operation is only supported on AWS."),
+    "crc.delete_ip": (
+        ("aws", "azure", "gcp"),
+        "Invalid cloud provided: {cloud}. Supported clouds are ['aws', 'azure', 'gcp', 'oci']",
+    ),
+}
+SKIP_WARNING = "{resource} is not supported on {cloud}; skipped under --cloud all"
+RESOURCE_OF_CALL = {
+    "crc.delete_keypairs": "keypair",
+    "crc.delete_nic": "nic",
+    "crc.delete_kms": "kms",
+    "crc.delete_ip": "ip",
+}
+
+
+def before_first_cleaner(events: Events) -> Events:
+    index = next((i for i, event in enumerate(events) if event[0] == "CRC"), len(events))
+    return events[:index]
+
+
+def diverging_outcome(case: Case, expected: Outcome) -> tuple[str, Outcome] | None:
+    """The (bug id, new outcome) of a case that triggers BUG-017 or BUG-018, else None.
+
+    The trigger is read from what the oracle did, never from the new code: a pair the oracle
+    handed to a CRC method that raises for that cloud, or the EBS breaker error under
+    `--cloud all`. The new outcome is the oracle outcome with exactly the documented change.
+    """
+    cloud_all = list(case.argv[:2]) == ["--cloud", "all"]
+    if expected.result[0] == "error" and expected.result[2] == dispatch_breaker_message():
+        assert cloud_all
+        events = before_first_cleaner(expected.events)
+        return "BUG-018", without_reset(case, expected, events, expected.result)
+    bad = [
+        event
+        for event in expected.events
+        if event[0] in UNSUPPORTED_PAIR_CALLS
+        and event[1] not in UNSUPPORTED_PAIR_CALLS[event[0]][0]
+    ]
+    if not bad:
+        return None
+    calls = [event for event in expected.events if event[0] in UNSUPPORTED_PAIR_CALLS]
+    stops_main = calls.index(bad[0]) < len(calls) - len(bad)
+    if not cloud_all or stops_main:
+        assert cloud_all or len(bad) == 1
+        message = UNSUPPORTED_PAIR_CALLS[bad[0][0]][1].format(cloud=bad[0][1])
+        return "BUG-017", without_reset(
+            case, expected, before_first_cleaner(expected.events), ("error", ValueError, message)
+        )
+    bad_clouds = {e[1] for e in bad}
+    events = [
+        event
+        for event in expected.events
+        if event not in bad and not (event[0] == "CRC" and event[1][0] in bad_clouds)
+    ]
+    warnings = [
+        (logging.WARNING, SKIP_WARNING.format(resource=RESOURCE_OF_CALL[e[0]], cloud=e[1]))
+        for e in bad
+    ]
+    return "BUG-017", Outcome(
+        events,
+        expected.stdout,
+        expected.stderr,
+        expected.max_age,
+        [*expected.warnings, *warnings],
+        expected.result,
+    )
+
+
+def without_reset(
+    case: Case, expected: Outcome, events: Events, result: tuple[Any, ...]
+) -> Outcome:
+    """`main()` checks every pair before `MAX_AGE` is set, so an error leaves
+    the environment untouched and nothing is printed."""
+    original_max_age = {**DEFAULT_ENV, **case.env}["MAX_AGE"]
+    return Outcome(events, "", expected.stderr, original_max_age, expected.warnings, result)
+
+
+def dispatch_breaker_message() -> str:
+    return cli_dispatch.AWS_DISK_OPT_IN_MESSAGE
+
+
 def test_table_is_large_and_has_unique_names() -> None:
     assert len(ALL_CASES) >= MIN_CASES
     names = [case.name for case in ALL_CASES]
     assert len(set(names)) == len(names)
 
 
+SCAN_FORMAT_ERROR = "--scan_tag must be in KEY=VALUE format, e.g. auto_clean=false"
+BLANK_SCAN_ERROR = "--scan_tag must not be empty; use KEY=VALUE format, e.g. auto_clean=false"
+AWS_ONLY = ("snapshot",)
+SKIP_SUFFIX = "; skipped under --cloud all"
+CLIENT_EVENTS = ("WebClient", "InfluxDBClient")
+
+
+def option_value(case: Case, flag: str) -> str | None:
+    argv = case.argv
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def diverges(case: Case, expected: Outcome) -> str | None:
+    """The bug ID whose fix changes the outcome of this case against the oracle, if any."""
+    tag = option_value(case, "--scan_tag")
+    if tag is not None:
+        return blank_scan_diverges(tag, expected)
+    if not any(str(event[0]).startswith("CRC") for event in expected.events):
+        return None
+    cloud, resource = option_value(case, "--cloud"), option_value(case, "--resource")
+    if resource in AWS_ONLY and cloud in ("azure", "gcp", "oci"):
+        return "BUG-009"
+    if cloud == "all" and any(event[0] == "Snapshot" for event in expected.events):
+        return "BUG-009"
+    return None
+
+
+def blank_scan_diverges(tag: str, expected: Outcome) -> str | None:
+    if tag.strip():
+        return None
+    reached = any(str(event[0]).startswith("CRC") for event in expected.events)
+    return "BUG-344" if reached or expected.result[2:] == (SCAN_FORMAT_ERROR,) else None
+
+
+def snapshot_line(case: Case) -> str:
+    if "--dry_run" in case.argv:
+        return "DRY RUN: AWS Snapshots eligible for deletion (>90 days): 3"
+    return "msg:['Snapshot', 'Deleted', ['snap-1']]"
+
+
+def expected_fixed(case: Case, bug: str, oracle: Outcome) -> Outcome:
+    """The outcome the fix must give, derived from the oracle outcome of the same case."""
+    original_max_age = {**DEFAULT_ENV, **case.env}["MAX_AGE"]
+    events = [event for event in oracle.events if event[0] in CLIENT_EVENTS]
+    if bug == "BUG-344":
+        result = ("error", ValueError, BLANK_SCAN_ERROR)
+        return Outcome(events, "", oracle.stderr, original_max_age, [], result)
+    resource = option_value(case, "--resource")
+    if option_value(case, "--cloud") != "all":
+        result = (
+            "error",
+            ValueError,
+            f"--resource {resource} is AWS-only; use --cloud aws "
+            f"(got --cloud {option_value(case, '--cloud')})",
+        )
+        return Outcome(events, "", oracle.stderr, original_max_age, [], result)
+    return fixed_all(case, oracle)
+
+
+def fixed_all(case: Case, oracle: Outcome) -> Outcome:
+    """`--cloud all`: snapshot runs for AWS only; no CRC is built for the skipped clouds
+    (the up-front pair check) and each logs a skip warning."""
+    events: Events = []
+    seen_snapshot = False
+    drop_delete = False
+    for event in oracle.events:
+        if event[0] == "Snapshot":
+            drop_delete = seen_snapshot
+            seen_snapshot = True
+            if drop_delete:
+                continue
+        if event[0] == "Snapshot.delete" and drop_delete:
+            drop_delete = False
+            continue
+        if event[0] == "crc.get_msg" and event[1] != "aws":
+            continue
+        if event[0] == "CRC" and event[1][0] != "aws":
+            continue
+        events.append(event)
+    line = snapshot_line(case)
+    stdout_lines = oracle.stdout.splitlines(keepends=True)
+    kept, seen_line = [], False
+    for text in stdout_lines:
+        if text == line + "\n":
+            if seen_line:
+                continue
+            seen_line = True
+        kept.append(text)
+    return Outcome(events, "".join(kept), oracle.stderr, oracle.max_age, [], oracle.result)
+
+
 @pytest.mark.parametrize("case", ALL_CASES, ids=[case.name for case in ALL_CASES])
 def test_main_matches_oracle(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
     expected = run_oracle(case, monkeypatch)
     actual = run_new(case, monkeypatch)
-    assert actual.result == expected.result
-    assert actual.events == expected.events
-    assert actual.stdout == expected.stdout
-    assert actual.stderr == expected.stderr
-    assert actual.warnings == expected.warnings
-    assert actual.max_age == expected.max_age
+    bug = diverges(case, expected)
+    if bug is None:
+        diverged = diverging_outcome(case, expected)
+        if diverged is not None:
+            _bug, expected = diverged
+        assert actual.result == expected.result
+        assert actual.events == expected.events
+        assert actual.stdout == expected.stdout
+        assert actual.stderr == expected.stderr
+        assert actual.warnings == expected.warnings
+        assert actual.max_age == expected.max_age
+        return
+    fixed = expected_fixed(case, bug, expected)
+    assert actual.result == fixed.result, bug
+    assert actual.events == fixed.events, bug
+    assert actual.stdout == fixed.stdout, bug
+    assert actual.stderr == fixed.stderr, bug
+    assert actual.max_age == fixed.max_age, bug
+    assert actual.result != expected.result or actual.events != expected.events, bug
+    if bug == "BUG-344" or option_value(case, "--cloud") != "all":
+        assert actual.warnings == expected.warnings, bug
+        return
+    added = [msg for _, msg in actual.warnings if msg.endswith(SKIP_SUFFIX)]
+    assert [rec for rec in actual.warnings if not rec[1].endswith(SKIP_SUFFIX)] == (
+        expected.warnings
+    ), bug
+    resource = str(option_value(case, "--resource"))
+    assert added == [
+        SKIP_WARNING.format(resource=resource, cloud=cloud) for cloud in ("azure", "gcp", "oci")
+    ], bug
+
+
+def test_every_fixed_bug_has_diverging_cases() -> None:
+    candidates = [
+        case
+        for case in ALL_CASES
+        if option_value(case, "--resource") in AWS_ONLY
+        or not (option_value(case, "--scan_tag") or "x").strip()
+    ]
+    seen: set[str] = set()
+    mp = pytest.MonkeyPatch()
+    try:
+        for case in candidates[:: max(1, len(candidates) // 600)]:
+            bug = diverges(case, run_oracle(case, mp))
+            if bug:
+                seen.add(bug)
+    finally:
+        mp.undo()
+    assert seen == {"BUG-009", "BUG-344"}
+
+
+def test_diverging_cases_exist_and_differ_from_the_oracle(monkeypatch: pytest.MonkeyPatch) -> None:
+    bugs: dict[str, int] = {}
+    for case in TABLES["product"]:
+        expected = run_oracle(case, monkeypatch)
+        diverged = diverging_outcome(case, expected)
+        if diverged is None:
+            continue
+        bugs[diverged[0]] = bugs.get(diverged[0], 0) + 1
+        actual = run_new(case, monkeypatch)
+        assert (actual.events, actual.result, actual.warnings) != (
+            expected.events,
+            expected.result,
+            expected.warnings,
+        )
+    assert set(bugs) == {"BUG-017", "BUG-018"}
 
 
 def test_table_reaches_every_outcome_and_every_call() -> None:
@@ -602,7 +1021,10 @@ def test_script_entry_point_matches_oracle(argv: list[str]) -> None:
         return done.returncode, done.stdout, stderr[-1] if stderr else ""
 
     oracle = run(["-c", RUN_ORACLE, str(ORACLE)])
-    new = run([str(ROOT / "crc.py")])
+    if added_args.has_additions():
+        new = run(["-c", RUN_NEW, str(ROOT / "crc.py")])
+    else:
+        new = run([str(ROOT / "crc.py")])
     assert new[0] == oracle[0]
     assert new[1] == oracle[1]
     assert new[2] == oracle[2]
@@ -612,48 +1034,12 @@ def test_crc_py_reexports_the_names_the_contract_needs() -> None:
     names = [
         "main",
         "get_argparser",
-        "CRC",
-        "Snapshot",
-        "CLOUDS",
-        "RESOURCES",
-        "DELETED",
-        "STOPPED",
-        "NICS",
-        "DISKS",
-        "VMS",
-        "IPS",
-        "KEYPAIRS",
-        "KMS",
-        "SPOT_INSTANCE_REQUEST",
-        "Point",
-        "WebClient",
-        "InfluxDBClient",
         "is_valid_type",
         "is_valid_list",
         "is_valid_dict",
         "are_values_of_dict_lists",
         "validate_influxdb_inputs",
         "_validate_influxdb_input",
-        "AWS_Disk",
-        "ElasticIPs",
-        "KeyPairs",
-        "Kms",
-        "SpotInstanceRequests",
-        "AWS_VM",
-        "VPC",
-        "Disk",
-        "AZU_IP",
-        "NIC",
-        "AZU_SpotVM",
-        "AZU_VM",
-        "GCP_Disk",
-        "GCP_IP",
-        "GCP_SpotVM",
-        "GCP_VM",
-        "OCI_Disk",
-        "OCI_SpotVM",
-        "OCI_VM",
-        "notify_cleanup",
     ]
     for name in names:
         assert hasattr(NEW_MODULE, name), name
@@ -706,3 +1092,32 @@ def test_bug_360_main_logs_run_start_and_result_around_each_cleaner_pass(
         ),
     ]
 
+
+@pytest.mark.parametrize(
+    ("cloud", "kind"), sorted(added_table.added_routed_pairs()), ids=lambda v: str(v)
+)
+def test_added_resources_reach_their_cleaner_through_main(
+    cloud: str, kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kind that is not in the oracle runs through `main()` and gets the parsed flags."""
+    argv = (
+        "--cloud",
+        cloud,
+        "--resource",
+        kind,
+        "--resource_group",
+        "rg",
+        "--project_id",
+        "proj",
+        "--dry_run",
+        "--age",
+        "{'days': 2}",
+    )
+    case = Case(f"added-{cloud}-{kind}", argv)
+    fakes = Fakes(case)
+    outcome = run_new(case, monkeypatch, fakes, strip=False)
+    assert outcome.result in (("returned",), ("exit", 0)), outcome.result
+    assert fakes.cleaners is not None
+    pairs = [(c, k) for c, k, _ in fakes.cleaners.runs]
+    assert pairs == [(cloud, kind)]
+    assert fakes.cleaners.contexts[0].dry_run is True

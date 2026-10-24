@@ -1,14 +1,20 @@
-"""Parity: `crc.azu.nic.NIC` against main (`tests/legacy/azu_nic.txt`).
+"""Parity: the Azure NIC Cleaner, run through `crc.core.engine.run`, against main.
 
-Both run against the same fake Azure network client (the SDK classes `crc.azu._base` builds
-are replaced, so the real `Base` runs in both). SDK calls (in order, including the lazy
-paging of `list_all`), results, log records, stdout and raised errors must be identical for
-every case through the legacy adapter. The registered `Cleaner` path (factory with a
-`RunContext`, `plan()` then `apply()` unless dry run) is compared on results, errors, stdout,
-list/delete/result calls and log records. The module has no age gate and lists no regions, so
-there are no age edges, region fallback or region auth errors to cover.
+The oracle is `tests/legacy/azu_nic.txt`. BUG-111/BUG-113/BUG-114: the new code lists the
+configured resource group (`list(resource_group)`) instead of the subscription (`list_all()`);
+`_normalised` maps the oracle's `list_all` calls to that call so every unmarked case still
+asserts equal calls. Cases whose inputs trigger BUG-113 are in `DIVERGING` (new outcome
+asserted, oracle still shown to differ). Both run against the same fake Azure network client
+(the SDK classes `crc.azu._base` builds are replaced, so the real `Base` runs in both). SDK
+calls, results, log records, stdout and raised errors must match for every case. The cleaner
+plans (lists and selects every NIC) before `apply()` deletes, so a listing or selection error
+in the middle of the run now stops it before any delete (fewer deletes, never more). The
+registered `Cleaner` protocol (factory, `plan()`, `apply()`) is compared too. The module has no
+age gate and lists no regions, so there are no age edges, region fallback or region auth errors
+to cover.
 """
 
+import datetime
 import logging
 import types
 from collections.abc import Callable, Mapping, Sequence
@@ -18,10 +24,11 @@ from typing import Any
 
 import pytest
 
-from crc.azu.nic import NIC, AzureNicCleaner, build_nic_cleaner
+from crc.azu.nic import AzureNicCleaner, build_nic_cleaner
 from crc.core.cleaner import Cleaner, Operation, RunContext
 from crc.core.registry import get
 from tests.helpers_azure_nic import NOW, FakeAzure, nic
+from tests.helpers_wc_azu_engine import candidate_ids, engine_run
 
 ORACLE = Path(__file__).parent / "legacy" / "azu_nic.txt"
 VM = {"id": "vm-1"}
@@ -39,6 +46,7 @@ class Case:
     begin_script: Mapping[str, Sequence[Exception | None]] = field(default_factory=dict)
     result_script: Mapping[str, Sequence[Exception | None]] = field(default_factory=dict)
     fails_in_plan: bool = False
+    age: Any = field(default_factory=lambda: {"days": 1})
 
 
 def _many(count: int) -> list[Any]:
@@ -79,6 +87,18 @@ CASES = [
     Case("exception-regex-syntax-is-literal", [nic("nic-a")], exception_regex=["nic.*"]),
     Case("exception-string-iterates-characters", [nic("nic-a"), nic("nic-b")], exception_regex="b"),
     Case("attached-skipped", [nic("nic-a", VM), nic("nic-b")]),
+    Case(
+        "in-use-private-endpoint-or-link-service",
+        [
+            types.SimpleNamespace(
+                name="nic-pe", virtual_machine=None, private_endpoint={"id": "pe"}
+            ),
+            types.SimpleNamespace(
+                name="nic-pls", virtual_machine=None, private_link_service={"id": "pls"}
+            ),
+            nic("nic-free"),
+        ],
+    ),
     Case("attached-and-dry-run", [nic("nic-a", VM), nic("nic-b")], dry_run=True),
     Case("attached-truthy-string", [nic("nic-a", "vm")]),
     Case("virtual-machine-falsy-values", [nic("nic-a", ""), nic("nic-b", {}), nic("nic-c", 0)]),
@@ -186,6 +206,18 @@ CASES = [
         begin_script={"nic-a": [_boom()]},
         result_script={"nic-a": [_boom()]},
     ),
+    Case("real-run-without-age-raises", [nic("nic-a")], age=None),
+    Case(
+        "young-nic-kept-by-age-gate",
+        [
+            types.SimpleNamespace(
+                name="nic-young",
+                virtual_machine=None,
+                created_time=NOW.replace(tzinfo=datetime.UTC) - datetime.timedelta(hours=1),
+            ),
+            nic("nic-old"),
+        ],
+    ),
 ]
 
 
@@ -200,6 +232,122 @@ class Outcome:
     error: tuple[str, str] | None
 
 
+def _group(case: Case) -> str:
+    return case.resource_group or "env-rg"
+
+
+def _normalised(calls: Sequence[tuple[Any, ...]], case: Case) -> list[tuple[Any, ...]]:
+    """The oracle's subscription-wide `list_all` (BUG-111) as the fixed `list(group)` call."""
+    return [("list", _group(case)) if c == ("list_all",) else c for c in calls]
+
+
+def _tn(o: "Outcome") -> bool:
+    return o.error is not None and o.error[0] == "TypeError"
+
+
+def _value_error(o: "Outcome") -> bool:
+    return (
+        o.error is not None
+        and o.error[0] == "ValueError"
+        and o.deleted == []
+        and o.count == 0
+        and o.calls == []
+        and o.logs == []
+        and o.stdout == ""
+    )
+
+
+def _deleted_outcome(names: Sequence[str], group: str = "rg-test") -> Callable[["Outcome"], bool]:
+    items = list(names)
+    expected_sdk = [
+        ("list", group),
+        ("list", group),
+        *[call for n in items for call in (("begin_delete", group, n), ("result", n))],
+    ]
+    expected_logs = [
+        *(f"Deleted NIC: {n}" for n in items),
+        f"Number of Azure NICs deleted: {len(items)}",
+        f"List of Azure NICs deleted: {items}",
+    ]
+    return lambda o: (
+        o.error is None
+        and o.deleted == items
+        and o.count == len(items)
+        and o.stdout == ""
+        and _only(o.calls, "list", "list_all", "begin_delete", "result") == expected_sdk
+        and [r[2] for r in o.logs] == expected_logs
+    )
+
+
+DIVERGING: dict[str, tuple[str, Callable[["Outcome"], bool], Callable[["Outcome"], bool]]] = {
+    "filter-regex-syntax-is-literal": (
+        "BUG-113",
+        lambda o: o.deleted == ["nic.*"],
+        _deleted_outcome(["nic-1", "nic.*"]),
+    ),
+    "filter-anchor-is-literal": (
+        "BUG-113",
+        lambda o: o.deleted == ["^nic"],
+        _deleted_outcome(["nic-1"]),
+    ),
+    "filter-empty-pattern-matches-all": (
+        "BUG-113",
+        lambda o: o.deleted == ["a", "b"],
+        lambda o: (
+            o.deleted == []
+            and o.count == 0
+            and o.error is None
+            and o.calls == []
+            and o.stdout == ""
+            and [r[2] for r in o.logs] == ["No Azure NICs to delete."]
+        ),
+    ),
+    "filter-string-iterates-characters": (
+        "BUG-113",
+        lambda o: o.deleted == ["abc", "xyz"],
+        _value_error,
+    ),
+    "exception-empty-pattern-excludes-all": (
+        "BUG-113",
+        lambda o: o.deleted == [],
+        _value_error,
+    ),
+    "exception-regex-syntax-is-literal": (
+        "BUG-113",
+        lambda o: o.deleted == ["nic-a"],
+        _deleted_outcome([]),
+    ),
+    "exception-string-iterates-characters": (
+        "BUG-113",
+        lambda o: o.deleted == ["nic-a"],
+        _value_error,
+    ),
+    "attached-with-exception-bad-not-evaluated": (
+        "BUG-113",
+        lambda o: o.error is None,
+        _value_error,
+    ),
+    "exception-non-string-evaluated-when-not-included": ("BUG-113", _tn, _value_error),
+    "exception-non-string-evaluated-when-included": ("BUG-113", _tn, _value_error),
+    "name-regex-non-string-entry": ("BUG-113", _tn, _value_error),
+    "in-use-private-endpoint-or-link-service": (
+        "BUG-114",
+        lambda o: o.deleted == ["nic-pe", "nic-pls", "nic-free"],
+        _deleted_outcome(["nic-free"]),
+    ),
+    "real-run-without-age-raises": (
+        "BUG-112",
+        lambda o: o.deleted == ["nic-a"],
+        _value_error,
+    ),
+    "young-nic-kept-by-age-gate": (
+        "BUG-112",
+        lambda o: o.deleted == ["nic-young", "nic-old"],
+        _deleted_outcome(["nic-old"]),
+    ),
+}
+
+
 def _load_oracle() -> Any:
     module = types.ModuleType("legacy_azu_nic")
     exec(compile(ORACLE.read_text(), str(ORACLE), "exec"), module.__dict__)
@@ -210,10 +358,6 @@ def _legacy(case: Case) -> Any:
     return _load_oracle().NIC(
         case.resource_group, case.dry_run, case.name_regex, case.exception_regex
     )
-
-
-def _new(case: Case) -> Any:
-    return NIC(case.resource_group, case.dry_run, case.name_regex, case.exception_regex)
 
 
 def _setup(
@@ -230,7 +374,9 @@ def _setup(
 
 
 def _records(caplog: pytest.LogCaptureFixture) -> list[tuple[str, int, str]]:
-    return [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
+    return [
+        (r.name, r.levelno, r.getMessage()) for r in caplog.records if r.levelno > logging.DEBUG
+    ]
 
 
 def _run(
@@ -245,7 +391,7 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     deleted = list(cleaner.get_deleted)
     logs = _records(caplog)
@@ -260,6 +406,33 @@ def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
 
 
+def _options(case: Case) -> dict[str, Any]:
+    return {
+        "resource_group": case.resource_group,
+        "name_regex": case.name_regex,
+        "exception_regex": case.exception_regex,
+        "age": None if case.dry_run else case.age,
+    }
+
+
+def _run_engine(
+    case: Case,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> Outcome:
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    error: tuple[str, str] | None = None
+    deleted: list[str] = []
+    try:
+        deleted = candidate_ids(engine_run("nic", _options(case), dry_run=case.dry_run, now=NOW))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
+        error = (type(e).__name__, str(e))
+    return Outcome(
+        azure.calls, deleted, len(deleted), _records(caplog), [], capsys.readouterr().out, error
+    )
+
+
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_matches_main(
     case: Case,
@@ -269,15 +442,35 @@ def test_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
+    new = _run_engine(case, monkeypatch, caplog, capsys)
+    assert old.count_logs == [
+        ("root", logging.INFO, f"Count of items in nics_names_to_delete: {old.count}")
+    ]
+    if case.id in DIVERGING:
+        _, old_shows, new_shows = DIVERGING[case.id]
+        assert old_shows(old), "oracle no longer shows the bug"
+        assert new_shows(new)
+        assert (new.calls, new.error, new.deleted) != (old.calls, old.error, old.deleted)
+        return
     assert new.error == old.error
+    assert new.stdout == old.stdout
+    assert _only(new.calls, "list") == _only(_normalised(old.calls, case), "list")
+    assert (new.error is not None) == case.fails_in_plan
+    old_yields = _only(old.calls, "yield")
+    assert _only(new.calls, "yield")[: len(old_yields)] == old_yields
+    if case.fails_in_plan:
+        assert _only(new.calls, "begin_delete", "result") == []
+        assert new.logs == []
+        return
+    assert _only(new.calls, "yield") == old_yields
+    assert _only(new.calls, "client", "list", "begin_delete", "result") == _only(
+        _normalised(old.calls, case), "client", "list", "begin_delete", "result"
+    )
     assert new.deleted == old.deleted
     assert new.count == old.count
+    listing = [c for c in _normalised(old.calls, case) if c[0] not in ("begin_delete", "result")]
+    assert new.calls == listing + _only(old.calls, "begin_delete", "result")
     assert new.logs == old.logs
-    assert new.count_logs == old.count_logs
-    assert new.stdout == old.stdout
-    assert (new.error is not None) == case.fails_in_plan
 
 
 def _run_cleaner(
@@ -290,11 +483,7 @@ def _run_cleaner(
     ctx = RunContext(
         dry_run=case.dry_run,
         operation=Operation.DELETE,
-        options={
-            "resource_group": case.resource_group,
-            "name_regex": case.name_regex,
-            "exception_regex": case.exception_regex,
-        },
+        options=_options(case),
         now=NOW,
     )
     error: tuple[str, str] | None = None
@@ -306,7 +495,7 @@ def _run_cleaner(
             deleted = [c.id for c in plan.candidates]
         else:
             deleted = list(cleaner.apply(plan, ctx).succeeded)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(
         azure.calls, deleted, len(deleted), _records(caplog), [], capsys.readouterr().out, error
@@ -326,10 +515,16 @@ def test_cleaner_protocol_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    if case.id in DIVERGING:
+        assert DIVERGING[case.id][1](old), "oracle no longer shows the bug"
     new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    if case.id in DIVERGING:
+        assert DIVERGING[case.id][2](new)
+        assert (new.calls, new.error, new.deleted) != (old.calls, old.error, old.deleted)
+        return
     assert new.error == old.error
     assert new.stdout == old.stdout
-    assert _only(new.calls, "list_all") == _only(old.calls, "list_all")
+    assert _only(new.calls, "list") == _only(_normalised(old.calls, case), "list")
     if case.fails_in_plan:
         assert _only(new.calls, "begin_delete", "result") == []
         assert new.logs == []
@@ -356,24 +551,16 @@ def _swallowed(o: Outcome, name: str, attempts: int) -> bool:
 
 
 QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
-    ("filter-regex-syntax-is-literal", lambda o: o.deleted == ["nic.*"]),
-    ("filter-anchor-is-literal", lambda o: o.deleted == ["^nic"]),
     ("filter-case-sensitive", lambda o: o.deleted == ["nic-b"]),
-    ("filter-empty-pattern-matches-all", lambda o: o.deleted == ["a", "b"]),
-    ("filter-string-iterates-characters", lambda o: o.deleted == ["abc", "xyz"]),
     (
         "name-regex-empty-returns-early",
         lambda o: o.calls == [] and [r[2] for r in o.logs] == ["No Azure NICs to delete."],
     ),
     ("name-regex-none-returns-early", lambda o: o.calls == [] and o.deleted == []),
     ("name-regex-empty-and-list-error", lambda o: o.error is None and o.calls == []),
-    ("exception-empty-pattern-excludes-all", lambda o: o.deleted == []),
     ("exception-none", lambda o: o.deleted == ["nic-a"]),
-    ("exception-regex-syntax-is-literal", lambda o: o.deleted == ["nic-a"]),
-    ("exception-string-iterates-characters", lambda o: o.deleted == ["nic-a"]),
     ("attached-skipped", lambda o: o.deleted == ["nic-b"]),
     ("attached-skipped-before-name-is-read", lambda o: o.error is None and o.deleted == []),
-    ("attached-with-exception-bad-not-evaluated", lambda o: o.error is None),
     ("virtual-machine-falsy-values", lambda o: o.deleted == ["nic-a", "nic-b", "nic-c"]),
     ("duplicate-names-recorded-twice", lambda o: o.deleted == ["nic-a", "nic-a"]),
     ("list-all-error", lambda o: o.error == ("RuntimeError", "list failed") and o.deleted == []),
@@ -384,10 +571,6 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
     (
         "name-none-after-earlier-delete",
         lambda o: o.error is not None and o.error[0] == "TypeError" and o.deleted == ["nic-a"],
-    ),
-    (
-        "exception-non-string-evaluated-when-not-included",
-        lambda o: o.error is not None and o.error[0] == "TypeError",
     ),
     ("resource-group-from-env", lambda o: ("begin_delete", "env-rg", "nic-a") in o.calls),
     ("delete-fails-once-then-succeeds", lambda o: o.deleted == ["nic-a"] and o.error is None),
@@ -408,6 +591,23 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+ENGINE_QUIRKS: dict[str, Callable[[Outcome], bool]] = {
+    # Allowed change: the cleaner lists and selects every NIC before it deletes, so an error
+    # raised mid-listing or at a later NIC stops the run before any delete.
+    "iteration-error-mid-listing": lambda o: (
+        o.error == ("RuntimeError", "page failed")
+        and o.deleted == []
+        and _only(o.calls, "begin_delete") == []
+    ),
+    "name-none-after-earlier-delete": lambda o: (
+        o.error is not None
+        and o.error[0] == "TypeError"
+        and o.deleted == []
+        and _only(o.calls, "begin_delete") == []
+    ),
+}
+
+
 @pytest.mark.parametrize(("case_id", "check"), QUIRKS, ids=[q[0] for q in QUIRKS])
 def test_quirk_is_preserved(
     case_id: str,
@@ -419,9 +619,30 @@ def test_quirk_is_preserved(
 ) -> None:
     case = _find(case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_engine(case, monkeypatch, caplog, capsys)
     assert check(old), "oracle no longer shows the quirk"
-    assert check(new)
+    assert ENGINE_QUIRKS.get(case_id, check)(new)
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    list(DIVERGING),
+    ids=[f"{cid}-{bug}" for cid, (bug, _, _) in DIVERGING.items()],
+)
+def test_buggy_quirk_is_fixed(
+    case_id: str,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bug_id, old_shows, new_shows = DIVERGING[case_id]
+    assert bug_id in {"BUG-112", "BUG-113", "BUG-114"}
+    case = _find(case_id)
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_engine(case, monkeypatch, caplog, capsys)
+    assert old_shows(old), f"oracle no longer shows {bug_id}"
+    assert new_shows(new)
 
 
 def test_list_is_requested_twice_and_the_first_is_dropped(
@@ -430,48 +651,56 @@ def test_list_is_requested_twice_and_the_first_is_dropped(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = _find("delete")
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        build(case).delete()
-        assert azure.calls[:3] == [("client", "sub-1"), ("list_all",), ("list_all",)]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    _legacy(case).delete()
+    assert azure.calls[:3] == [("client", "sub-1"), ("list_all",), ("list_all",)]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    candidate_ids(engine_run("nic", _options(case), dry_run=False, now=NOW))
+    assert azure.calls[:3] == [("client", "sub-1"), ("list", "rg-test"), ("list", "rg-test")]
 
 
-def test_list_is_subscription_wide_and_delete_uses_configured_group(
+def test_list_is_scoped_to_the_configured_group_bug_111(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = _find("delete")
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        build(case).delete()
-        assert ("list_all",) in azure.calls
-        assert ("begin_delete", "rg-test", "nic-a") in azure.calls
-        assert ("result", "nic-a") in azure.calls
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    _legacy(case).delete()
+    assert ("list_all",) in azure.calls
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    candidate_ids(engine_run("nic", _options(case), dry_run=False, now=NOW))
+    assert ("list_all",) not in azure.calls
+    assert ("list", "rg-test") in azure.calls
+    assert ("begin_delete", "rg-test", "nic-a") in azure.calls
+    assert ("result", "nic-a") in azure.calls
 
 
-def test_repeated_delete_accumulates_like_main(
+def test_repeated_run_repeats_the_calls_like_main(
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """The oracle accumulates names over two `delete()` calls; each engine run starts afresh."""
     case = _find("delete")
-    results = []
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        cleaner = build(case)
-        cleaner.delete()
-        cleaner.delete()
-        results.append(
-            (
-                azure.calls,
-                cleaner.get_deleted,
-                [(r.levelno, r.getMessage()) for r in caplog.records],
-            )
-        )
-    assert results[0] == results[1]
-    assert results[1][1] == ["nic-a", "nic-b", "nic-a", "nic-b"]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    legacy = _legacy(case)
+    legacy.delete()
+    legacy.delete()
+    old_calls = _normalised(azure.calls, case)
+    old_deleted = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Deleted")]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    runs = [
+        candidate_ids(engine_run("nic", _options(case), dry_run=False, now=NOW)) for _ in range(2)
+    ]
+    new_deleted = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Deleted")]
+    assert _only(azure.calls, "list", "begin_delete", "result") == _only(
+        old_calls, "list", "begin_delete", "result"
+    )
+    assert new_deleted == old_deleted
+    assert legacy.get_deleted == ["nic-a", "nic-b", "nic-a", "nic-b"]
+    assert runs == [["nic-a", "nic-b"], ["nic-a", "nic-b"]]
 
 
 def test_registered_factory_builds_cleaner(monkeypatch: pytest.MonkeyPatch) -> None:

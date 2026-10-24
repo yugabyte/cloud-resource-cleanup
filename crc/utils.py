@@ -45,4 +45,4 @@ def init_logging(filename: str, log_level: str = "debug") -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
     run_log.logging_ready()
-    logging.info(f"Logging initialized with file: {filename} and level: {log_level.upper()}")
+    logging.info("Logging initialized with file: %s and level: %s", filename, log_level.upper())

@@ -31,6 +31,7 @@ _SKIP_REASONS: dict[str, str] = {
     "matches exception_regex": "exception_regex",
     "not a Spot VM": "not_spot",
     "no creation time": "no_creation_time",
+    "creation time lookup failed": "created_time_lookup_failed",
 }
 
 

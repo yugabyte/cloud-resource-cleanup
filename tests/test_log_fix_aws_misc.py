@@ -1,4 +1,4 @@
-"""Unit tests of the LOG-AWS2 rules in ``tests/log_fix_aws_misc.py``."""
+"""Unit tests of the log rules in ``tests/log_fix_aws_misc.py``."""
 
 import logging
 

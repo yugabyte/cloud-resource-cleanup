@@ -27,7 +27,7 @@ def get_all_regions(service_name: str, default_region_name: str) -> list[str]:
         regions: list[str] = [
             region["RegionName"] for region in client.describe_regions()["Regions"]
         ]
-        logging.info(f"Retrieved list of regions: {regions}")
+        logging.info("Retrieved list of regions: %s", regions)
         return regions
     except CONNECTIVITY_ERRORS as e:
         logging.warning(
@@ -38,5 +38,5 @@ def get_all_regions(service_name: str, default_region_name: str) -> list[str]:
         )
         session = boto3.session.Session()
         static_regions: list[str] = session.get_available_regions(service_name)
-        logging.info(f"Retrieved list of regions (static): {static_regions}")
+        logging.info("Retrieved list of regions (static): %s", static_regions)
         return static_regions

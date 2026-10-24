@@ -142,7 +142,7 @@ def _terminate_call(
         )
         logger.current().fail(env.region, instance_id, e)
         return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - SAF-033 ambiguous failure re-checks the instance state and keeps it unless proven gone
         return _terminate_ambiguous(env, client, match, instance_id, e)
 
 
@@ -169,9 +169,7 @@ def _terminate(
 
 def _delete_leftover_volumes(env: CleanupEnv, client: SpotClient, volumes: list[str]) -> bool:
     deleted_any = False
-    for volume_id in filter_deletable_leftover_volumes(
-        env.settings, client, volumes, env.region
-    ):
+    for volume_id in filter_deletable_leftover_volumes(env.settings, client, volumes, env.region):
         result = wait_volume_available_then_delete(
             env.settings, env.waiter, client, volume_id, env.region
         )

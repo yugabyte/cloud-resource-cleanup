@@ -85,7 +85,7 @@ def _try_delete_nic(
             nics_names_to_delete.append(nic_name)
             return True
         _log_attempt_failed(attempt, nic_name, e)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - per-attempt isolation, NIC delete retried then reported
         _log_attempt_failed(attempt, nic_name, e)
     return False
 

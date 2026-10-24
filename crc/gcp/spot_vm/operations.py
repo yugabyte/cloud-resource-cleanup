@@ -42,7 +42,7 @@ def wait_operation(
     while time.monotonic() < deadline:
         try:
             operation = client.get_operation(target, scope, location, operation_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - poll failure logged and recorded, operation counts as not completed
             logging.error(
                 "Error polling GCP %s operation %s/%s/%s: %s",
                 scope,

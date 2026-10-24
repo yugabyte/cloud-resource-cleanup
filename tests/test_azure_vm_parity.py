@@ -1,13 +1,12 @@
-"""Parity: `crc.azu.vm.VM` against main (`tests/legacy/azu_vm.txt`).
+"""Parity: the registered Azure VM `Cleaner`, run through `crc.core.engine.run`, against main
+(`tests/legacy/azu_vm.txt`).
 
 Both run against the same fake Azure SDK (the SDK classes `crc.azu._base` builds are replaced, so
-the real `Base` and the real delete helpers run in both). SDK calls (in order, including the lazy
-paging of `list_all`), results, log records, stdout and raised errors must be identical for every
-case through the legacy adapter. The registered `Cleaner` path (factory with a `RunContext`,
-`plan()` then `apply()` unless dry run) is compared on results, errors, stdout, the order of the
-listing, status and mutating calls, and the log records. It reads every status before the first
-mutation, so the log lines are compared as sets, except the summary lines, which must be last and
-identical. The module lists no regions, so there is no region fallback or auth error to cover.
+the real `Base` and the real delete helpers run in both). Results, errors, stdout, the order of the
+listing, status and mutating calls, and the log records are compared for every case. `plan()` reads
+every status before `apply()` mutates, so the log lines are compared as sets, except the summary
+lines, which must be last and identical. The module lists no regions, so there is no region
+fallback or auth error to cover.
 """
 
 import datetime
@@ -15,16 +14,18 @@ import logging
 import re
 import types
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from azure.core.exceptions import ResourceNotFoundError
 
-from crc.azu.vm import VM, VmCleaner, build_vm_cleaner
+from crc.azu.vm import DEFAULT_INSTANCE_STATES, VmCleaner, build_vm_cleaner
+from crc.core import engine
 from crc.core.cleaner import Cleaner, Operation, RunContext
-from crc.core.registry import get
+from crc.core.registry import Registry, get
+from crc.core.selection import Selection
 from tests.helpers_azure_vm import NOW, RUNNING, STOPPED, FakeAzure, not_found, vm
 from tests.helpers_log_fix import expected_logs
 from tests.log_fix_azure import RULES
@@ -36,7 +37,25 @@ NIC_ATTEMPTS = 24
 THREE = 3
 SUMMARY = ("No Azure instances", "number of Azure", "List of Azure")
 
-BUGS = {"BUG-358"}  # log-only divergences of the LOG-AZU rung
+BUGS = {"BUG-358"}  # log-only divergences from the oracle
+
+# Calls the bug fixes changed in every case: the listing is one resource group (BUG-002,
+# `list(rg)` instead of `list_all()`) and stop deallocates (BUG-003, `begin_deallocate` instead of
+# `begin_power_off`). They are mapped back to the oracle's call so every other call (order,
+# arguments, count) is still compared; `test_list_is_the_configured_group_only` and
+# `test_stop_deallocates` pin the new calls themselves.
+
+
+def _oracle_shape(calls: Sequence[tuple[Any, ...]], group: str) -> list[tuple[Any, ...]]:
+    shaped: list[tuple[Any, ...]] = []
+    for call in calls:
+        if call == ("list", group):
+            shaped.append(("list_all",))
+        elif call[0] == "begin_deallocate":
+            shaped.append(("begin_power_off", *call[1:]))
+        else:
+            shaped.append(call)
+    return shaped
 
 
 @dataclass
@@ -56,6 +75,17 @@ class Case:
     list_error: Exception | None = None
     scripts: Mapping[str, Mapping[str, Sequence[Exception | None]]] = field(default_factory=dict)
     fails_in_plan: bool = False
+    diverges: str = ""
+    expect: Callable[["Outcome"], bool] | None = None
+
+
+def _kept_quietly(kept: str, acted: str) -> Callable[["Outcome"], bool]:
+    """`acted` was done, `kept` was not, and nothing was logged as an error (BUG-010)."""
+    return lambda o: (
+        getattr(o, acted) == ["b"]
+        and kept not in getattr(o, acted)
+        and not any(r[1] == logging.ERROR for r in o.logs)
+    )
 
 
 def _boom(text: str = "boom") -> Exception:
@@ -83,6 +113,12 @@ CASES = [
     Case("many-dry-run", _many(12), dry_run=True),
     Case("many-stop", _many(12), operation="stop"),
     Case("resource-group-from-env", [vm("vm-a")], resource_group=""),
+    Case(
+        "other-resource-group-ignored",
+        [vm("a", group="other-rg"), vm("b", group="rg-test")],
+        diverges="BUG-002",
+        expect=lambda o: o.deleted == ["b"] and ("instance_view", "rg-test", "a") not in o.calls,
+    ),
     Case("duplicate-names", [vm("vm-a"), vm("vm-a")]),
     # filters
     Case(
@@ -201,7 +237,6 @@ CASES = [
         "custom-age-inf-raises",
         [vm("a", {"env": "ci", "ttl": "{'days': 1e999}"})],
         custom_age_tag_key="ttl",
-        fails_in_plan=True,
     ),
     Case("custom-age-key-absent", [vm("a", hours=5)], custom_age_tag_key="ttl"),
     Case("max-age-shortens", [vm("a", hours=3)], age={"days": 5}, max_age="{'hours': 2}"),
@@ -210,7 +245,9 @@ CASES = [
     Case("max-age-with-empty-age-unused", [vm("a", hours=0)], age={}, max_age="{'days': 5}"),
     Case("time-created-none", [vm("a", created=None)], fails_in_plan=True),
     Case(
-        "time-created-naive", [vm("a", created=datetime.datetime(2026, 1, 1))], fails_in_plan=True
+        "time-created-naive",
+        [vm("a", created=datetime.datetime(2026, 1, 1))],  # noqa: DTZ001 - naive fixture time kept
+        fails_in_plan=True,
     ),
     Case(
         "time-created-skipped-not-read",
@@ -223,6 +260,8 @@ CASES = [
         "status-state-is-substring",
         [vm("a", statuses=("p", "VM running")), vm("b", statuses=("p", "VM deallocated"))],
         instance_state=["run"],
+        diverges="BUG-198",
+        expect=lambda o: o.deleted == [],
     ),
     Case(
         "status-state-case-sensitive",
@@ -235,16 +274,39 @@ CASES = [
         instance_state=["stopped", "running"],
     ),
     Case("status-empty-state-list-nothing", [vm("a")], instance_state=[]),
-    Case("status-empty-string-state-matches-all", [vm("a", statuses=STOPPED)], instance_state=[""]),
+    Case(
+        "status-empty-string-state-matches-all",
+        [vm("a", statuses=STOPPED)],
+        instance_state=[""],
+        diverges="BUG-198",
+        expect=lambda o: o.deleted == [],
+    ),
     Case("status-stop-ignores-state-list", [vm("a", statuses=STOPPED), vm("b")], operation="stop"),
-    Case("status-single-entry-index-error", [vm("a", statuses=("only",)), vm("b")]),
+    Case(
+        "status-single-entry-index-error",
+        [vm("a", statuses=("only",)), vm("b")],
+        diverges="BUG-010",
+        expect=_kept_quietly("a", "deleted"),
+    ),
     Case(
         "status-single-entry-index-error-stop",
         [vm("a", statuses=("only",)), vm("b")],
         operation="stop",
+        diverges="BUG-010",
+        expect=_kept_quietly("a", "stopped"),
     ),
-    Case("status-empty-statuses", [vm("a", statuses=()), vm("b")]),
-    Case("status-none-display", [vm("a", statuses=("p", None)), vm("b")]),
+    Case(
+        "status-empty-statuses",
+        [vm("a", statuses=()), vm("b")],
+        diverges="BUG-010",
+        expect=_kept_quietly("a", "deleted"),
+    ),
+    Case(
+        "status-none-display",
+        [vm("a", statuses=("p", None)), vm("b")],
+        diverges="BUG-010",
+        expect=_kept_quietly("a", "deleted"),
+    ),
     Case("status-first-entry-ignored", [vm("a", statuses=("VM running", "VM stopped"))]),
     Case("status-instance-view-error", [vm("a", statuses=_boom("view failed")), vm("b")]),
     Case(
@@ -383,19 +445,6 @@ def _legacy(case: Case) -> Any:
     )
 
 
-def _new(case: Case) -> Any:
-    return VM(
-        case.resource_group,
-        case.dry_run,
-        case.filter_tags,
-        case.exception_tags,
-        case.age,
-        case.custom_age_tag_key,
-        case.notags,
-        clock=lambda: NOW,
-    )
-
-
 def _setup(
     case: Case,
     monkeypatch: pytest.MonkeyPatch,
@@ -434,14 +483,14 @@ def _run(
             service.delete()
         else:
             service.delete(case.instance_state)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     logs = _records(caplog)
     stdout = capsys.readouterr().out
     caplog.clear()
     counts = [service.delete_count, service.nic_delete_count, service.stopped_count]
     return Outcome(
-        azure.calls,
+        _oracle_shape(azure.calls, case.resource_group or "env-rg"),
         list(service.get_deleted),
         list(service.get_deleted_nic),
         list(service.get_stopped),
@@ -466,16 +515,8 @@ def test_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
-    assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.nics == old.nics
-    assert new.stopped == old.stopped
-    assert new.logs == expected_logs(old.logs, BUGS, RULES)
-    assert new.counts == old.counts
-    assert new.stdout == old.stdout
-    assert (new.error is not None) == case.fails_in_plan
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    _assert_matches_main(case, old, new)
 
 
 def _run_cleaner(
@@ -483,6 +524,8 @@ def _run_cleaner(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
+    *,
+    via_engine: bool = True,
 ) -> Outcome:
     azure = _setup(case, monkeypatch, caplog, capsys)
     operation = Operation(case.operation)
@@ -505,16 +548,34 @@ def _run_cleaner(
     nics: list[str] = []
     stopped: list[str] = []
     try:
-        cleaner = get("azure", "vm")(ctx)
-        plan = cleaner.plan(ctx)
-        result = cleaner.apply(plan, ctx)
-        names = list(result.succeeded)
+        if via_engine:
+            registry = Registry()
+            registry.register("azure", "vm")(build_vm_cleaner)
+            (outcome,) = engine.run(Selection((("azure", "vm"),)), ctx, registry)
+            names = (
+                [c.id for c in outcome.plan.candidates]
+                if outcome.result is None
+                else list(outcome.result.succeeded)
+            )
+            related = outcome.plan.related if outcome.result is None else outcome.result.related
+        else:
+            cleaner = get("azure", "vm")(ctx)
+            plan = cleaner.plan(ctx)
+            result = cleaner.apply(plan, ctx)
+            names = list(result.succeeded)
+            related = result.related
         deleted, stopped = (names, []) if operation is Operation.DELETE else ([], names)
-        nics = list(result.related.get("NIC", ()))
-    except Exception as e:
+        nics = list(related.get("NIC", ()))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(
-        azure.calls, deleted, nics, stopped, _records(caplog), capsys.readouterr().out, error
+        _oracle_shape(azure.calls, case.resource_group or "env-rg"),
+        deleted,
+        nics,
+        stopped,
+        _records(caplog),
+        capsys.readouterr().out,
+        error,
     )
 
 
@@ -536,18 +597,15 @@ def _is_summary(record: tuple[str, int, str]) -> bool:
     return record[2].startswith(SUMMARY)
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_cleaner_protocol_matches_main(
-    case: Case,
-    debug_logs: None,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+def _assert_matches_main(case: Case, old: Outcome, new: Outcome) -> None:
+    if case.diverges:
+        assert case.expect is not None
+        assert case.expect(new)
+        assert (new.deleted, new.stopped) != (old.deleted, old.stopped) or new.logs != old.logs
+        return
     assert new.error == old.error
     assert new.stdout == old.stdout
+    assert (new.error is not None) == case.fails_in_plan
     assert _only(new.calls, "list_all") == _only(old.calls, "list_all")
     if case.fails_in_plan:
         assert _only(new.calls, *MUTATING) == []
@@ -563,6 +621,19 @@ def test_cleaner_protocol_matches_main(
     new_summary = [r for r in new.logs if _is_summary(r)]
     assert new_summary == [r for r in expected_logs(old.logs, BUGS, RULES) if _is_summary(r)]
     assert new.logs[len(new.logs) - len(new_summary) :] == new_summary
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+def test_cleaner_protocol_matches_main(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys, via_engine=False)
+    _assert_matches_main(case, old, new)
 
 
 def _find(case_id: str) -> Case:
@@ -594,31 +665,19 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
     ("age-exact-edge", lambda o: o.deleted == ["a"]),
     ("age-empty-matches-all", lambda o: o.deleted == ["a", "b"]),
     ("age-unknown-keys-keep", lambda o: o.deleted == []),
-    ("custom-age-empty-falls-back", lambda o: o.deleted == ["a"]),
-    ("custom-age-unparseable-falls-back", lambda o: o.deleted == ["a"]),
-    ("custom-age-zero-dict-falls-back", lambda o: o.deleted == ["a"]),
-    ("custom-age-inf-raises", lambda o: o.error is not None and o.error[0] == "OverflowError"),
+    ("custom-age-empty-falls-back", lambda o: o.deleted == []),
+    ("custom-age-unparseable-falls-back", lambda o: o.deleted == []),
+    ("custom-age-zero-dict-falls-back", lambda o: o.deleted == []),
+    ("custom-age-inf-raises", lambda o: o.error is None and o.deleted == []),
     ("max-age-shortens", lambda o: o.deleted == ["a"]),
     ("max-age-with-empty-age-unused", lambda o: o.deleted == ["a"]),
     ("max-age-malformed-raises", lambda o: o.error is not None and o.error[0] == "SyntaxError"),
     ("time-created-none", lambda o: o.error is not None and o.error[0] == "AttributeError"),
     ("time-created-naive", lambda o: o.error is not None and o.error[0] == "TypeError"),
     ("time-created-skipped-not-read", lambda o: o.error is None and o.deleted == []),
-    ("status-state-is-substring", lambda o: o.deleted == ["a"]),
     ("status-state-case-sensitive", lambda o: o.deleted == []),
-    ("status-empty-string-state-matches-all", lambda o: o.deleted == ["a"]),
     ("status-empty-state-list-nothing", lambda o: o.deleted == []),
     ("status-stop-ignores-state-list", lambda o: o.stopped == ["b"]),
-    (
-        "status-single-entry-index-error",
-        lambda o: _swallowed(o, "list index out of range") and o.deleted == ["b"],
-    ),
-    (
-        "status-single-entry-index-error-stop",
-        lambda o: _swallowed(o, "list index out of range") and o.stopped == ["b"],
-    ),
-    ("status-empty-statuses", lambda o: _swallowed(o, "list index out of range")),
-    ("status-none-display", lambda o: _swallowed(o, "not iterable") or _swallowed(o, "NoneType")),
     ("status-first-entry-ignored", lambda o: o.deleted == []),
     ("status-instance-view-error", lambda o: _swallowed(o, "view failed") and o.deleted == ["b"]),
     ("status-error-in-dry-run", lambda o: _swallowed(o, "view failed") and o.deleted == ["b"]),
@@ -672,6 +731,16 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+BUG_004_FIXED = frozenset(
+    [
+        "custom-age-empty-falls-back",
+        "custom-age-inf-raises",
+        "custom-age-unparseable-falls-back",
+        "custom-age-zero-dict-falls-back",
+    ]
+)
+
+
 @pytest.mark.parametrize(("case_id", "check"), QUIRKS, ids=[q[0] for q in QUIRKS])
 def test_quirk_is_preserved(
     case_id: str,
@@ -683,98 +752,149 @@ def test_quirk_is_preserved(
 ) -> None:
     case = _find(case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert check(old), "oracle no longer shows the quirk"
-    assert check(new)
+    # BUG-004/BUG-016: the oracle class inherits the live crc.service.Service, so it cannot
+    # show the old custom-age-tag behaviour here; tests/test_crc_service_parity.py pins it
+    # against the frozen crc_service oracle. Fixed cases assert the new outcome only.
+    if case_id not in BUG_004_FIXED:
+        assert check(old), "oracle no longer shows the quirk"
     assert check(_run_cleaner(case, monkeypatch, caplog, capsys))
+    assert check(_run_cleaner(case, monkeypatch, caplog, capsys, via_engine=False))
 
 
-def test_list_is_subscription_wide_and_every_other_call_uses_the_configured_group(
+def test_list_is_the_configured_group_only(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """BUG-002: main lists the subscription (`list_all`); the fix lists only the group."""
     case = _find("delete")
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        build(case).delete()
-        assert ("list_all",) in azure.calls
-        assert ("instance_view", "rg-test", "vm-a") in azure.calls
-        assert ("vm_begin_delete", "rg-test", "vm-a") in azure.calls
-        assert ("nic_begin_delete", "rg-test", "vm-a-NIC") in azure.calls
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    _legacy(case).delete()
+    assert ("list_all",) in azure.calls
+    assert ("list", "rg-test") not in azure.calls
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    registry = Registry()
+    registry.register("azure", "vm")(build_vm_cleaner)
+    ctx = RunContext(
+        dry_run=False,
+        operation=Operation.DELETE,
+        options={"resource_group": case.resource_group, "filter_tags": ENV, "age": {"hours": 1}},
+        now=NOW,
+    )
+    engine.run(Selection((("azure", "vm"),)), ctx, registry)
+    assert ("list", "rg-test") in azure.calls
+    assert ("list_all",) not in azure.calls
+    assert ("instance_view", "rg-test", "vm-a") in azure.calls
+    assert ("vm_begin_delete", "rg-test", "vm-a") in azure.calls
+    assert ("nic_begin_delete", "rg-test", "vm-a-NIC") in azure.calls
 
 
-def test_stop_powers_off_without_deallocating(
+def test_stop_deallocates(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """BUG-003: main powers off (the VM stays allocated and billed); the fix deallocates."""
     case = _find("stop")
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        build(case).stop()
-        assert _only(azure.calls, "begin_power_off") == [
-            ("begin_power_off", "rg-test", "vm-a"),
-            ("begin_power_off", "rg-test", "vm-b"),
-        ]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    _legacy(case).stop()
+    assert _only(azure.calls, "begin_power_off", "begin_deallocate") == [
+        ("begin_power_off", "rg-test", "vm-a"),
+        ("begin_power_off", "rg-test", "vm-b"),
+    ]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    registry = Registry()
+    registry.register("azure", "vm")(build_vm_cleaner)
+    ctx = RunContext(
+        dry_run=False,
+        operation=Operation.STOP,
+        options={"resource_group": case.resource_group, "filter_tags": ENV, "age": {"hours": 1}},
+        now=NOW,
+    )
+    engine.run(Selection((("azure", "vm"),)), ctx, registry)
+    assert _only(azure.calls, "begin_power_off", "begin_deallocate") == [
+        ("begin_deallocate", "rg-test", "vm-a"),
+        ("begin_deallocate", "rg-test", "vm-b"),
+    ]
 
 
-def test_repeated_delete_accumulates_like_main(
+DIVERGING = [c for c in CASES if c.diverges]
+OLD_BEHAVIOUR: Mapping[str, Callable[[Outcome], bool]] = {
+    "other-resource-group-ignored": lambda o: o.deleted == ["a", "b"],
+    "status-state-is-substring": lambda o: o.deleted == ["a"],
+    "status-empty-string-state-matches-all": lambda o: o.deleted == ["a"],
+    "status-single-entry-index-error": lambda o: (
+        _swallowed(o, "list index out of range") and o.deleted == ["b"]
+    ),
+    "status-single-entry-index-error-stop": lambda o: (
+        _swallowed(o, "list index out of range") and o.stopped == ["b"]
+    ),
+    "status-empty-statuses": lambda o: _swallowed(o, "list index out of range"),
+    "status-none-display": lambda o: _swallowed(o, "not iterable") or _swallowed(o, "NoneType"),
+}
+
+
+@pytest.mark.parametrize("case", DIVERGING, ids=[c.id for c in DIVERGING])
+def test_fixed_quirk_diverges_from_main(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The oracle still shows the bug (`case.diverges`); both new paths assert the new outcome."""
+    assert case.expect is not None
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    assert OLD_BEHAVIOUR[case.id](old), f"oracle no longer shows {case.diverges}"
+    assert not case.expect(old)
+    assert case.expect(_run_cleaner(case, monkeypatch, caplog, capsys))
+    assert case.expect(_run_cleaner(case, monkeypatch, caplog, capsys, via_engine=False))
+
+
+def test_repeated_delete_acts_like_main(
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = _find("delete")
-    results = []
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        service = build(case)
-        service.delete()
-        service.delete()
-        results.append(
-            (
-                azure.calls,
-                service.get_deleted,
-                service.get_deleted_nic,
-                [(r.levelno, r.getMessage()) for r in caplog.records],
-            )
-        )
-    old, new = results
-    assert new[:3] == old[:3]
-    assert new[3] == expected_logs(old[3], BUGS, RULES)
-    assert new[3] != old[3]
-    assert results[1][1] == ["vm-a", "vm-b", "vm-a", "vm-b"]
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    service = _legacy(case)
+    service.delete()
+    service.delete()
+    old_calls = _oracle_shape(azure.calls, case.resource_group)
+    assert service.get_deleted == ["vm-a", "vm-b", "vm-a", "vm-b"]
+    first = _run_cleaner(case, monkeypatch, caplog, capsys)
+    second = _run_cleaner(case, monkeypatch, caplog, capsys)
+    assert [*first.deleted, *second.deleted] == service.get_deleted
+    assert [*first.nics, *second.nics] == service.get_deleted_nic
+    assert _only([*first.calls, *second.calls], *MUTATING) == _only(old_calls, *MUTATING)
 
 
-def test_stop_then_empty_delete_shares_name_lists_like_main(
+def test_stop_then_empty_delete_acts_like_main(
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = _find("stop")
-    results = []
-    for build in (_legacy, _new):
-        azure = _setup(case, monkeypatch, caplog, capsys)
-        service = build(case)
-        service.stop()
-        service.delete(["deallocated"])
-        results.append(
-            (
-                azure.calls,
-                service.get_deleted,
-                service.get_stopped,
-                [(r.levelno, r.getMessage()) for r in caplog.records],
-            )
-        )
-    old, new = results
-    assert new[:3] == old[:3]
-    assert new[3] == expected_logs(old[3], BUGS, RULES)
-    assert new[3] != old[3]
-    assert results[1][1] == []
-    assert results[1][2] == ["vm-a", "vm-b"]
-    assert not any("No Azure instances to delete." in m for _, m in results[1][3])
+    azure = _setup(case, monkeypatch, caplog, capsys)
+    service = _legacy(case)
+    service.stop()
+    service.delete(["deallocated"])
+    old_calls = _oracle_shape(azure.calls, case.resource_group)
+    assert service.get_deleted == []
+    assert service.get_stopped == ["vm-a", "vm-b"]
+    stopped = _run_cleaner(case, monkeypatch, caplog, capsys)
+    deleted = _run_cleaner(
+        replace(case, operation="delete", instance_state=["deallocated"]),
+        monkeypatch,
+        caplog,
+        capsys,
+    )
+    assert stopped.stopped == ["vm-a", "vm-b"]
+    assert deleted.deleted == []
+    assert _only([*stopped.calls, *deleted.calls], *MUTATING) == _only(old_calls, *MUTATING)
 
 
 def test_registered_factory_builds_cleaner(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -788,7 +908,7 @@ def test_registered_factory_builds_cleaner(monkeypatch: pytest.MonkeyPatch) -> N
     assert cleaner.supports(Operation.STOP)
 
 
-def test_running_state_and_age_are_the_defaults_of_the_adapter() -> None:
-    assert VM.default_instance_state == ["running"]
+def test_running_state_and_age_are_the_defaults_of_the_cleaner() -> None:
+    assert list(DEFAULT_INSTANCE_STATES) == _load_oracle().VM.default_instance_state == ["running"]
     assert RUNNING[1] == "VM running"
     assert STOPPED[1] == "VM stopped"

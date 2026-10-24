@@ -1,7 +1,7 @@
 """Report model built from cleaner results. Pure: no Slack or Influx clients, no I/O.
 
-Strings and payloads match what `crc.py` sends today (`get_msg`, the `notify_*` methods,
-`write_influxdb`, `ping_on_slack`). Sending stays with the notifiers.
+Strings and payloads are what `crc.notify` sends (`get_msg`, the Slack messages, the Influx
+points and the owner pings). Sending stays with the notifiers.
 """
 
 from collections.abc import Mapping, Sequence
@@ -29,8 +29,8 @@ class Section:
 
     `notify_empty` False skips the Slack message when `ids` is empty (the extra disk message
     of spot VMs); the Influx point is written either way. `link_names` is the Slack flag
-    `crc.py` sets only on the disk list message. `slack_ids` overrides `ids` in the Slack text
-    when `crc.py` sends a different list to Slack than to Influx (Azure VM `NIC` notification
+    set only on the disk list message. `slack_ids` overrides `ids` in the Slack text
+    when a different list goes to Slack than to Influx (Azure VM `NIC` notification
     sends `vm.get_deleted` while Influx writes `vm.get_deleted_nic`).
     """
 
@@ -55,9 +55,7 @@ def _build_sections(
     sections = [Section(label, primary_ids, link_names=label == DISK)]
     for related_label, ids in related.items():
         slack_ids = (
-            primary_ids
-            if cloud == "azure" and label == VM and related_label == NIC
-            else None
+            primary_ids if cloud == "azure" and label == VM and related_label == NIC else None
         )
         sections.append(
             Section(
@@ -174,7 +172,10 @@ class Report:
 def get_msg(
     cloud: str, resource: str, operation: Operation, ids: Sequence[str], dry_run: bool
 ) -> str:
-    """Slack text of `CRC.get_msg`. `ids` is rendered as a list, so pass a list-like."""
+    """Slack text of one operation message, as `CRC.get_msg` prints it.
+
+    `ids` is rendered as a list, so pass a list-like.
+    """
     shown = list(ids)
     word = _PAST_TENSE[operation]
     if dry_run:
@@ -196,11 +197,11 @@ def format_owner_ping(
     ids: Sequence[str],
     mention: str | None = None,
 ) -> str:
-    """Text of one `CRC.ping_on_slack` message for `owner`'s `ids`.
+    """Text of one owner-ping message for `owner`'s `ids`.
 
     Cloud, operation and dry run come from `report`. `mention` is the ready-made Slack mention
     (`<@U123>` for a user, `<!subteam^S1>` for a group); None means untagged and the owner key
-    is shown as `*key*`. The word "disks" is fixed in `crc.py` whatever the resource is, and
+    is shown as `*key*`. The word "disks" is fixed whatever the resource is, and
     is kept.
     """
     word = _PAST_TENSE[report.operation]

@@ -35,10 +35,10 @@ def test_arch001_ratchet_only_shrinks() -> None:
     assert not problems, "\n\n".join(problems)
 
 
-def test_arch001_baseline_is_not_empty_and_covers_pyproject() -> None:
+def test_arch001_baseline_is_empty_and_pyproject_has_no_exclusions() -> None:
     baseline = read_baseline(REPO_ROOT / "tests" / "archtest" / "legacy_baseline.txt")
-    assert baseline
-    assert set(ruff_exclude(REPO_ROOT)) <= baseline
+    assert baseline == frozenset()
+    assert ruff_exclude(REPO_ROOT) == []
 
 
 @pytest.mark.parametrize(
@@ -82,3 +82,17 @@ def test_arch001_selftest_fires_when_mypy_list_diverges(tmp_path: Path) -> None:
     messages = check_ratchet(tmp_path, baseline)
     _assert_formatted(messages)
     assert "crc.extra" in messages[0]
+
+
+def test_arch001_selftest_empty_baseline_admits_no_file(tmp_path: Path) -> None:
+    _write_project(tmp_path, ["crc/old.py"], ["crc.old"])
+    baseline = _write_baseline(tmp_path / "base.txt", ["# no legacy files"])
+    messages = check_ratchet(tmp_path, baseline)
+    _assert_formatted(messages)
+    assert "crc/old.py" in messages[0]
+
+
+def test_arch001_selftest_empty_baseline_and_empty_lists_pass(tmp_path: Path) -> None:
+    _write_project(tmp_path, [], [])
+    baseline = _write_baseline(tmp_path / "base.txt", ["# no legacy files"])
+    assert check_ratchet(tmp_path, baseline) == []

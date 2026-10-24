@@ -10,6 +10,7 @@ from crc.cli import dispatch, scan
 from crc.cli.context import RunContext
 from crc.cli.inputs import Options, Targets
 from crc.core import logger
+from tests.helpers_cli_routes import FakeCleaners
 
 _FIELDS = {name: None for name in Options.__dataclass_fields__}
 
@@ -30,6 +31,7 @@ def _targets(clouds: list[str], resources: list[str], opt_in: bool = False) -> T
 @pytest.fixture(autouse=True)
 def _fake_crc(monkeypatch: pytest.MonkeyPatch) -> Mock:
     crc = Mock()
+    FakeCleaners().install(monkeypatch)
     monkeypatch.setattr(dispatch, "make_crc", lambda context, cloud: crc)
     logger.finish()
     return crc
@@ -46,22 +48,22 @@ def test_each_cloud_and_resource_pass_gets_a_header_and_a_result(
 ) -> None:
     caplog.set_level(logging.INFO)
     options = _options(name_regex=["^t-"], age={"days": 1}, resource_group="rg")
-    dispatch.run_dispatch(Mock(), options, _targets(["aws", "gcp"], ["keypair", "ip"]))
+    dispatch.run_dispatch(Mock(), options, _targets(["aws", "gcp"], ["vm", "ip"]))
     lines = _run_lines(caplog)
     assert len(lines) == len(["start", "result"]) * 4
     starts = [line for line in lines if line.startswith("RUN START")]
     assert [line.split()[2:5] for line in starts] == [
-        ["cloud=aws", "resource=keypair", "operation=delete"],
+        ["cloud=aws", "resource=vm", "operation=delete"],
         ["cloud=aws", "resource=ip", "operation=delete"],
-        ["cloud=gcp", "resource=keypair", "operation=delete"],
+        ["cloud=gcp", "resource=vm", "operation=delete"],
         ["cloud=gcp", "resource=ip", "operation=delete"],
     ]
     assert starts[0] == (
-        "RUN START cloud=aws resource=keypair operation=delete dry_run=false "
+        "RUN START cloud=aws resource=vm operation=delete dry_run=false "
         'age={"days":1} name_regex=["^t-"] resource_group="rg"'
     )
     assert lines[1].startswith(
-        "RESULT cloud=aws resource=keypair operation=delete dry_run=false selected=0 done=0 "
+        "RESULT cloud=aws resource=vm operation=delete dry_run=false selected=0 done=0 "
         "failed=0 skipped=0 regions=0 regions_skipped=0 duration_s="
     )
     assert [line.startswith("RUN START") for line in lines] == [True, False] * 4
@@ -79,10 +81,15 @@ def test_dry_run_and_stop_are_reported(caplog: pytest.LogCaptureFixture) -> None
 
 
 def test_result_is_logged_and_the_error_propagates_when_the_cleaner_raises(
-    caplog: pytest.LogCaptureFixture, _fake_crc: Mock
+    caplog: pytest.LogCaptureFixture, _fake_crc: Mock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.INFO)
-    _fake_crc.delete_keypairs.side_effect = RuntimeError("boom")
+    fakes = FakeCleaners().install(monkeypatch)
+
+    def boom(context: Any) -> None:
+        raise RuntimeError("boom")
+
+    fakes.side_effect[("aws", "keypair")] = boom
     with pytest.raises(RuntimeError, match="boom"):
         dispatch.run_dispatch(Mock(), _options(), _targets(["aws"], ["keypair", "ip"]))
     lines = _run_lines(caplog)
@@ -99,9 +106,10 @@ def test_aws_disk_opt_in_refusal_still_closes_the_run(caplog: pytest.LogCaptureF
 
 
 def test_cleaner_run_lines_land_between_header_and_result(
-    caplog: pytest.LogCaptureFixture, _fake_crc: Mock
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.INFO)
+    fakes = FakeCleaners().install(monkeypatch)
 
     def cleaner(*args: Any) -> None:
         run = logger.current()
@@ -110,7 +118,7 @@ def test_cleaner_run_lines_land_between_header_and_result(
         run.skip("too_young")
         run.fail("us-east-1", "kp-2", ValueError("bad"))
 
-    _fake_crc.delete_keypairs.side_effect = cleaner
+    fakes.side_effect[("aws", "keypair")] = cleaner
     dispatch.run_dispatch(Mock(), _options(), _targets(["aws"], ["keypair"]))
     messages = caplog.messages
     assert [m.split()[0] for m in messages] == [
@@ -141,6 +149,11 @@ def test_scan_logs_run_start_and_result_per_cloud(
     crc = Mock()
     crc.scan_instances_with_tag.return_value = []
     monkeypatch.setattr(scan, "make_crc", lambda context, cloud: crc)
+    monkeypatch.setattr(
+        scan,
+        "scan_instances_with_tag",
+        lambda crc, key, value: crc.scan_instances_with_tag(key, value),
+    )
     context = RunContext(False, None, None, None, "proj", "rg", None, None)
     options = _options(scan_tag="auto_clean=false", project_id="proj", resource_group="rg")
     with pytest.raises(SystemExit) as exc_info:

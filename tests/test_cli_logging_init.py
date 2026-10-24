@@ -16,12 +16,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from crc.cli import dispatch
+from crc.cli import bridge, dispatch
 from crc.cli.inputs import Options, Targets
 from crc.core import logger
-from crc.utils import init_logging
+from crc.service import Service
+from tests.helpers_cli_routes import FakeCleaners
 
-_FIELDS = {name: None for name in Options.__dataclass_fields__}
+_FIELDS = dict.fromkeys(Options.__dataclass_fields__)
 
 
 def _options(**values: Any) -> Options:
@@ -71,10 +72,11 @@ def test_cli_path_with_init_logging_in_cleaner_adds_no_stray_handler(
     bare_root = bare.strip()
     crc = Mock()
     monkeypatch.setattr(dispatch, "make_crc", lambda context, cloud: crc)
+    monkeypatch.setattr(Service, "logs_dir", str(tmp_path))
     log_file = tmp_path / "crc.log"
+    real_init = bridge.init_run_logging
 
     def cleaner(*args: Any) -> None:
-        init_logging(str(log_file))
         logging.getLogger("crc.fake").info("cleaner own line")
         run = logger.current()
         logging.getLogger("botocore").debug("retrying request")
@@ -82,7 +84,8 @@ def test_cli_path_with_init_logging_in_cleaner_adds_no_stray_handler(
         run.region("us-east-1", 3, 1, 0.2)
         run.action("deleted", "us-east-1", "kp-1", "kp")
 
-    crc.delete_keypairs.side_effect = cleaner
+    FakeCleaners().install(monkeypatch).side_effect[("aws", "keypair")] = cleaner
+    monkeypatch.setattr(bridge, "init_run_logging", real_init)
     assert bare_root.handlers == []
 
     dispatch.run_dispatch(Mock(), _options(age={"days": 1}), _targets("aws", "keypair"))
@@ -117,6 +120,7 @@ def test_run_without_root_handlers_still_emits_header_then_result(
     bare: BareRoot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bare_root = bare.strip()
+    FakeCleaners().install(monkeypatch)
     monkeypatch.setattr(dispatch, "make_crc", lambda context, cloud: Mock())
     records: list[str] = []
 

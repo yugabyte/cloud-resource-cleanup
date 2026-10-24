@@ -26,8 +26,12 @@ def written(client: MagicMock) -> list[tuple[Any, Any, Any, Any]]:
     """(measurement, tags, fields, bucket) of every point written, in order."""
     api = client.write_api.return_value
     return [
-        (c.kwargs["record"]._name, c.kwargs["record"]._tags, c.kwargs["record"]._fields,
-         c.kwargs["bucket"])
+        (
+            c.kwargs["record"]._name,
+            c.kwargs["record"]._tags,
+            c.kwargs["record"]._fields,
+            c.kwargs["bucket"],
+        )
         for c in api.write.mock_calls
     ]
 

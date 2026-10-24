@@ -1,10 +1,11 @@
-"""Parity: `crc.gcp.disk.Disk` against main (`tests/legacy/gcp_disk.txt`).
+"""Parity: the GCP disk Cleaner, run through `crc.core.engine`, against main's `Disk`
+(`tests/legacy/gcp_disk.txt`).
 
 Both run against the same fake `googleapiclient.discovery.build` and
-`google.cloud.compute_v1.DisksClient`, with a frozen clock; SDK calls (in order), results,
-count, log records, stdout and raised errors must be identical for every case. The registered
-`Cleaner` path (factory with a `RunContext`, `plan()` then `apply()` unless dry run) is compared
-on results, errors, stdout, delete calls and log records.
+`google.cloud.compute_v1.DisksClient`, with a frozen clock; SDK mutations, results, log records,
+stdout and raised errors must match for every case (fixed bugs: see `DIVERGING`). The one
+allowed difference: the cleaner lists and filters every zone before it deletes, so a listing
+error in a later zone stops the run before any delete (fewer deletes, never more).
 """
 
 import datetime
@@ -21,9 +22,13 @@ import pytest
 from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
 from google.auth.exceptions import DefaultCredentialsError
 
+from crc.core import engine
 from crc.core.cleaner import Cleaner, Operation, RunContext
-from crc.core.registry import get
-from crc.gcp.disk import Disk, DiskCleaner, build_disk_cleaner
+from crc.core.registry import Registry, get
+from crc.core.selection import Selection
+from crc.gcp import disk_client
+from crc.gcp._common import TIME_FORMAT
+from crc.gcp.disk import DiskCleaner, build_disk_cleaner
 from tests.helpers_log_fix import expected_logs
 from tests.log_fix_gcp import RULES
 
@@ -88,6 +93,9 @@ class Case:
     zones_error: Exception | None = None
     disks_ctor_error: Exception | None = None
     fails_in_plan: bool = False
+    diverges: str = ""
+    notags: Any = field(default_factory=dict)
+    name_regex: Any = field(default_factory=list)
 
 
 def owned(name: str, owner: str | None = "alice", **kw: Any) -> Any:
@@ -129,12 +137,25 @@ def _age_cases() -> list[Case]:
             {"z": [disk("d", ago={"hours": 29})]},
             detach_age={"days": 1, "hours": 6},
         ),
-        Case("age-empty-matches-everything", {"z": [disk("d", ago={"seconds": 1})]}, detach_age={}),
         Case(
-            "age-none-matches-everything", {"z": [disk("d", ago={"seconds": 1})]}, detach_age=None
+            "age-empty-matches-everything",
+            {"z": [disk("d", ago={"seconds": 1})]},
+            detach_age={},
+            diverges="BUG-124",
+        ),
+        Case(
+            "age-none-matches-everything",
+            {"z": [disk("d", ago={"seconds": 1})]},
+            detach_age=None,
+            diverges="BUG-124",
         ),
         Case("age-int-days", one, detach_age=1),
-        Case("age-zero-days", {"z": [disk("d", ago={"seconds": 1})]}, detach_age={"days": 0}),
+        Case(
+            "age-zero-days",
+            {"z": [disk("d", ago={"seconds": 1})]},
+            detach_age={"days": 0},
+            diverges="BUG-124",
+        ),
         Case("age-future-detach", {"z": [disk("d", ago={"days": -1})]}),
         Case(
             "age-offset-timestamp", {"z": [disk("d", stamp_value="2026-02-27T01:00:00.000-08:00")]}
@@ -156,32 +177,38 @@ def _age_cases() -> list[Case]:
             {"z": [disk("d")]},
             max_age="not a dict",
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "age-timestamp-unparseable",
             {"z": [disk("d", stamp_value="yesterday")]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "age-timestamp-without-fraction",
             {"z": [disk("d", stamp_value="2026-02-20T10:00:00-08:00")]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "age-timestamp-without-zone",
             {"z": [disk("d", stamp_value="2026-02-20T10:00:00.000")]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case("age-timestamp-none-skipped", {"z": [disk("d", stamp_value=None)]}),
         Case(
             "age-error-after-earlier-delete",
             {"z": [disk("ok"), disk("bad", stamp_value="x")]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "age-error-after-earlier-zone",
             {"z1": [disk("ok")], "z2": [disk("bad", stamp_value="x")]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
     ]
 
@@ -265,6 +292,12 @@ def _label_cases() -> list[Case]:
             "exception-label-on-attached-ignored",
             {"z": [disk("a", users=["vm"], labels={"env": "qa"})]},
         ),
+        Case(
+            "notags-skips-matching-label",
+            labelled,
+            notags={"env": ["qa"]},
+            diverges="BUG-005",
+        ),
     ]
 
 
@@ -280,7 +313,13 @@ def _regex_cases() -> list[Case]:
         Case("regex-empty-pattern-matches-all", names, exception_regex=[""]),
         Case("regex-dot-star", names, exception_regex=[".*-b"]),
         Case("regex-case-sensitive", names, exception_regex=["TMP"]),
-        Case("regex-invalid-raises", names, exception_regex=["tmp("], fails_in_plan=True),
+        Case(
+            "regex-invalid-raises",
+            names,
+            exception_regex=["tmp("],
+            fails_in_plan=True,
+            diverges="BUG-127",
+        ),
         Case(
             "regex-invalid-after-match-not-compiled",
             {"z": [disk("tmp-a")]},
@@ -298,6 +337,7 @@ def _regex_cases() -> list[Case]:
             {"z": [disk(None)]},
             exception_regex=["a"],
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "regex-skips-before-label-filter",
@@ -376,23 +416,36 @@ def _empty_and_error_cases() -> list[Case]:
             disks_ctor_error=_make(DefaultCredentialsError, "no credentials"),
             fails_in_plan=True,
         ),
-        Case("disks-list-permission-denied", {"z1": [disk("a")], "z2": DENIED}, fails_in_plan=True),
-        Case("disks-list-first-zone-error", {"z1": BOOM, "z2": [disk("a")]}, fails_in_plan=True),
+        Case(
+            "disks-list-permission-denied",
+            {"z1": [disk("a")], "z2": DENIED},
+            fails_in_plan=True,
+            diverges="BUG-127",
+        ),
+        Case(
+            "disks-list-first-zone-error",
+            {"z1": BOOM, "z2": [disk("a")]},
+            fails_in_plan=True,
+            diverges="BUG-127",
+        ),
         Case(
             "disks-list-error-dry-run",
             {"z1": [disk("a")], "z2": BOOM},
             dry_run=True,
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "disks-iteration-error",
             {"z1": IterError([disk("a"), disk("b")], BOOM)},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "disks-iteration-error-second-zone",
             {"z1": [disk("a")], "z2": IterError([disk("b")], DENIED)},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case("delete-error-swallowed", MIXED, delete_errors={("z1", "old-a"): DENIED}),
         Case("delete-error-second-disk-swallowed", MIXED, delete_errors={("z1", "old-b"): BOOM}),
@@ -420,7 +473,7 @@ def _basic_cases() -> list[Case]:
         Case("two-zones", TWO_ZONES),
         Case("duplicate-names", {"z": [disk("dup"), disk("dup")]}),
         Case("same-name-two-zones", {"z1": [disk("dup")], "z2": [disk("dup")]}),
-        Case("ignored-age-notags-name-regex", MIXED),
+        Case("ignored-age-notags-name-regex", MIXED, name_regex=["old-a"], diverges="BUG-006"),
         Case("attached-only", {"z": [disk("a", users=["vm-1", "vm-2"])]}),
         Case("no-detach-timestamp-only", {"z": [disk("a", stamp_value="")]}),
         Case("empty-name", {"z": [disk("")]}),
@@ -428,16 +481,19 @@ def _basic_cases() -> list[Case]:
             "disk-without-users-attribute",
             {"z": [types.SimpleNamespace(name="a")]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "disk-without-labels-attribute",
             {"z": [types.SimpleNamespace(name="a", users=[], last_detach_timestamp=stamp(days=3))]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "disk-without-timestamp-attribute",
             {"z": [types.SimpleNamespace(name="a", users=[], labels={})]},
             fails_in_plan=True,
+            diverges="BUG-127",
         ),
         Case(
             "young-disk-without-name",
@@ -479,6 +535,8 @@ class FakeRequest:
             if self.gcp.case.zones_response is not None:
                 return self.gcp.case.zones_response
             return {"items": [{"name": zone} for zone in self.gcp.case.zones]}
+        if self.label == "zoneOperations.get":
+            return {"status": "DONE"}
         error = self.gcp.case.delete_errors.get((self.args[1], self.args[2]))
         if error is not None:
             raise error
@@ -503,6 +561,15 @@ class FakeDisksResource:
         return FakeRequest(self.gcp, "disks.delete", project, zone, disk)
 
 
+class FakeZoneOperations:
+    def __init__(self, gcp: "FakeGcp") -> None:
+        self.gcp = gcp
+
+    def get(self, *, project: str, zone: str, operation: str) -> FakeRequest:
+        self.gcp.calls.append(("zoneOperations.get", project, zone, operation))
+        return FakeRequest(self.gcp, "zoneOperations.get", project, zone, operation)
+
+
 class FakeService:
     def __init__(self, gcp: "FakeGcp", name: str, version: str) -> None:
         self.gcp = gcp
@@ -522,6 +589,10 @@ class FakeService:
     def zones(self) -> FakeZones:
         self.gcp.calls.append(("zones()",))
         return FakeZones(self.gcp)
+
+    def zoneOperations(self) -> FakeZoneOperations:
+        self.gcp.calls.append(("zoneOperations()",))
+        return FakeZoneOperations(self.gcp)
 
     def disks(self) -> FakeDisksResource:
         self.gcp.calls.append(("disks()",))
@@ -571,6 +642,24 @@ class Outcome:
     logs: list[tuple[str, int, str]]
     stdout: str
     error: tuple[str, str] | None
+    all_calls: list[tuple[Any, ...]] = field(default_factory=list)
+
+
+def _outcome_calls(gcp: "FakeGcp") -> list[tuple[Any, ...]]:
+    return [c for c in gcp.calls if not str(c[0]).startswith("zoneOperations")]
+
+
+def _outcome(
+    gcp: "FakeGcp",
+    deleted: Any,
+    count: int,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    error: tuple[str, str] | None,
+) -> Outcome:
+    """`calls` leaves out the zone operation polls BUG-126 added; `all_calls` keeps them."""
+    calls = [c for c in gcp.calls if not str(c[0]).startswith("zoneOperations")]
+    return Outcome(calls, deleted, count, _logs(caplog), capsys.readouterr().out, error, gcp.calls)
 
 
 class FrozenDatetime(datetime.datetime):
@@ -595,8 +684,8 @@ def _args(case: Case) -> dict[str, Any]:
         "age": {"days": 999},
         "custom_age_tag_key": case.custom_age_tag_key,
         "detach_age": case.detach_age,
-        "notags": {"env": ["qa"]},
-        "name_regex": ["never-matches"],
+        "notags": case.notags,
+        "name_regex": case.name_regex,
         "exception_regex": case.exception_regex,
         "slack_notify_users": case.slack,
         "slack_user_label": case.slack_label,
@@ -605,10 +694,6 @@ def _args(case: Case) -> dict[str, Any]:
 
 def _legacy(case: Case) -> Any:
     return _load_oracle().Disk(**_args(case))
-
-
-def _new(case: Case) -> Any:
-    return Disk(**_args(case), clock=lambda: NOW)
 
 
 def _setup(
@@ -654,34 +739,16 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     deleted = _plain(cleaner.get_deleted)
     count = cleaner.count
-    return Outcome(gcp.calls, deleted, count, _logs(caplog), capsys.readouterr().out, error)
+    return _outcome(gcp, deleted, count, caplog, capsys, error)
 
 
 @pytest.fixture
 def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
-
-
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_matches_main(
-    case: Case,
-    debug_logs: None,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
-    assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.count == old.count
-    assert new.logs == expected_logs(old.logs, BUGS, RULES)
-    assert new.stdout == old.stdout
 
 
 def _cleaner_context(case: Case) -> RunContext:
@@ -697,6 +764,8 @@ def _cleaner_context(case: Case) -> RunContext:
             "detach_age": case.detach_age,
             "slack_notify_users": case.slack,
             "slack_user_label": case.slack_label,
+            "notags": case.notags,
+            "name_regex": case.name_regex,
         },
         now=NOW,
     )
@@ -710,20 +779,21 @@ def _run_cleaner(
 ) -> Outcome:
     gcp = _setup(case, monkeypatch, caplog, capsys)
     ctx = _cleaner_context(case)
-    cleaner = get("gcp", "disk")(ctx)
+    registry = Registry()
+    registry.register("gcp", "disk")(build_disk_cleaner)
     error: tuple[str, str] | None = None
     deleted: Any = {} if case.slack else []
     try:
-        plan = cleaner.plan(ctx)
-        if case.dry_run:
-            deleted = _plain(plan.by_owner) if case.slack else [c.id for c in plan.candidates]
+        (outcome,) = engine.run(Selection((("gcp", "disk"),)), ctx, registry)
+        if outcome.result is None:
+            by_owner, ids = outcome.plan.by_owner, [c.id for c in outcome.plan.candidates]
         else:
-            result = cleaner.apply(plan, ctx)
-            deleted = _plain(result.by_owner) if case.slack else list(result.succeeded)
-    except Exception as e:
+            by_owner, ids = outcome.result.by_owner, list(outcome.result.succeeded)
+        deleted = _plain(by_owner) if case.slack else ids
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     count = len(deleted)
-    return Outcome(gcp.calls, deleted, count, _logs(caplog), capsys.readouterr().out, error)
+    return _outcome(gcp, deleted, count, caplog, capsys, error)
 
 
 def _only(calls: Sequence[tuple[Any, ...]], name: str) -> list[tuple[Any, ...]]:
@@ -731,7 +801,7 @@ def _only(calls: Sequence[tuple[Any, ...]], name: str) -> list[tuple[Any, ...]]:
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_cleaner_protocol_matches_main(
+def test_engine_matches_main(
     case: Case,
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -740,6 +810,12 @@ def test_cleaner_protocol_matches_main(
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
     new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    if case.diverges == "BUG-124":
+        _assert_bug_124(case, old, new)
+        return
+    if case.diverges:
+        _assert_fixed(case, old, new)
+        return
     old_deletes = _only(old.calls, "disks.delete.execute")
     new_deletes = _only(new.calls, "disks.delete.execute")
     if new.error is not None:
@@ -762,8 +838,80 @@ def test_cleaner_protocol_matches_main(
         assert new.logs == expected[:-1]
 
 
+@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+def test_engine_never_deletes_before_every_zone_is_listed(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    names = [c[0] for c in new.calls]
+    if "disks.delete.execute" in names:
+        assert "disks.list" not in names[names.index("disks.delete.execute") :]
+        assert not case.dry_run
+    if case.fails_in_plan and not case.diverges:
+        assert "disks.delete.execute" not in names
+
+
 def _listed_disks(case: Case) -> int:
     return sum(len(v) if isinstance(v, list) else TWO for v in case.zones.values())
+
+
+DIVERGING: dict[str, tuple[list[str], int]] = {
+    "notags-skips-matching-label": (["b", "c", "u"], 0),
+    "ignored-age-notags-name-regex": (["old-a"], 0),
+    "disk-without-users-attribute": ([], 1),
+    "disk-without-labels-attribute": ([], 1),
+    "disk-without-timestamp-attribute": ([], 1),
+    "age-max-age-invalid-raises": ([], 1),
+    "age-timestamp-unparseable": ([], 1),
+    "age-timestamp-without-fraction": ([], 1),
+    "age-timestamp-without-zone": ([], 1),
+    "age-error-after-earlier-delete": (["ok"], 1),
+    "age-error-after-earlier-zone": (["ok"], 1),
+    "regex-invalid-raises": ([], 4),
+    "regex-non-string-name-raises": ([], 1),
+    "disks-list-permission-denied": (["a"], 1),
+    "disks-list-first-zone-error": (["a"], 1),
+    "disks-list-error-dry-run": (["a"], 1),
+    "disks-iteration-error": (["a", "b"], 1),
+    "disks-iteration-error-second-zone": (["a", "b"], 1),
+}
+
+
+def _errors(o: Outcome) -> list[str]:
+    return [m for _, level, m in o.logs if level == logging.ERROR]
+
+
+def _assert_fixed(case: Case, old: Outcome, new: Outcome) -> None:
+    """A marked case: the oracle shows the old outcome, the new code the fixed one: no error
+    escapes, the listed disks are deleted, and each failure is logged as an error."""
+    deleted, failures = DIVERGING[case.id]
+    assert (new.error, new.deleted) != (old.error, old.deleted)
+    assert new.error is None
+    assert new.deleted == deleted
+    assert new.count == len(deleted)
+    assert new.stdout == old.stdout
+    expected_deletes = [] if case.dry_run else deleted
+    assert [c[3] for c in new.calls if c[0] == "disks.delete.execute"] == expected_deletes
+    assert new.calls[-1] == ("close",)
+    assert len(_errors(new)) == failures
+    if case.diverges == "BUG-127":
+        assert old.error is not None
+
+
+def _assert_bug_124(case: Case, old: Outcome, new: Outcome) -> None:
+    """BUG-124: main deleted every detached disk for an empty or zero `detach_age`; a real run
+    now raises `ValueError` naming the flag before any cloud call."""
+    assert old.error is None
+    assert old.deleted == ["d"]
+    assert new.error is not None
+    assert new.error[0] == "ValueError"
+    assert new.error[1].startswith("detach_age ")
+    assert new.deleted == []
+    assert new.calls == []
 
 
 def _find(case_id: str) -> Case:
@@ -795,15 +943,16 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
     ("age-error-after-earlier-zone", lambda o: o.error is not None and o.deleted == ["ok"]),
     ("custom-age-tag-keeps-young", lambda o: o.deleted == []),
     ("custom-age-tag-shortens", lambda o: o.deleted == ["d"]),
-    ("custom-age-tag-empty-falls-back", lambda o: o.deleted == ["d"]),
-    ("custom-age-tag-unparseable-falls-back", lambda o: o.deleted == ["d"]),
-    ("custom-age-tag-zero-falls-back-to-default", lambda o: o.deleted == ["d"]),
+    ("custom-age-tag-empty-falls-back", lambda o: o.deleted == []),
+    ("custom-age-tag-unparseable-falls-back", lambda o: o.deleted == []),
+    ("custom-age-tag-zero-falls-back-to-default", lambda o: o.deleted == []),
     ("filter-any-key", lambda o: o.deleted == ["a", "c"]),
     ("filter-empty-values-means-key-present", lambda o: o.deleted == ["a", "b"]),
     ("filter-string-value-is-substring", lambda o: o.deleted == ["a", "b"]),
     ("untagged-with-filter-excluded", lambda o: o.deleted == []),
     ("untagged-without-filter-included", lambda o: o.deleted == ["u"]),
     ("exception-label-any-key", lambda o: o.deleted == ["a", "b", "u"]),
+    ("notags-skips-matching-label", lambda o: o.deleted == ["a", "b", "c", "u"]),
     ("regex-match-anchored", lambda o: o.deleted == ["x-tmp-b", "keep"]),
     ("regex-match-not-search", lambda o: o.deleted == ["tmp-a", "keep", "tmp(c"]),
     ("regex-invalid-raises", lambda o: o.error is not None and o.error[0] == "error"),
@@ -856,6 +1005,21 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+BUG_004_FIXED = frozenset(
+    [
+        "custom-age-tag-empty-falls-back",
+        "custom-age-tag-unparseable-falls-back",
+        "custom-age-tag-zero-falls-back-to-default",
+    ]
+)
+
+
+ENGINE_QUIRKS: Mapping[str, Callable[[Outcome], bool]] = {
+    # Allowed change: the nameless zone entry stops the run before zone 1 is deleted.
+    "zone-without-name-after-first-zone": lambda o: o.error is not None and o.deleted == [],
+}
+
+
 @pytest.mark.parametrize(("case_id", "check"), QUIRKS, ids=[q[0] for q in QUIRKS])
 def test_quirk_is_preserved(
     case_id: str,
@@ -867,25 +1031,43 @@ def test_quirk_is_preserved(
 ) -> None:
     case = _find(case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert check(old), "oracle no longer shows the quirk"
-    assert check(new)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    # BUG-004/BUG-016: the oracle class inherits the live crc.service.Service, so it cannot
+    # show the old custom-age-tag behaviour here; tests/test_crc_service_parity.py pins it
+    # against the frozen crc_service oracle. Fixed cases assert the new outcome only.
+    if case_id not in BUG_004_FIXED:
+        assert check(old), "oracle no longer shows the quirk"
+    if case.diverges == "BUG-124":
+        assert check(old), "oracle no longer shows the quirk"
+        _assert_bug_124(case, old, new)
+        return
+    if case_id in DIVERGING:
+        assert case.diverges
+        assert new.error is None
+        assert new.deleted == DIVERGING[case_id][0]
+    else:
+        assert ENGINE_QUIRKS.get(case_id, check)(new)
 
 
-def test_listing_and_deleting_are_interleaved_like_main(
+def test_engine_lists_every_zone_before_it_deletes(
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """main deletes zone by zone while listing; the cleaner lists first, deletes in the same
+    order."""
     case = _find("two-zones")
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    names = [c[0] for c in new.calls]
-    assert names.index("disks.delete.execute") < names.index(
-        "disks.list", names.index("disks.list") + 1
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    old_names = [c[0] for c in old.calls]
+    assert old_names.index("disks.delete.execute") < old_names.index(
+        "disks.list", old_names.index("disks.list") + 1
     )
-    assert new.calls == old.calls
+    names = [c[0] for c in new.calls]
+    assert "disks.list" not in names[names.index("disks.delete.execute") :]
+    assert _only(new.calls, "disks.delete.execute") == _only(old.calls, "disks.delete.execute")
+    assert _only(new.calls, "disks.list") == _only(old.calls, "disks.list")
 
 
 def test_second_delete_call_accumulates_like_main(
@@ -894,15 +1076,21 @@ def test_second_delete_call_accumulates_like_main(
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """The oracle accumulates names over two `delete()` calls; each engine run is independent
+    and deletes the same disks again."""
     case = _find("two-zones")
-    results = []
-    for build in (_legacy, _new):
-        gcp = _setup(case, monkeypatch, caplog, capsys)
-        disks = build(case)
-        disks.delete()
-        disks.delete()
-        results.append((gcp.calls, list(disks.get_deleted), _logs(caplog)))
-    assert (*results[0][:-1], expected_logs(results[0][-1], BUGS, RULES)) == results[1]
+    gcp = _setup(case, monkeypatch, caplog, capsys)
+    disks = _legacy(case)
+    disks.delete()
+    first = _only(_outcome_calls(gcp), "disks.delete.execute")
+    disks.delete()
+    assert _only(_outcome_calls(gcp), "disks.delete.execute") == first + first
+    assert list(disks.get_deleted) == ["a1", "a2", "b1"] * 2
+    for _ in range(2):
+        new = _run_cleaner(case, monkeypatch, caplog, capsys)
+        assert new.error is None
+        assert new.deleted == ["a1", "a2", "b1"]
+        assert _only(new.calls, "disks.delete.execute") == first
 
 
 def test_disk_state_argument_is_ignored_like_main(
@@ -911,21 +1099,25 @@ def test_disk_state_argument_is_ignored_like_main(
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """main's `delete(disk_state)` ignores its argument: the same disks go as with the
+    default state, which is what the cleaner (it has no such option) deletes."""
     case = _find("mixed-deletes-old-unattached")
-    results = []
-    for build in (_legacy, _new):
-        gcp = _setup(case, monkeypatch, caplog, capsys)
-        disks = build(case)
-        disks.delete(["Attached"])
-        results.append((gcp.calls, list(disks.get_deleted)))
-    assert results[0] == results[1]
-    assert results[0][1] == ["old-a", "old-b"]
+    gcp = _setup(case, monkeypatch, caplog, capsys)
+    disks = _legacy(case)
+    disks.delete(["Attached"])
+    old_calls, old_deleted = _outcome_calls(gcp), list(disks.get_deleted)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    for name in ("zones.list.execute", "disks.list", "disks.delete.execute"):
+        assert _only(new.calls, name) == _only(old_calls, name)
+    assert new.deleted == old_deleted == ["old-a", "old-b"]
 
 
-def test_class_attributes_match_main() -> None:
+def test_service_constants_and_default_state_match_main() -> None:
     old = _load_oracle().Disk
-    for name in ("service_name", "service_version", "time_format", "default_disk_state"):
-        assert getattr(Disk, name) == getattr(old, name)
+    assert old.service_name == disk_client._SERVICE_NAME
+    assert old.service_version == disk_client._SERVICE_VERSION
+    assert old.time_format == TIME_FORMAT
+    assert old.default_disk_state == ["Unattached"]
 
 
 def test_registered_factory_builds_cleaner() -> None:
@@ -952,13 +1144,54 @@ def test_bug_358_label_dump_is_debug_not_info(
 ) -> None:
     case = _find("mixed-deletes-old-unattached")
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert old.logs != new.logs
-    assert new.logs == expected_logs(old.logs, BUGS, RULES)
-    assert [m for _, _, m in new.logs] == [m for _, _, m in old.logs]
-    assert new.calls == old.calls
+    assert Counter(new.logs) == Counter(expected_logs(old.logs, BUGS, RULES)[:-1])
+    assert Counter(m for _, _, m in new.logs) == Counter(m for _, _, m in old.logs[:-1])
+    for name in ("zones.list.execute", "disks.list", "disks.delete.execute"):
+        assert _only(new.calls, name) == _only(old.calls, name)
     assert new.stdout == old.stdout
     info = [m for _, level, m in new.logs if level == logging.INFO]
     assert not [m for m in info if m.startswith(("{", "namespace("))]
     dumps = [m for _, level, m in old.logs if level == logging.INFO]
     assert any(m.startswith(("{", "namespace(")) for m in dumps)
+
+
+def _with_wait(case: Case, old_calls: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    """The oracle's calls with the zone operation poll BUG-126 adds after each accepted delete."""
+    expected: list[tuple[Any, ...]] = []
+    for call in old_calls:
+        expected.append(call)
+        if call[0] == "disks.delete.execute" and (call[2], call[3]) not in case.delete_errors:
+            args = (PROJECT, call[2], "operation")
+            expected += [
+                ("zoneOperations()",),
+                ("zoneOperations.get", *args),
+                ("zoneOperations.get.execute", *args),
+            ]
+    return expected
+
+
+SAME_SELECTION = [c for c in CASES if not c.diverges]
+
+
+@pytest.mark.parametrize("case", SAME_SELECTION, ids=[c.id for c in SAME_SELECTION])
+def test_bug_126_every_accepted_delete_is_followed_by_one_operation_poll(
+    case: Case,
+    debug_logs: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    old = _run(_legacy, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    mutations = ("disks.delete", "disks.delete.execute", "zoneOperations", "zoneOperations.get")
+    if new.error is not None:
+        assert case.fails_in_plan
+        assert _only(new.calls, "disks.delete.execute") == []
+        return
+
+    def muts(calls: Sequence[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+        return [c for c in calls if str(c[0]).startswith(mutations)]
+
+    assert muts(new.all_calls) == muts(_with_wait(case, old.calls))

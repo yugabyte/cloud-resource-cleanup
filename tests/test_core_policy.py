@@ -188,27 +188,25 @@ def test_aws_eip_should_skip_ignores_notags(
 
 
 NAMES = [
-    # patterns, text, search_name, search_exc, match_exc, substring_filter, gcp_ip_excl, nic
-    ([], "web-1", True, False, False, True, False, False),
-    (["web"], "web-1", True, True, True, True, False, True),
-    (["eb"], "web-1", True, True, False, True, False, True),
-    (["^web"], "web-1", True, True, True, False, True, False),
-    (["db"], "web-1", False, False, False, False, True, False),
-    (["WEB"], "web-1", False, False, False, False, True, False),
-    (["db", "web"], "web-1", True, True, True, True, False, True),
-    (["w.b"], "web-1", True, True, True, False, True, False),
+    # patterns, text, search_name, search_exc, match_exc, substring_filter, nic
+    ([], "web-1", True, False, False, True, False),
+    (["web"], "web-1", True, True, True, True, True),
+    (["eb"], "web-1", True, True, False, True, True),
+    (["^web"], "web-1", True, True, True, False, False),
+    (["db"], "web-1", False, False, False, False, False),
+    (["WEB"], "web-1", False, False, False, False, False),
+    (["db", "web"], "web-1", True, True, True, True, True),
+    (["w.b"], "web-1", True, True, True, False, False),
 ]
 
 
 @pytest.mark.parametrize("row", NAMES)
 def test_name_and_regex_variants(row: tuple[Any, ...]) -> None:
-    patterns, text, s_name, s_exc, m_exc, sub_filter, ip_excl, nic = row
+    patterns, text, s_name, s_exc, m_exc, sub_filter, nic = row
     assert p.name_regex_search_matches(patterns, text) is s_name
     assert p.exception_regex_search_matches(patterns, text) is s_exc
     assert p.exception_regex_match_matches(patterns, text) is m_exc
     assert p.filter_substring_matches(patterns, text) is sub_filter
-    assert p.gcp_ip_exception_excludes(patterns, text) is ip_excl
-    assert p.nic_name_included(patterns, text) is nic
     assert p.nic_name_excluded(patterns, text) is nic
 
 
@@ -220,9 +218,9 @@ def test_regex_search_vs_match_and_none_text() -> None:
     assert p.exception_regex_search_matches(["^$"], None) is True
 
 
-def test_gcp_ip_exception_is_inverted() -> None:
-    assert p.gcp_ip_exception_excludes(["keep"], "web-1") is True
-    assert p.gcp_ip_exception_excludes(["web"], "web-1") is False
+def test_dead_policy_helpers_removed() -> None:
+    assert not hasattr(p, "gcp_ip_exception_excludes")
+    assert not hasattr(p, "nic_name_included")
 
 
 def test_invalid_regex_behaviour() -> None:
@@ -390,9 +388,7 @@ def test_gcp_managed_or_gke(
         ({"a": "broker"}, {}, {}, True),
     ],
 )
-def test_oci_managed_or_oke(
-    freeform: Any, defined: Any, metadata: Any, expected: bool
-) -> None:
+def test_oci_managed_or_oke(freeform: Any, defined: Any, metadata: Any, expected: bool) -> None:
     assert p.oci_is_managed_or_oke_node(freeform, defined, metadata) is expected
 
 

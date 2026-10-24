@@ -1,6 +1,6 @@
 # Copyright (c) Yugabyte, Inc.
 
-"""Run-log helpers shared by the GCP cleaners (rung LOG-GCP): the REGION line of one zone or
+"""Run-log helpers shared by the GCP cleaners: the REGION line of one zone or
 region pass and the ACTION kind of one resource. Log text only; nothing here selects or acts."""
 
 import time

@@ -1,11 +1,12 @@
-"""Parity: `crc.gcp.vm.VM` against main (`tests/legacy/gcp_vm.txt`).
+"""Parity: the registered GCP VM `Cleaner`, run through `crc.core.engine.run`, against main
+(`tests/legacy/gcp_vm.txt`).
 
 Both run against the same fake `googleapiclient.discovery.build` and
-`google.cloud.compute_v1.InstancesClient`, with a frozen clock; SDK calls (in order), results,
-count, log records, stdout and raised errors must be identical for every case. The registered
-`Cleaner` path (factory with a `RunContext`, `plan()` then `apply()` unless dry run) is compared
-on results, errors, stdout, delete and stop calls and log records. The module lists zones, not
-regions; zone listing errors (auth and connectivity) propagate on main and here.
+`google.cloud.compute_v1.InstancesClient`, with a frozen clock; results, count, stdout, raised
+errors, delete and stop calls (BUG-185: with the zone operation wait) and log records are
+compared for every case. The one allowed difference: `plan()` lists every zone before `apply()`
+mutates, so an error in a later zone stops the run before any delete or stop. The module lists
+zones, not regions; zone listing errors (auth and connectivity) propagate on main and here.
 """
 
 import datetime
@@ -14,7 +15,7 @@ import re
 import types
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +23,11 @@ import pytest
 from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
 from google.auth.exceptions import DefaultCredentialsError
 
+from crc.core import engine
 from crc.core.cleaner import Cleaner, Operation, RunContext
-from crc.core.registry import get
-from crc.gcp.vm import VM, VmCleaner, build_vm_cleaner
+from crc.core.registry import Registry, get
+from crc.core.selection import Selection
+from crc.gcp.vm import VmCleaner, VmSettings, build_vm_cleaner
 from tests.helpers_log_fix import expected_logs
 from tests.log_fix_gcp import RULES
 
@@ -33,6 +36,27 @@ UTC = datetime.UTC
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
 PROJECT = "proj-1"
 BUGS = {"BUG-358"}
+ACTION_CALLS = ("instances.delete.execute", "instances.stop.execute")
+WAIT_CALLS = ("zoneOperations.get.execute",)
+TS_ERR = "time data {!r} does not match format '%Y-%m-%dT%H:%M:%S.%f%z'"
+NO_ATTR = "'types.SimpleNamespace' object has no attribute {!r}"
+BUG_183 = frozenset(
+    {"age-empty-matches-everything", "age-none-matches-everything", "age-zero-days"}
+)
+FIX_186: dict[str, list[str]] = {
+    "age-max-age-invalid-raises": [],
+    "age-timestamp-unparseable": [],
+    "age-timestamp-without-fraction": [],
+    "age-timestamp-none-raises": [],
+    "age-error-after-earlier-delete": ["ok"],
+    "age-error-after-earlier-zone": ["ok"],
+    "instance-without-labels-attribute": [],
+    "instance-without-status-attribute": [],
+    "instances-list-permission-denied": [],
+    "instances-list-error-after-first-zone": ["a"],
+    "instances-iteration-error": ["a", "b"],
+    "instances-iteration-error-stop": ["a"],
+}
 TWO = 2
 THREE = 3
 DAY = {"days": 1}
@@ -411,6 +435,8 @@ class FakeRequest:
             if self.gcp.case.zones_response is not None:
                 return self.gcp.case.zones_response
             return {"items": [{"name": zone} for zone in self.gcp.case.zones]}
+        if self.label == "zoneOperations.get":
+            return {"status": "DONE"}
         error = self.gcp.case.action_errors.get((self.args[1], self.args[2]))
         if error is not None:
             raise error
@@ -424,6 +450,15 @@ class FakeZones:
     def list(self, *, project: str) -> FakeRequest:
         self.gcp.calls.append(("zones.list", project))
         return FakeRequest(self.gcp, "zones.list", project)
+
+
+class FakeZoneOperations:
+    def __init__(self, gcp: "FakeGcp") -> None:
+        self.gcp = gcp
+
+    def get(self, *, project: str, zone: str, operation: str) -> FakeRequest:
+        self.gcp.calls.append(("zoneOperations.get", project, zone, operation))
+        return FakeRequest(self.gcp, "zoneOperations.get", project, zone, operation)
 
 
 class FakeInstancesResource:
@@ -463,6 +498,10 @@ class FakeService:
     def instances(self) -> FakeInstancesResource:
         self.gcp.calls.append(("instances()",))
         return FakeInstancesResource(self.gcp)
+
+    def zoneOperations(self) -> FakeZoneOperations:
+        self.gcp.calls.append(("zoneOperations()",))
+        return FakeZoneOperations(self.gcp)
 
 
 class FakeInstancesClient:
@@ -540,10 +579,6 @@ def _legacy(case: Case) -> Any:
     return _load_oracle().VM(**_args(case))
 
 
-def _new(case: Case) -> Any:
-    return VM(**_args(case), clock=lambda: NOW)
-
-
 def _setup(
     case: Case,
     monkeypatch: pytest.MonkeyPatch,
@@ -586,7 +621,7 @@ def _run(
             vm.delete()
         else:
             vm.delete(case.state)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, re.sub(r"0x[0-9a-f]+", "0x0", str(e)))
     count = vm.stopped_count if case.op == "stop" else vm.delete_count
     return Outcome(
@@ -614,14 +649,33 @@ def test_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
-    assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.stopped == old.stopped
-    assert new.count == old.count
-    assert new.logs == expected_logs(old.logs, BUGS, RULES)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    if case.id in BUG_183:
+        _assert_bug_183(old, new)
+        return
+    bugs = _bugs(case, old)
+    if "BUG-186" in bugs:
+        assert (new.error, old.error is not None) == (None, True)
+        assert _done(new) == _fixed_done(case)
+        assert new.count == len(_fixed_done(case))
+        assert new.stdout == old.stdout
+        _assert_fixed_logs(case, old, new)
+        return
+    if new.error is not None:
+        assert new.error == old.error
+        assert new.stdout == old.stdout
+        assert _only(new.calls, *ACTION_CALLS) == []
+        assert _only(new.calls, "instances.list") == _only(old.calls, "instances.list")
+        return
+    assert old.error is None
+    assert (new.deleted, new.stopped, new.count) == (old.deleted, old.stopped, old.count)
     assert new.stdout == old.stdout
+    expected = _only(_with_waits(old.calls, case), *ACTION_CALLS, *WAIT_CALLS)
+    assert _only(new.calls, *ACTION_CALLS, *WAIT_CALLS) == expected
+    assert _only(new.calls, "instances.list") == _only(old.calls, "instances.list")
+    expected_log_lines = expected_logs(old.logs, BUGS, RULES)
+    assert expected_log_lines[-1][2].startswith("count of items in instance_names_to_")
+    assert Counter(new.logs) == Counter(expected_log_lines[:-1])
 
 
 def _cleaner_context(case: Case) -> RunContext:
@@ -651,16 +705,18 @@ def _run_cleaner(
 ) -> Outcome:
     gcp = _setup(case, monkeypatch, caplog, capsys)
     ctx = _cleaner_context(case)
-    cleaner = get("gcp", "vm")(ctx)
+    registry = Registry()
+    registry.register("gcp", "vm")(build_vm_cleaner)
     error: tuple[str, str] | None = None
     names: list[str] = []
     try:
-        plan = cleaner.plan(ctx)
-        if case.dry_run:
-            names = [c.id for c in plan.candidates]
-        else:
-            names = list(cleaner.apply(plan, ctx).succeeded)
-    except Exception as e:
+        (outcome,) = engine.run(Selection((("gcp", "vm"),)), ctx, registry)
+        names = (
+            [c.id for c in outcome.plan.candidates]
+            if outcome.result is None
+            else list(outcome.result.succeeded)
+        )
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, re.sub(r"0x[0-9a-f]+", "0x0", str(e)))
     deleted, stopped = ([], names) if case.op == "stop" else (names, [])
     return Outcome(
@@ -682,7 +738,16 @@ def test_cleaner_protocol_matches_main(
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
     new = _run_cleaner(case, monkeypatch, caplog, capsys)
-    actions = ("instances.delete.execute", "instances.stop.execute")
+    if case.id in BUG_183:
+        _assert_bug_183(old, new)
+        return
+    actions = ACTION_CALLS
+    if case.id in FIX_186:
+        assert old.error is not None
+        assert new.error is None
+        assert _done(new) == _fixed_done(case)
+        assert _only(new.calls, *actions) == _only(old.calls, *actions)
+        return
     if new.error is not None:
         # main acts while listing; plan() lists everything first, so an error raised while
         # listing or filtering stops the Cleaner path before any delete or stop.
@@ -703,8 +768,128 @@ def test_cleaner_protocol_matches_main(
         assert new.logs == expected[:-1]
 
 
+def _assert_bug_183(old: Outcome, new: Outcome) -> None:
+    """BUG-183: main acted on every selected instance for an empty or zero `age`; a real run
+    now raises `ValueError` naming the flag before any cloud call."""
+    assert old.error is None
+    assert old.deleted == ["d"]
+    assert new.error is not None
+    assert new.error[0] == "ValueError"
+    assert new.error[1].startswith("age ")
+    assert (new.deleted, new.stopped, new.calls) == ([], [], [])
+
+
 def _listed(case: Case) -> int:
     return sum(len(v) if isinstance(v, list) else TWO for v in case.zones.values())
+
+
+def _with_waits(calls: Sequence[tuple[Any, ...]], case: Case) -> list[tuple[Any, ...]]:
+    """BUG-185: `calls` of main with the zone operation poll after every action that succeeded."""
+    out: list[tuple[Any, ...]] = []
+    for call in calls:
+        out.append(call)
+        if call[0] in ACTION_CALLS and (call[2], call[3]) not in case.action_errors:
+            out += [
+                ("zoneOperations()",),
+                ("zoneOperations.get", call[1], call[2], "operation"),
+                ("zoneOperations.get.execute", call[1], call[2], "operation"),
+            ]
+    return out
+
+
+def _bugs(case: Case, old: Outcome) -> list[str]:
+    found = []
+    if _with_waits(old.calls, case) != old.calls:
+        found.append("BUG-185")
+    if case.id in FIX_186:
+        found.append("BUG-186")
+    return found
+
+
+def _fixed_done(case: Case) -> list[str]:
+    return FIX_186[case.id]
+
+
+def _assert_fixed_logs(case: Case, old: Outcome, new: Outcome) -> None:
+    """BUG-186: a case that raised on main now continues; its logs are main's plus `EXTRA_LOGS`."""
+    expected = Counter(expected_logs(old.logs, BUGS, RULES)[:-1])
+    assert expected - Counter(new.logs) == Counter()
+    assert Counter(new.logs) - expected == Counter(EXTRA_LOGS[case.id])
+
+
+def _summary_logs(names: list[str], past: str = "deleted") -> list[tuple[str, int, str]]:
+    verb = past.removesuffix("d")
+    head = [("root", logging.WARNING, f"No GCP instances to {verb}.")] if not names else []
+    return [
+        *head,
+        ("root", logging.INFO, f"number of GCP instances {past}: {len(names)}"),
+        ("root", logging.WARNING, f"List of GCP instances {past}: {names}"),
+    ]
+
+
+def _failure(message: str) -> tuple[str, int, str]:
+    return ("root", logging.ERROR, message)
+
+
+EXTRA_LOGS: dict[str, list[tuple[str, int, str]]] = {
+    "age-max-age-invalid-raises": [
+        _failure(
+            "Error occurred while evaluating instance d: "
+            "malformed node or string on line 1: <ast.Name object at 0x0>"
+        ),
+        *_summary_logs([]),
+    ],
+    "age-timestamp-unparseable": [
+        _failure(f"Error occurred while evaluating instance d: {TS_ERR.format('x')}"),
+        *_summary_logs([]),
+    ],
+    "age-timestamp-without-fraction": [
+        _failure(
+            "Error occurred while evaluating instance d: "
+            + TS_ERR.format("2026-02-20T10:00:00-08:00")
+        ),
+        *_summary_logs([]),
+    ],
+    "age-timestamp-none-raises": [
+        _failure(
+            "Error occurred while evaluating instance d: "
+            "strptime() argument 1 must be str, not None"
+        ),
+        *_summary_logs([]),
+    ],
+    "age-error-after-earlier-delete": [
+        _failure(f"Error occurred while evaluating instance bad: {TS_ERR.format('x')}"),
+        *_summary_logs(["ok"]),
+    ],
+    "age-error-after-earlier-zone": [
+        _failure(f"Error occurred while evaluating instance bad: {TS_ERR.format('x')}"),
+        *_summary_logs(["ok"]),
+    ],
+    "instance-without-labels-attribute": [
+        _failure(f"Error occurred while evaluating instance a: {NO_ATTR.format('labels')}"),
+        *_summary_logs([]),
+    ],
+    "instance-without-status-attribute": [
+        _failure(f"Error occurred while evaluating instance a: {NO_ATTR.format('status')}"),
+        *_summary_logs([]),
+    ],
+    "instances-list-permission-denied": [
+        _failure("Zone z: failed listing GCP instances: 403 denied"),
+        *_summary_logs([]),
+    ],
+    "instances-list-error-after-first-zone": [
+        _failure("Zone z2: failed listing GCP instances: 403 denied"),
+        *_summary_logs(["a"]),
+    ],
+    "instances-iteration-error": [
+        _failure("Zone z: failed listing GCP instances: 503 unreachable"),
+        *_summary_logs(["a", "b"]),
+    ],
+    "instances-iteration-error-stop": [
+        _failure("Zone z: failed listing GCP instances: 503 unreachable"),
+        *_summary_logs(["a"], "stopped"),
+    ],
+}
 
 
 def _find(case_id: str) -> Case:
@@ -744,9 +929,9 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
     ("age-error-on-wrong-state-ignored", lambda o: o.error is None and o.deleted == []),
     ("custom-age-keeps-young", lambda o: o.deleted == []),
     ("custom-age-shortens", lambda o: o.deleted == ["d"]),
-    ("custom-age-empty-falls-back", lambda o: o.deleted == ["d"]),
-    ("custom-age-unparseable-falls-back", lambda o: o.deleted == ["d"]),
-    ("custom-age-zero-falls-back-to-default", lambda o: o.deleted == ["d"]),
+    ("custom-age-empty-falls-back", lambda o: o.deleted == []),
+    ("custom-age-unparseable-falls-back", lambda o: o.deleted == []),
+    ("custom-age-zero-falls-back-to-default", lambda o: o.deleted == []),
     ("filter-all-keys", lambda o: o.deleted == ["a"]),
     ("filter-one-key-missing-fails", lambda o: o.deleted == []),
     ("filter-empty-values-means-key-present", lambda o: o.deleted == ["a", "b", "d"]),
@@ -798,6 +983,22 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+BUG_004_FIXED = frozenset(
+    [
+        "custom-age-empty-falls-back",
+        "custom-age-unparseable-falls-back",
+        "custom-age-zero-falls-back-to-default",
+    ]
+)
+
+
+ENGINE_QUIRKS: Mapping[str, Callable[[Outcome], bool]] = {
+    # Allowed change: every zone is listed before the first delete, so the zone without a name
+    # stops the run before the first zone is deleted (fewer deletes, never more).
+    "zone-without-name-after-first-zone": lambda o: o.error is not None and o.deleted == [],
+}
+
+
 @pytest.mark.parametrize(("case_id", "check"), QUIRKS, ids=[q[0] for q in QUIRKS])
 def test_quirk_is_preserved(
     case_id: str,
@@ -809,9 +1010,19 @@ def test_quirk_is_preserved(
 ) -> None:
     case = _find(case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert check(old), "oracle no longer shows the quirk"
-    assert check(new)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
+    # BUG-004/BUG-016: the oracle class inherits the live crc.service.Service, so it cannot
+    # show the old custom-age-tag behaviour here; tests/test_crc_service_parity.py pins it
+    # against the frozen crc_service oracle. Fixed cases assert the new outcome only.
+    if case_id not in BUG_004_FIXED:
+        assert check(old), "oracle no longer shows the quirk"
+    if case_id in BUG_183:
+        _assert_bug_183(old, new)
+    elif case_id in FIX_186:
+        assert new.error is None
+        assert _done(new) == _fixed_done(case)
+    else:
+        assert ENGINE_QUIRKS.get(case_id, check)(new)
 
 
 def test_service_is_closed_before_instances_are_listed_like_main(
@@ -822,18 +1033,21 @@ def test_service_is_closed_before_instances_are_listed_like_main(
 ) -> None:
     case = _find("two-zones")
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     names = [c[0] for c in new.calls]
     assert names.index("close") < names.index("instances.list")
-    assert names.index("instances.delete.execute") < names.index(
-        "instances.list", names.index("instances.list") + 1
-    )
     assert names.count("close") == 1
-    assert new.calls == old.calls
+    # Allowed change: every zone is listed before the first delete.
+    assert names.index("instances.delete.execute") > len(names) - 1 - names[::-1].index(
+        "instances.list"
+    )
+    kept = ("instances.list", "close")
+    assert _only(new.calls, *kept) == _only(old.calls, *kept)
+    assert _only(new.calls, *ACTION_CALLS) == _only(_with_waits(old.calls, case), *ACTION_CALLS)
 
 
 @pytest.mark.parametrize("first", ["delete", "stop"])
-def test_second_call_accumulates_like_main(
+def test_consecutive_runs_act_like_main(
     first: str,
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -841,23 +1055,20 @@ def test_second_call_accumulates_like_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     case = _find("two-zones")
-    results = []
-    for build in (_legacy, _new):
-        gcp = _setup(case, monkeypatch, caplog, capsys)
-        vm = build(case)
-        getattr(vm, first)()
-        vm.delete()
-        vm.stop()
-        results.append(
-            (gcp.calls, list(vm.get_deleted), list(vm.get_stopped), vm.delete_count, _logs(caplog))
-        )
-    assert (*results[0][:-1], expected_logs(results[0][-1], BUGS, RULES)) == results[1]
-
-
-def test_class_attributes_match_main() -> None:
-    old = _load_oracle().VM
-    for name in ("service_name", "service_version", "default_instance_state", "time_format"):
-        assert getattr(VM, name) == getattr(old, name)
+    gcp = _setup(case, monkeypatch, caplog, capsys)
+    vm = _legacy(case)
+    getattr(vm, first)()
+    vm.delete()
+    vm.stop()
+    old_actions = _only(_with_waits(gcp.calls, case), *ACTION_CALLS)
+    gcp = _setup(case, monkeypatch, caplog, capsys)
+    registry = Registry()
+    registry.register("gcp", "vm")(build_vm_cleaner)
+    for operation in (first, "delete", "stop"):
+        replace_op = Operation.STOP if operation == "stop" else Operation.DELETE
+        ctx = replace(_cleaner_context(case), operation=replace_op)
+        engine.run(Selection((("gcp", "vm"),)), ctx, registry)
+    assert _only(gcp.calls, *ACTION_CALLS) == old_actions
 
 
 def test_registered_factory_builds_cleaner() -> None:
@@ -886,13 +1097,20 @@ def test_bug_358_label_dump_is_debug_not_info(
 ) -> None:
     case = _find("mixed-deletes-old-running")
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert old.logs != new.logs
-    assert new.logs == expected_logs(old.logs, BUGS, RULES)
-    assert [m for _, _, m in new.logs] == [m for _, _, m in old.logs]
-    assert new.calls == old.calls
+    expected = expected_logs(old.logs, BUGS, RULES)[:-1]
+    assert Counter(new.logs) == Counter(expected)
+    assert Counter(m for _, _, m in new.logs) == Counter(m for _, _, m in old.logs[:-1])
+    assert _only(new.calls, *ACTION_CALLS) == _only(_with_waits(old.calls, case), *ACTION_CALLS)
     assert new.stdout == old.stdout
     info = [m for _, level, m in new.logs if level == logging.INFO]
     assert not [m for m in info if m.startswith(("{", "namespace("))]
     dumps = [m for _, level, m in old.logs if level == logging.INFO]
     assert any(m.startswith(("{", "namespace(")) for m in dumps)
+
+
+def test_default_instance_state_matches_main() -> None:
+    old = _load_oracle().VM
+    settings = VmSettings(PROJECT, None, None, None, DAY, "")
+    assert list(settings.instance_state) == list(old.default_instance_state)

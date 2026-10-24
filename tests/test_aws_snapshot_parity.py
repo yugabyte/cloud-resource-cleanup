@@ -1,13 +1,16 @@
-"""Parity: `crc.aws.snapshot.Snapshot` against main's version (`tests/legacy/aws_snapshot.txt`).
+"""Parity: the snapshot Cleaner, run through `crc.core.engine`, against main's `Snapshot`
+(`tests/legacy/aws_snapshot.txt`).
 
-Both run against the same fake `boto3.client`; SDK calls (in order), results, log records,
-stdout and raised errors must be identical for every case. The table runs twice: through the
-legacy adapter class and through the registered Cleaner (`plan()` then `apply()`).
+Both run against the same fake `boto3.client`; SDK calls, results, log records, stdout and raised
+errors must match for every case. The one allowed difference: the Cleaner lists every region
+before it deletes, so only the interleaving of delete calls and delete log lines with the listing
+differs from main, and a listing error stops the run before any delete.
 """
 
 import datetime
 import logging
 import types
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,10 +19,12 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnectionError
 
-from crc.aws.snapshot import Snapshot, SnapshotCleaner, SnapshotRuntime, build_snapshot_cleaner
+from crc.aws.snapshot import SnapshotCleaner, build_snapshot_cleaner
+from crc.aws.snapshot.protection import used_by_amis
 from crc.core import registry
 from crc.core.cleaner import Operation, RunContext
 from tests.helpers_log_fix import expected_logs, expected_outcome
+from tests.helpers_wc_aws2_engine import run_through_engine
 from tests.log_fix_aws_misc import RULES
 
 ORACLE = Path(__file__).parent / "legacy" / "aws_snapshot.txt"
@@ -107,7 +112,7 @@ CASES = [
     Case("age-days-none-fails-before-any-call", one(snap("a")), age_days=None),
     Case("age-days-string", one(snap("a")), age_days="90"),
     Case("age-days-overflow", one(snap("a")), age_days=10**12),
-    Case("naive-start-time", one({"SnapshotId": "a", "StartTime": datetime.datetime(2020, 1, 1)})),
+    Case("naive-start-time", one({"SnapshotId": "a", "StartTime": datetime.datetime(2020, 1, 1)})),  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
     Case("start-time-string", one({"SnapshotId": "a", "StartTime": "2020-01-01"})),
     Case("missing-start-time", one(snap("a"), snap("b", None))),
     Case("missing-snapshot-id", one(snap("a"), snap(None), snap("c"))),
@@ -292,6 +297,29 @@ CASES = [
 ]
 
 
+DIVERGES: Mapping[str, str] = {
+    "tag-missing-value-raises": "BUG-144",
+    "tag-missing-key-raises": "BUG-144",
+    "tag-malformed-after-deleted-snapshot": "BUG-144",
+    "missing-start-time": "BUG-149",
+    "missing-snapshot-id": "BUG-149",
+    "missing-snapshots-key": "BUG-149",
+    "naive-start-time": "BUG-149",
+    "start-time-string": "BUG-149",
+    "tags-is-dict": "BUG-149",
+    "exception-tags-not-a-dict": "BUG-149",
+    "ami-ebs-none-raises": "BUG-149",
+    "ami-missing-images-key": "BUG-149",
+    "describe-unexpected-error": "BUG-149",
+    "describe-snapshots-client-error-propagates": "BUG-149",
+    "describe-images-client-error-propagates": "BUG-149",
+}
+"""Cases whose outcome differs from the oracle on purpose; their new outcome is asserted in
+`tests/test_aws_snapshot_fix.py`. Every other case still equals the oracle."""
+
+SAME_CASES = [c for c in CASES if c.id not in DIVERGES]
+
+
 class FakeEc2:
     def __init__(self, aws: "FakeAws", region: str) -> None:
         self.aws = aws
@@ -365,11 +393,6 @@ def _legacy(case: Case) -> Any:
     return _load_oracle().Snapshot(case.dry_run, case.age_days, case.exception_tags)
 
 
-def _new(case: Case) -> Any:
-    runtime = SnapshotRuntime(clock=lambda: NOW)
-    return Snapshot(case.dry_run, case.age_days, case.exception_tags, runtime)
-
-
 def _prepare(
     case: Case,
     monkeypatch: pytest.MonkeyPatch,
@@ -401,7 +424,7 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     deleted = list(cleaner.get_deleted)
     return Outcome(
@@ -416,24 +439,11 @@ def _run_cleaner(
     capsys: pytest.CaptureFixture[str],
 ) -> Outcome:
     aws = _prepare(case, monkeypatch, caplog, capsys)
-    ctx = RunContext(
-        dry_run=case.dry_run,
-        operation=Operation.DELETE,
-        options={"age_days": case.age_days, "exception_tags": case.exception_tags},
-        now=NOW,
+    options = {"age_days": case.age_days, "exception_tags": case.exception_tags}
+    run = run_through_engine("aws", "snapshot", options, dry_run=case.dry_run, now=NOW)
+    return Outcome(
+        aws.calls, run.deleted, len(run.deleted), _logs(caplog), capsys.readouterr().out, run.error
     )
-    cleaner = registry.get("aws", "snapshot")(ctx)
-    error: tuple[str, str] | None = None
-    deleted: list[str] = []
-    try:
-        plan = cleaner.plan(ctx)
-        if case.dry_run:
-            deleted = [c.id for c in plan.candidates]
-        else:
-            deleted = list(cleaner.apply(plan, ctx).succeeded)
-    except Exception as e:
-        error = (type(e).__name__, str(e))
-    return Outcome(aws.calls, deleted, len(deleted), _logs(caplog), capsys.readouterr().out, error)
 
 
 @pytest.fixture
@@ -444,7 +454,7 @@ def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
 LOG_BUGS = {"BUG-359"}
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+@pytest.mark.parametrize("case", SAME_CASES, ids=[c.id for c in SAME_CASES])
 def test_matches_main(
     case: Case,
     debug_logs: None,
@@ -453,13 +463,17 @@ def test_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.count == old.count
-    assert new.logs == expected_logs(old.logs, LOG_BUGS, rules=RULES)
     assert new.stdout == old.stdout
+    assert [c for c in new.calls if c[0] != "delete_snapshot"] == [
+        c for c in old.calls if c[0] != "delete_snapshot"
+    ]
+    if old.error is None:
+        assert Counter(new.calls) == Counter(old.calls)
+        assert new.deleted == old.deleted
+        assert new.count == old.count
+        assert Counter(new.logs) == Counter(expected_logs(old.logs, LOG_BUGS, rules=RULES))
 
 
 def _split_calls(calls: list[tuple[Any, ...]]) -> tuple[list[Any], list[Any]]:
@@ -476,7 +490,7 @@ def _split_logs(logs: list[tuple[str, int, str]]) -> tuple[list[Any], list[Any]]
     )
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+@pytest.mark.parametrize("case", SAME_CASES, ids=[c.id for c in SAME_CASES])
 def test_cleaner_protocol_matches_main(
     case: Case,
     debug_logs: None,
@@ -509,7 +523,7 @@ def _single_region_error_free_matches_exactly(case: Case) -> bool:
     return len(case.regions) == 1 and not case.delete_errors
 
 
-@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+@pytest.mark.parametrize("case", SAME_CASES, ids=[c.id for c in SAME_CASES])
 def test_cleaner_protocol_logs_in_order_when_nothing_interleaves(
     case: Case,
     debug_logs: None,
@@ -533,7 +547,7 @@ def test_cleaner_protocol_logs_in_order_when_nothing_interleaves(
 
 
 def _logged(o: Outcome, message: str) -> bool:
-    """Whether the message is logged, at any level (the level moved to DEBUG in LOG-AWS2)."""
+    """Whether the message is logged, at any level (the level is DEBUG now)."""
     return any(r[2] == message for r in o.logs)
 
 
@@ -553,12 +567,6 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
         lambda o: o.error is not None and o.error[0] == "TypeError" and o.calls == [],
     ),
     ("age-days-overflow", lambda o: o.error is not None and o.error[0] == "OverflowError"),
-    ("naive-start-time", lambda o: o.error is not None and o.error[0] == "TypeError"),
-    ("missing-start-time", lambda o: o.error == ("KeyError", "'StartTime'") and o.deleted == ["a"]),
-    (
-        "missing-snapshot-id",
-        lambda o: o.error == ("KeyError", "'SnapshotId'") and o.deleted == ["a"],
-    ),
     ("exception-key-only", lambda o: o.deleted == ["b"]),
     ("exception-value-match", lambda o: o.deleted == ["b"]),
     ("exception-value-case-sensitive", lambda o: o.deleted == ["a"]),
@@ -568,27 +576,16 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
     ("exception-second-key-logged", lambda o: _logged(o, "Snap a has tag b")),
     ("exception-tags-empty", lambda o: o.deleted == ["a"]),
     ("untagged-deleted", lambda o: o.deleted == ["a", "b"]),
-    ("tag-missing-value-raises", lambda o: o.error == ("KeyError", "'Value'") and o.deleted == []),
-    ("tag-missing-key-raises", lambda o: o.error == ("KeyError", "'Key'")),
     ("tag-malformed-ignored-without-exception-tags", lambda o: o.deleted == ["a"]),
     ("tag-malformed-on-young-snapshot-not-read", lambda o: o.error is None and o.deleted == []),
-    (
-        "tag-malformed-after-deleted-snapshot",
-        lambda o: o.error == ("KeyError", "'Value'") and o.deleted == ["a"],
-    ),
-    ("tags-is-dict", lambda o: o.error is not None and o.error[0] == "TypeError"),
-    ("exception-tags-not-a-dict", lambda o: o.error is not None and o.error[0] == "AttributeError"),
     ("exception-tags-duplicate-tag-last-wins", lambda o: o.deleted == ["a"]),
     ("ami-uses-snapshot", lambda o: o.deleted == ["b"]),
     ("ami-in-other-region-not-used", lambda o: o.deleted == ["a"]),
     ("ami-snapshot-id-empty", lambda o: o.deleted == ["a"]),
-    ("ami-ebs-none-raises", lambda o: o.error is not None and o.error[0] == "AttributeError"),
-    ("ami-missing-images-key", lambda o: o.error == ("KeyError", "'Images'") and o.deleted == []),
     (
         "ami-and-protected-logs-protection-only",
         lambda o: (
-            _logged(o, "Snap a has tag keep")
-            and not any("used by AMI" in r[2] for r in o.logs)
+            _logged(o, "Snap a has tag keep") and not any("used by AMI" in r[2] for r in o.logs)
         ),
     ),
     (
@@ -607,13 +604,6 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
         lambda o: o.deleted == ["c"] and any("skipped snapshot cleanup" in r[2] for r in o.logs),
     ),
     ("describe-images-connection-error-skips-region", lambda o: o.deleted == ["c"]),
-    (
-        "describe-images-client-error-propagates",
-        lambda o: (
-            o.error is not None
-            and not any(c == ("describe_snapshots", "ap-south-1", ("self",)) for c in o.calls)
-        ),
-    ),
     ("describe-regions-client-error-propagates", lambda o: o.error is not None and o.deleted == []),
     ("describe-regions-connection-error-falls-back", lambda o: o.deleted == ["a"]),
     ("duplicate-ids-in-region", lambda o: o.deleted == ["a", "a", "b"]),
@@ -633,10 +623,11 @@ def test_quirk_is_preserved(
 ) -> None:
     case = next(c for c in CASES if c.id == case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert check(old), "oracle no longer shows the quirk"
     assert check(new)
-    assert new.logs == expected_logs(old.logs, LOG_BUGS, rules=RULES)
+    if old.error is None:
+        assert Counter(new.logs) == Counter(expected_logs(old.logs, LOG_BUGS, rules=RULES))
 
 
 def test_cases_cover_both_dry_run_and_real_runs() -> None:
@@ -655,12 +646,15 @@ def test_factory_defaults_age_days_to_ninety() -> None:
 
 
 def _protected_outcome(
-    obj: Any, tags: Any, snap_id: str, caplog: pytest.LogCaptureFixture
+    is_protected: Callable[[Any, str], bool],
+    tags: Any,
+    snap_id: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> tuple[str, Any, list[tuple[str, int, str]]]:
     caplog.clear()
     try:
-        return ("ok", obj._is_protected(tags, snap_id), _logs(caplog))
-    except Exception as e:
+        return ("ok", is_protected(tags, snap_id), _logs(caplog))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         return (type(e).__name__, str(e), _logs(caplog))
 
 
@@ -677,8 +671,6 @@ def _protected_outcome(
         ([tag("env", "pro")], {"env": "production"}),
         ([tag("b"), tag("a")], {"a": [], "b": []}),
         ([tag("env", "prod"), tag("env", "dev")], {"env": ["prod"]}),
-        ([{"Key": "k"}], {"keep": []}),
-        ([{"Value": "v"}], {"keep": []}),
         ({"keep": "x"}, {"keep": []}),
         ([tag("keep")], ["keep"]),
     ],
@@ -692,16 +684,23 @@ def test_is_protected_matches_main(
 ) -> None:
     monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
     old = _load_oracle().Snapshot(False, 90, exception_tags)
-    new = Snapshot(False, 90, exception_tags)
-    assert _protected_outcome(new, tags, "snap-1", caplog) == expected_outcome(
-        _protected_outcome(old, tags, "snap-1", caplog), LOG_BUGS, rules=RULES
+    ctx = RunContext(
+        dry_run=False,
+        operation=Operation.DELETE,
+        options={"exception_tags": exception_tags},
+        now=NOW,
+    )
+    new = registry.get("aws", "snapshot")(ctx)
+    assert isinstance(new, SnapshotCleaner)
+    assert _protected_outcome(new.is_protected, tags, "snap-1", caplog) == expected_outcome(
+        _protected_outcome(old._is_protected, tags, "snap-1", caplog), LOG_BUGS, rules=RULES
     )
 
 
-def _ami_outcome(obj: Any, ec2: Any) -> tuple[str, Any]:
+def _ami_outcome(used: Callable[[Any], set[str]], ec2: Any) -> tuple[str, Any]:
     try:
-        return ("ok", obj._get_snapshots_used_by_amis(ec2))
-    except Exception as e:
+        return ("ok", used(ec2))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         return (type(e).__name__, str(e))
 
 
@@ -723,11 +722,10 @@ def test_get_snapshots_used_by_amis_matches_main(
     monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
     case = Case("ami-helper", {"us-west-2": Region([], images)})
     old = _load_oracle().Snapshot(False, 90, None)
-    new = Snapshot(False, 90, None)
     old_aws = FakeAws(case)
     new_aws = FakeAws(case)
-    assert _ami_outcome(new, FakeEc2(new_aws, "us-west-2")) == _ami_outcome(
-        old, FakeEc2(old_aws, "us-west-2")
+    assert _ami_outcome(used_by_amis, FakeEc2(new_aws, "us-west-2")) == _ami_outcome(
+        old._get_snapshots_used_by_amis, FakeEc2(old_aws, "us-west-2")
     )
     assert new_aws.calls == old_aws.calls
 
@@ -747,11 +745,11 @@ def test_snapshot_skip_lines_are_debug(
     code logs the same text at DEBUG and nothing else about the outcome changes."""
     case = next(c for c in CASES if c.id == case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     skip_lines = [r for r in old.logs if r[2].startswith(("Skipping snapshot", "Snap "))]
     assert {r[1] for r in skip_lines} <= {logging.INFO}
-    assert new.calls == old.calls
+    assert _split_calls(new.calls) == _split_calls(old.calls)
     assert new.deleted == old.deleted
-    assert new.logs == expected_logs(old.logs, LOG_BUGS, rules=RULES)
+    assert Counter(new.logs) == Counter(expected_logs(old.logs, LOG_BUGS, rules=RULES))
     if skip_lines:
         assert new.logs != old.logs

@@ -1,9 +1,9 @@
-"""Expected log lists of the LOG rungs: the oracle logs rewritten one bug rule at a time.
+"""Expected log lists: the oracle logs rewritten one bug rule at a time.
 
 Oracles in ``tests/legacy/*.txt`` stay frozen. A parity test compares the new code with
-``expected_logs(oracle_logs, {<bug IDs of the lane>})``. A rule may only change the level of a
+``expected_logs(oracle_logs, {<bug IDs>})``. A rule may only change the level of a
 line or insert documented new lines; it never drops an oracle line or changes its text.
-Contract: ``docs/refactor/LOGGING.md``.
+Contract: ``docs/logging.md``.
 """
 
 import logging
@@ -42,8 +42,8 @@ def _bug_356(records: list[LogRecordKey]) -> list[LogRecordKey]:
     ]
 
 
-# Core rules only. Each cloud lane keeps its own rules in tests/log_fix_<lane>.py and passes
-# them as ``rules`` (``{**RULES, ...}``), so lanes never edit this file and merge cleanly.
+# Core rules only. Each cloud keeps its own rules in tests/log_fix_<cloud>.py and passes
+# them as ``rules`` (``{**RULES, ...}``), so this file holds only the core rules.
 RULES: dict[str, Rule] = {
     "BUG-356": _bug_356,
 }

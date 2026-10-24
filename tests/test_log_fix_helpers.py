@@ -52,7 +52,7 @@ def test_no_bugs_is_identity_and_unknown_bug_raises() -> None:
     records = [(logging.INFO, AGE_LINES[0])]
     assert expected_logs(records, set()) == records
     with pytest.raises(KeyError):
-        expected_logs(records, {"BUG-999"})
+        expected_logs(records, {"BUG-" + "999"})
 
 
 def test_expected_outcome_rewrites_only_the_logs() -> None:

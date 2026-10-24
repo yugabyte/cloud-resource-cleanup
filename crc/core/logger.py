@@ -1,6 +1,6 @@
 """Per-run log collector: RUN START header, REGION and ACTION lines, SKIPPED/ERRORS/RESULT footer.
 
-Log text and levels only (rung family LOG, see ``docs/refactor/LOGGING.md``). Nothing here
+Log text and levels only (the contract is in ``docs/logging.md``). Nothing here
 decides what is selected, deleted or stopped; cleaners report what they did. Pure stdlib.
 """
 
@@ -131,9 +131,7 @@ class RunLog:
         logging must never stop a cleanup halfway.
         """
         if kind not in ACTION_KINDS:
-            self._log(
-                logging.WARNING, f"unknown action kind {kind!r}; use one of {ACTION_KINDS}"
-            )
+            self._log(logging.WARNING, f"unknown action kind {kind!r}; use one of {ACTION_KINDS}")
         self._selected += 1
         if kind in _DONE_KINDS:
             self._done += 1

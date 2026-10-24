@@ -69,7 +69,7 @@ def has_matching_filter_label(instance: InstanceView, settings: SpotSettings) ->
 def is_old_instance(instance: InstanceView, settings: SpotSettings, clock: Clock) -> bool:
     """At least as old as the custom age label or else `age`. An invalid custom age label
     keeps the instance (fail closed)."""
-    created = datetime.datetime.strptime(instance.creation_timestamp, TIME_FORMAT)
+    created = datetime.datetime.strptime(instance.creation_timestamp, TIME_FORMAT)  # noqa: DTZ007 - TIME_FORMAT ends in %z, so the result is aware
     now = clock().astimezone(created.tzinfo)
     try:
         retention_age = core_age.validated_retention_age(
@@ -82,20 +82,32 @@ def is_old_instance(instance: InstanceView, settings: SpotSettings, clock: Clock
     return core_age.is_old(policy.effective_age(retention_age, settings.age), now, created)
 
 
+def _label_and_age_reason(
+    instance: InstanceView, settings: SpotSettings, clock: Clock
+) -> str | None:
+    if should_skip_instance(instance, settings):
+        return "exception_tag"
+    if not has_matching_filter_label(instance, settings):
+        return "filter_mismatch"
+    if not is_old_instance(instance, settings, clock):
+        return "too_young"
+    if not settings.filter_labels and not _labels(instance):
+        return "unlabelled"
+    return None
+
+
 def reject_reason(instance: InstanceView, settings: SpotSettings, clock: Clock) -> str | None:
     """The skip reason of an instance to keep, or None when every instance filter passes, in
-    the order of `main`: status, Spot, managed or GKE node, exception labels, filter labels, age."""
+    the order of `main`: status, Spot, managed or GKE node, exception labels, filter labels, age.
+    BUG-228: after the age check, an instance without labels is kept (`unlabelled`) when
+    `filter_labels` is empty, because no label rule could ever have protected it."""
     if not policy.state_in(instance.status, settings.instance_states):
         return "state"
     if not is_spot_instance(instance):
         return "not_spot"
     if is_managed_or_gke_node(instance):
         return "managed_or_gke"
-    if should_skip_instance(instance, settings):
-        return "exception_tag"
-    if not has_matching_filter_label(instance, settings):
-        return "filter_mismatch"
-    return None if is_old_instance(instance, settings, clock) else "too_young"
+    return _label_and_age_reason(instance, settings, clock)
 
 
 def is_selected(instance: InstanceView, settings: SpotSettings, clock: Clock) -> bool:

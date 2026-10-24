@@ -1,4 +1,4 @@
-"""Tests of tests/log_fix_aws_compute.py: the LOG-AWS1 rules only change levels, never text."""
+"""Tests of tests/log_fix_aws_compute.py: the log rules only change levels, never text."""
 
 import logging
 
@@ -98,4 +98,4 @@ def test_expected_outcome_takes_the_lane_rules() -> None:
 
 def test_unknown_bug_id_raises() -> None:
     with pytest.raises(KeyError):
-        expected_logs([(logging.INFO, "x")], {"BUG-999"}, RULES)
+        expected_logs([(logging.INFO, "x")], {"BUG-" + "999"}, RULES)

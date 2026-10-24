@@ -1,8 +1,7 @@
 # Copyright (c) Yugabyte, Inc.
 
-"""OCI VM cleaner package; `crc.oci.vm.VM` stays the import path `crc.py` uses."""
+"""OCI VM cleaner package: `VmCleaner`, its settings, the SDK Protocols and the registry factory."""
 
-from crc.oci.vm.adapter import VM, VmRuntime
 from crc.oci.vm.cleaner import (
     DEFAULT_INSTANCE_STATES,
     VmCleaner,
@@ -21,13 +20,11 @@ from crc.oci.vm.client import (
 __all__ = [
     "DEFAULT_INSTANCE_STATES",
     "STOP_ACTION",
-    "VM",
     "ApiFactory",
     "ComputeApi",
     "OciComputeApi",
     "SdkInstance",
     "VmCleaner",
-    "VmRuntime",
     "VmSettings",
     "build_vm_cleaner",
     "compute_api_for",

@@ -1,11 +1,10 @@
-"""LOG-AWS1: logger lines of the AWS VM, disk and spot instance request cleaners.
+"""Logger lines of the AWS VM, disk and spot instance request cleaners.
 
 Each test begins a run with a fixed clock, drives the cleaner (dry run, real run, a failure, a
 connectivity skip) and asserts the exact REGION / ACTION / SKIPPED / ERRORS / FAILED / RESULT
 lines. Parity tests run without a begun run, so they never see these lines.
 """
 
-import dataclasses
 import datetime
 import logging
 from collections.abc import Iterator
@@ -18,10 +17,10 @@ from crc.aws.disk import DiskCleaner, DiskRuntime
 from crc.aws.disk.settings import build_settings
 from crc.aws.spot_instance_requests import SpotRequestCleaner, SpotRuntime
 from crc.aws.spot_instance_requests.model import Waiter
-from crc.aws.vm import VM, VmRuntime
 from crc.aws.vm.cleaner import VmCleaner, VmSettings
 from crc.core import logger, registry
 from crc.core.cleaner import Operation, RunContext
+from tests.helpers_ad_vm_engine import run_vm
 from tests.test_aws_disk_cleaner import FakeCloudWatch, FakeEc2, volume
 from tests.test_aws_spot_instance_requests_parity import (
     Case,
@@ -138,11 +137,10 @@ def test_vm_connectivity_skip_counts_the_region(caplog: pytest.LogCaptureFixture
     def factory(region: str) -> Any:
         raise conn_error()
 
-    vm = VM(False, {}, {}, {"days": 1}, "", {})
-    vm.runtime = dataclasses.replace(
-        VmRuntime(), client_factory=factory, list_regions=lambda: ["us-west-2"], clock=lambda: NOW
+    cleaner = VmCleaner(
+        factory, lambda: ["us-west-2"], VmSettings({}, {}, {}, {"days": 1}, "", ["running"])
     )
-    vm.delete()
+    run_vm("aws", cleaner, now=NOW)
     assert "skipped ec2 vm delete" in caplog.text
     assert lines(caplog)[-1] == result_line(
         "vm",
@@ -152,7 +150,7 @@ def test_vm_connectivity_skip_counts_the_region(caplog: pytest.LogCaptureFixture
     )
 
 
-def test_vm_adapter_real_run_and_skip_reasons(caplog: pytest.LogCaptureFixture) -> None:
+def test_vm_engine_real_run_and_skip_reasons(caplog: pytest.LogCaptureFixture) -> None:
     begin(caplog, "vm")
     client = VmFakeClient(
         [
@@ -165,14 +163,12 @@ def test_vm_adapter_real_run_and_skip_reasons(caplog: pytest.LogCaptureFixture) 
             {**instance("noname"), "Tags": [{"Key": "env", "Value": "x"}]},
         ]
     )
-    vm = VM(False, {}, {"keep": []}, {"days": 1}, "", {})
-    vm.runtime = dataclasses.replace(
-        VmRuntime(),
-        client_factory=lambda r: client,
-        list_regions=lambda: ["us-west-2"],
-        clock=lambda: NOW,
+    cleaner = VmCleaner(
+        lambda r: client,
+        lambda: ["us-west-2"],
+        VmSettings({}, {"keep": []}, {}, {"days": 1}, "", ["running"]),
     )
-    vm.stop()
+    run_vm("aws", cleaner, operation=Operation.STOP, now=NOW)
     assert lines(caplog)[1:] == [
         "REGION cloud=aws resource=vm region=us-west-2 scanned=4 selected=1 seconds=0",
         "ACTION stopped cloud=aws resource=vm region=us-west-2 id=old name=n-old",
@@ -310,7 +306,6 @@ def spot_cleaner(
     cleaner.runtime = SpotRuntime(
         client_factory=cleaner.runtime.client_factory,
         list_regions=lambda: list(case.regions),
-        clock=lambda: NOW,
         waiter=Waiter(aws.sleep, aws.monotonic),
     )
     return cleaner, ctx

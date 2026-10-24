@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 
 from crc.core.cleaner import Candidate, Operation, Plan, RunContext
-from crc.gcp.disk import Disk, DiskCleaner, DiskSettings, DiskView
+from crc.core.registry import get
+from crc.gcp.disk import DiskCleaner, DiskSettings, DiskView
+from tests.helpers_wc_gcp_engine import deleted_ids, run_engine
 
 UTC = datetime.UTC
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
@@ -59,7 +61,13 @@ class FakeClient:
         self.calls.append(("delete_disk", project_id, zone, disk))
         if disk == self.fail_on:
             raise RuntimeError("denied")
-        return object()
+        return {"name": f"op-{disk}"}
+
+    def get_operation(
+        self, project_id: str, scope: str, location: str, operation: str
+    ) -> Mapping[str, Any]:
+        self.calls.append(("get_operation", project_id, scope, location, operation))
+        return {"status": "DONE"}
 
     def close(self) -> None:
         self.calls.append(("close",))
@@ -118,7 +126,7 @@ def test_plan_outside_dry_run_logs_no_summary(caplog: pytest.LogCaptureFixture) 
 
 def test_plan_closes_the_client_when_listing_fails() -> None:
     class Broken(FakeClient):
-        def list_disks(self, project_id: str, zone: str) -> Iterable[DiskView]:
+        def list_zones(self, project_id: str) -> Sequence[Mapping[str, str]]:
             raise PermissionError("denied")
 
     client = Broken({"z": []})
@@ -205,8 +213,11 @@ def test_apply_deletes_in_plan_order_and_logs(caplog: pytest.LogCaptureFixture) 
     assert result.succeeded == ("a", "b", "c")
     assert client.calls == [
         ("delete_disk", PROJECT, "z1", "a"),
+        ("get_operation", PROJECT, "zone", "z1", "op-a"),
         ("delete_disk", PROJECT, "z1", "b"),
+        ("get_operation", PROJECT, "zone", "z1", "op-b"),
         ("delete_disk", PROJECT, "z2", "c"),
+        ("get_operation", PROJECT, "zone", "z2", "op-c"),
         ("close",),
     ]
     assert [r.getMessage() for r in caplog.records] == [
@@ -281,38 +292,27 @@ def test_supports_only_delete() -> None:
     assert not c.supports(Operation.STOP)
 
 
-def test_disk_adapter_keeps_main_attributes_and_result_shapes() -> None:
-    args: dict[str, Any] = {
-        "dry_run": False,
-        "project_id": PROJECT,
-        "filter_labels": {},
-        "exception_labels": {},
-        "age": 1,
-        "custom_age_tag_key": "",
-        "detach_age": {"days": 1},
-        "notags": {},
-        "name_regex": [],
-        "exception_regex": [],
-        "slack_user_label": "owner",
-    }
-    plain = Disk(**args, slack_notify_users=False)
-    grouped = Disk(**args, slack_notify_users=True)
-    assert plain.get_deleted == []
-    assert grouped.get_deleted == {}
-    assert plain.count == 0
-    assert Disk.default_disk_state == ["Unattached"]
-
-
-def test_disk_adapter_deletes_through_the_injected_client() -> None:
-    client = FakeClient({"z": [disk("a"), disk("b", users=["vm"])]})
-    adapter = Disk(
-        False, PROJECT, {}, {}, 1, "", {"days": 1}, {}, [], [], False, "", client, lambda: NOW
+def test_factory_result_shapes_follow_slack_notify_users() -> None:
+    options: dict[str, Any] = {"project_id": PROJECT, "detach_age": {"days": 1}}
+    plain = get("gcp", "disk")(RunContext(False, Operation.DELETE, options, NOW))
+    grouped = get("gcp", "disk")(
+        RunContext(False, Operation.DELETE, {**options, "slack_notify_users": True}, NOW)
     )
-    adapter.delete()
-    assert adapter.get_deleted == ["a"]
+    assert isinstance(plain, DiskCleaner)
+    assert isinstance(grouped, DiskCleaner)
+    assert plain._settings.slack_notify_users is False
+    assert grouped._settings.slack_notify_users is True
+
+
+def test_engine_deletes_through_the_injected_client() -> None:
+    client = FakeClient({"z": [disk("a"), disk("b", users=["vm"])]})
+    outcome = run_engine(cleaner(client), "disk", now=NOW)
+    assert deleted_ids(outcome) == ["a"]
     assert client.calls == [
         ("list_zones", PROJECT),
         ("list_disks", PROJECT, "z"),
+        ("close",),
         ("delete_disk", PROJECT, "z", "a"),
+        ("get_operation", PROJECT, "zone", "z", "op-a"),
         ("close",),
     ]

@@ -83,8 +83,10 @@ class Service:
     def get_retention_age(self, tags: Tags, key: str) -> Any:
         """
         Retrieve the parsed custom age tag value from the provided tags, or None
-        when absent, empty or unparseable (fail open).
+        when the tag is absent (caller uses ``--age``).
 
-        The value is whatever literal the tag holds (normally an age dict).
+        A tag that is present but empty, unparseable, not finite, zero or negative
+        returns ``KEEP_AGE``, which ``is_old`` never treats as old (fail closed,
+        BUG-004, BUG-016). Otherwise the value is the literal the tag holds.
         """
         return core_age.get_retention_age(tags, key)

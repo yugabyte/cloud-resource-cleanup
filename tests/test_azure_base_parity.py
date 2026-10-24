@@ -62,7 +62,7 @@ CASES = [
         _without("AZURE_RESOURCE_GROUP"),
         resource_group="",
     ),
-    Case("construct-env-values-empty", {k: "" for k in FULL_ENV}, resource_group=""),
+    Case("construct-env-values-empty", dict.fromkeys(FULL_ENV, ""), resource_group=""),
     Case("missing-subscription", _without("AZURE_CREDENTIALS_SUBSCRIPTION_ID")),
     Case("missing-tenant", _without("AZURE_CREDENTIALS_TENANT_ID")),
     Case("missing-client-id", _without("AZURE_CREDENTIALS_CLIENT_ID")),
@@ -195,7 +195,7 @@ def _run(
     results: list[tuple[Any, ...]] = []
     try:
         base = module.Base(case.resource_group)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         return Outcome(
             calls,
             results,
@@ -209,7 +209,7 @@ def _run(
         try:
             client = getattr(base, f"get_{action}_client")()
             results.append((action, client.kind, client.number))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
             results.append((action, "error", str(e)))
             error = (type(e).__name__, str(e))
     return Outcome(calls, results, _state(base), _records(caplog), capsys.readouterr().out, error)

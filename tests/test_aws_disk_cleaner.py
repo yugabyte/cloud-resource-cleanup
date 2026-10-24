@@ -8,9 +8,10 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError
 
-from crc.aws.disk import Disk, DiskCleaner, DiskRuntime
+from crc.aws.disk import DiskCleaner, DiskRuntime
 from crc.aws.disk.settings import build_settings
 from crc.core.cleaner import Operation, RunContext
+from tests.helpers_ad_spot_engine import run_through_engine
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
 ONE = 1
@@ -185,12 +186,18 @@ def test_supports_delete_only() -> None:
     assert not cleaner.supports(Operation.STOP)
 
 
-def test_adapter_keeps_the_public_surface() -> None:
+def test_engine_runs_cleaner_with_injected_runtime() -> None:
     ec2 = FakeEc2([volume("a")])
     runtime = DiskRuntime(lambda region: ec2, lambda region: FakeCloudWatch(), lambda: ["r1"])
-    disk = Disk(False, None, None, {"days": 1}, None, None, runtime=runtime, clock=lambda: NOW)
-    disk.delete()
-    assert disk.get_deleted == ["r1/a yb_task=itest"]
-    assert disk.count == ONE
-    assert disk.age == {"days": 1}
-    assert disk.detach_age == {}
+    settings = build_settings({"age": {"days": 1}})
+    outcome = run_through_engine(
+        "aws",
+        "disk",
+        lambda _ctx: DiskCleaner(settings, runtime),
+        context(dry_run=False),
+    )
+    assert outcome.result is not None
+    assert outcome.result.succeeded == ("r1/a yb_task=itest",)
+    assert len(outcome.result.succeeded) == ONE
+    assert settings.age == {"days": 1}
+    assert settings.detach_age == {}

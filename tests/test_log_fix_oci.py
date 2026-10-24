@@ -1,4 +1,4 @@
-"""Unit tests of the LOG-OCI rules in ``tests/log_fix_oci.py``."""
+"""Unit tests of the log rules in ``tests/log_fix_oci.py``."""
 
 import logging
 

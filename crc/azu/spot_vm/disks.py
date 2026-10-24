@@ -91,8 +91,9 @@ def detached_disk_refs(
             continue
         refs.append(ref)
         logging.info(
-            f"Spot VM %s {slot.kind} disk %s/%s has delete_option=%s (will delete after VM)",
+            "Spot VM %s %s disk %s/%s has delete_option=%s (will delete after VM)",
             vm_name,
+            slot.kind,
             ref[0],
             ref[1],
             slot.delete_option or "Detach(default)",

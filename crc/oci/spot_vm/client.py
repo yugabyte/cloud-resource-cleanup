@@ -88,6 +88,11 @@ class SdkAttachment(Protocol):
         """OCID of the attached volume."""
         ...
 
+    @property
+    def instance_id(self) -> str | None:
+        """OCID of the instance the volume is attached to."""
+        ...
+
 
 class SdkInstanceState(Protocol):
     """The attribute read while waiting for an instance to terminate."""
@@ -99,11 +104,16 @@ class SdkInstanceState(Protocol):
 
 
 class SdkVolume(Protocol):
-    """The attribute read from a leftover volume."""
+    """The attributes read from a leftover volume."""
 
     @property
     def freeform_tags(self) -> Mapping[str, str] | None:
         """Freeform tags, or `None`."""
+        ...
+
+    @property
+    def time_created(self) -> datetime.datetime | None:
+        """Creation time (the volume is kept when it is missing)."""
         ...
 
 
@@ -115,9 +125,9 @@ class ComputeClient(Protocol):
         ...
 
     def list_volume_attachments(
-        self, compartment_id: str, instance_id: str
+        self, compartment_id: str, instance_id: str = "", volume_id: str = ""
     ) -> Response[Sequence[SdkAttachment]]:
-        """One page of volume attachments of an instance (wrapped by the pager)."""
+        """One page of volume attachments of an instance or volume (wrapped by the pager)."""
         ...
 
     def get_instance(self, instance_id: str) -> Response[SdkInstanceState]:

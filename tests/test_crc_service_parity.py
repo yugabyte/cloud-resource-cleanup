@@ -1,15 +1,17 @@
-"""Parity: `Service` of `main` (frozen oracle) against the refactored `crc.service.Service`.
+"""Parity: `Service` of `main` (frozen oracle) against `crc.service.Service`.
 
 `tests/legacy/crc_service.txt` is the exact output of `git show main:crc/service.py`. The same
 inputs, environment and clock run through both classes; return values, raised errors, log
 records and `init_logging` calls must be equal. Quirks of `main` (BUG-004, BUG-016, BUG-024 to
-BUG-027, BUG-182, BUG-208, BUG-289) are cases of the tables, so they are pinned, not fixed.
+BUG-027, BUG-182, BUG-208, BUG-289) are cases of the tables. BUG-004 and BUG-016 are fixed
+for `get_retention_age`: the diverging cases are marked and assert the new outcome.
 """
 
 from typing import Any
 
 import pytest
 
+from crc.core.age import KEEP_AGE
 from crc.service import Service
 from tests.helpers_crc_service import both, load_oracle, make_oracle_cls
 from tests.helpers_log_fix import expected_outcome
@@ -164,20 +166,45 @@ TAG_CASES: list[tuple[Any, str]] = [
 ]
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
-        "_lookup_custom_age_tag",
-        "validated_retention_age",
-        "get_retention_age",
-    ],
+# TAG_CASES indexes where `get_retention_age` diverges from main on purpose (BUG-004, BUG-016):
+# a custom age tag that is present but empty, unparseable, not finite, zero, negative, not a
+# valid age or not a string is now a keep marker instead of None / an unchecked literal.
+BUG_004_CASES = frozenset(
+    {3, 8, 9, 12, 13, 14, 16, 17, 18, 21, 22, 23, 24, 26, 27, 29, 30, 31, 32, 33, 35, 36}
+    | {39, 41, 42}
 )
-@pytest.mark.parametrize(("tags", "key"), TAG_CASES)
+
+
+TAG_METHOD_PARITY = [
+    pytest.param(method, tags, key, id=f"{method}-case{i}")
+    for method in ("_lookup_custom_age_tag", "validated_retention_age", "get_retention_age")
+    for i, (tags, key) in enumerate(TAG_CASES)
+    if not (method == "get_retention_age" and i in BUG_004_CASES)
+]
+
+
+@pytest.mark.parametrize(("method", "tags", "key"), TAG_METHOD_PARITY)
 def test_tag_methods_parity(
     oracle_cls: type, caplog: pytest.LogCaptureFixture, method: str, tags: Any, key: str
 ) -> None:
     old, new = both(oracle_cls, caplog, method, tags, key)
     assert new == expected_outcome(old, {"BUG-356"})
+
+
+@pytest.mark.parametrize("index", sorted(BUG_004_CASES))
+def test_get_retention_age_bad_tag_diverges_and_keeps(
+    oracle_cls: type, caplog: pytest.LogCaptureFixture, index: int
+) -> None:
+    """BUG-004 / BUG-016: the oracle falls back (None or an unchecked literal); the fix keeps."""
+    tags, key = TAG_CASES[index]
+    old, new = both(oracle_cls, caplog, "get_retention_age", tags, key)
+    assert new != expected_outcome(old, {"BUG-356"})
+    assert new[0] == "return"
+    assert new[1] == KEEP_AGE
+    assert new[1] is not KEEP_AGE
+    assert {level for level, _ in new[2]} <= {"DEBUG"}
+    if old[0] == "return":
+        assert old[1] != KEEP_AGE
 
 
 @pytest.mark.parametrize(
@@ -255,5 +282,3 @@ def test_bug_356_retention_age_lines_differ_from_oracle_and_are_debug(
         assert [level for level, _ in old[2]] == expected_old
         assert [level for level, _ in new[2]] == expected_new
         assert [text for _, text in new[2]] == [text for _, text in old[2]]
-
-

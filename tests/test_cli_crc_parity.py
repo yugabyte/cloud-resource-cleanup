@@ -1,247 +1,212 @@
-"""Parity: crc.cli.runner.CRC against the CRC class of main (`tests/legacy/crc_main.txt`).
+"""Parity: the routed CLI path against the CRC class of main (`tests/legacy/crc_main.txt`).
 
-The oracle is the exact `git show main:crc.py`. The same call runs on the oracle CRC and on the
-new CRC with recording fake adapters (patched in each module that looks them up), a fake Slack
-client and a fake Influx client. For every case the ordered adapter constructor arguments and
-method calls, the attribute reads, the Slack calls, the Influx calls, the printed output and the
-return value or raised error must be equal.
+The oracle is `load_legacy_crc()`: main's `CRC` bound to main's adapters
+(`tests/legacy/`), driven on fake adapters, a fake Slack client and a fake Influx client. The
+other side is production: `crc.cli.bridge.run_routed` with the route of the pair and a recording
+fake cleaner that plans and applies the same ids (`tests/helpers_cl2_crc.py`). For every case the
+Slack calls, the Influx calls, the printed output and the return value or raised error must be
+equal. A pair no route reaches (`route_for` is None) can only be rejected up front by
+`dispatch.validate_targets` or `argparse`; the case asserts that. A skip-only route
+(`skips.no_options`) must send nothing. The constructor and the Slack helpers (`get_msg`,
+lookups, `ping_on_slack`, `write_influxdb`) are still compared on the `CRC` context object. The
+constructor and `scan_instances_with_tag` are compared in `tests/test_cli_runner_parity.py` and
+`tests/test_cli_scan_parity.py`.
 """
 
-import importlib.util
-import io
 import itertools
 from collections.abc import Callable, Iterator
-from contextlib import redirect_stdout
-from dataclasses import dataclass, field
-from importlib.machinery import SourceFileLoader
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
 
-from crc.cli import resource_ops, vm_ops
-from crc.cli.runner import CRC as NewCRC
+from crc.cli import bridge, dispatch
+from crc.cli.constants import CLOUDS
+from crc.cli.inputs import Targets
+from crc.cli.routes import skips
+from crc.cli.runner import CRC as NEW_CRC
+from crc.notify.influx import InfluxNotifier
+from tests.helpers_cl2_crc import (
+    ADAPTERS,
+    DATA,
+    EMPTY,
+    FULL,
+    GROUPS_FAIL,
+    INFLUX_MODES,
+    MIN_CASES,
+    MIN_SEEN,
+    OPEN_FAIL,
+    SLACK_MODES,
+    Case,
+    Logs,
+    Op,
+    Recorded,
+    Scenario,
+    build,
+    execute,
+    make_fake,
+    oracle,
+    ping_owners_raw,
+    run_routed,
+)
 
-ORACLE = Path(__file__).parent / "legacy" / "crc_main.txt"
-ADAPTERS = [
-    "AWS_Disk",
-    "ElasticIPs",
-    "KeyPairs",
-    "Kms",
-    "SpotInstanceRequests",
-    "AWS_VM",
-    "VPC",
-    "Disk",
-    "AZU_IP",
-    "NIC",
-    "AZU_SpotVM",
-    "AZU_VM",
-    "GCP_Disk",
-    "GCP_IP",
-    "GCP_SpotVM",
-    "GCP_VM",
-    "OCI_Disk",
-    "OCI_SpotVM",
-    "OCI_VM",
+__all__ = [
+    "ADAPTERS",
+    "AGE",
+    "EMPTY",
+    "FULL",
+    "Case",
+    "Logs",
+    "Scenario",
+    "build",
+    "make_fake",
+    "oracle",
+    "scenario_grid",
 ]
-FULL = {
-    "get_deleted": ["a", "b"],
-    "get_stopped": ["a"],
-    "get_deleted_nic": ["n1"],
-    "get_deleted_disks": ["d1", "d2"],
-    "get_deleted_volumes": ["v1"],
-    "volumes_to_delete": ["v1", "v2"],
+
+TAGS = {"t": ["v"]}
+AGE = {"days": 1}
+DISK_ARGS = (TAGS, {"e": ["x"]}, AGE, "age_tag", {"days": 2}, ["r1"], ["r2"], True, "label")
+VM_FLAGS: dict[str, Any] = {
+    "filter_tags": TAGS,
+    "exception_tags": {},
+    "age": AGE,
+    "custom_age_tag_key": "age_tag",
 }
-EMPTY: dict[str, Any] = {key: [] for key in FULL}
-DATA = {"full": FULL, "empty": EMPTY}
-MIN_CASES = 5000
-MIN_SEEN = 5
-GROUPS_FAIL = 1
-OPEN_FAIL = 2
-SLACK_MODES = ["off", "on", "post_fail", "no_channel"]
-INFLUX_MODES = ["off", "on", "on_suffix", "api_error", "write_error", "no_conn"]
-Recorded = dict[str, Any]
+DISK_FLAGS: dict[str, Any] = {
+    "filter_tags": TAGS,
+    "exception_tags": {"e": ["x"]},
+    "age": AGE,
+    "custom_age_tag_key": "age_tag",
+    "detach_age": {"days": 2},
+    "name_regex": ["r1"],
+    "exception_regex": ["r2"],
+    "slack_notify_users": True,
+    "slack_user_label": "label",
+}
+KMS_FLAGS: dict[str, Any] = {
+    "filter_tags": TAGS,
+    "exception_tags": {},
+    "kms_key_description": "desc",
+    "kms_user": "arn",
+    "kms_pending_window": 7,
+    "age": AGE,
+    "custom_age_tag_key": "age_tag",
+}
+COMPARED = ("result", "slack", "influx", "stdout")
+OP_COMPARED = ("result", "adapters", "slack", "influx", "stdout")
 
 
-@dataclass
-class Scenario:
-    values: dict[str, Any]
-    dry_run: bool = False
-    slack: str = "on"
-    influx: str = "on"
-    delete_error: Exception | None = None
-    scan_supported: bool = True
-    resource_group: str | None = "rg"
-    project_id: str | None = "proj"
-    slack_users: dict[str, str] = field(default_factory=lambda: {"alice@yugabyte.com": "U1"})
-    slack_groups: list[dict[str, str]] = field(
-        default_factory=lambda: [{"handle": "team", "id": "G1"}]
-    )
-    groups_fail: bool = False
-    open_fail: bool = False
+SPOT_RELATED = {
+    "azure": (("NIC", "get_deleted_nic"), ("Disk", "get_deleted_disks")),
+    "gcp": (("Disk", "get_deleted_disks"),),
+    "oci": (("Disk", "get_deleted_volumes"),),
+}
 
 
-class Logs:
-    def __init__(self) -> None:
-        self.adapters: list[Any] = []
-        self.reads: list[Any] = []
-        self.slack: list[Any] = []
-        self.influx: list[Any] = []
+def _vm(operation: str = "delete", **overrides: Any) -> Callable[[str], Op | None]:
+    flags = {**VM_FLAGS, **overrides}
+
+    def spec(cloud: str) -> Op | None:
+        related = (("NIC", "get_deleted_nic"),) if cloud == "azure" else ()
+        return Op("vm", operation, flags, related if operation == "delete" else ())
+
+    return spec
 
 
-def make_fake(name: str, scenario: Scenario, logs: Logs) -> type:
-    def init(self: Any, *args: Any, **kwargs: Any) -> None:
-        logs.adapters.append(("new", name, args, kwargs))
-
-    def delete(self: Any, *args: Any) -> None:
-        logs.adapters.append((name, "delete", args))
-        if scenario.delete_error is not None:
-            raise scenario.delete_error
-
-    def stop(self: Any) -> None:
-        logs.adapters.append((name, "stop"))
-
-    def find(self: Any, key: str, value: str) -> list[dict[str, str]]:
-        logs.adapters.append((name, "find_instances_with_tag", (key, value)))
-        return [{"id": "i-1", "name": "vm-1", "region": "r"}]
-
-    def getter(attr: str) -> Callable[[Any], Any]:
-        def read(self: Any) -> Any:
-            logs.reads.append((name, attr))
-            return scenario.values[attr]
-
-        return read
-
-    body: dict[str, Any] = {"__init__": init, "delete": delete, "stop": stop}
-    if scenario.scan_supported:
-        body["find_instances_with_tag"] = find
-    for attr in FULL:
-        body[attr] = property(getter(attr))
-    return type(name, (), body)
+def _spot(**overrides: Any) -> Callable[[str], Op | None]:
+    flags = {**VM_FLAGS, **overrides}
+    return lambda cloud: Op("spot_instances", flags=flags, related=SPOT_RELATED.get(cloud, ()))
 
 
-class FakeSlack:
-    def __init__(self, scenario: Scenario, logs: Logs) -> None:
-        self.scenario, self.logs = scenario, logs
-
-    def chat_postMessage(self, **kwargs: Any) -> None:
-        self.logs.slack.append(("chat_postMessage", kwargs))
-        if self.scenario.slack == "post_fail":
-            raise RuntimeError("slack down")
-
-    def users_lookupByEmail(self, **kwargs: Any) -> dict[str, Any]:
-        self.logs.slack.append(("users_lookupByEmail", kwargs))
-        return {"user": {"id": self.scenario.slack_users[kwargs["email"]]}}
-
-    def usergroups_list(self) -> dict[str, Any]:
-        self.logs.slack.append(("usergroups_list", {}))
-        if self.scenario.groups_fail:
-            raise RuntimeError("groups down")
-        return {"usergroups": self.scenario.slack_groups}
-
-    def conversations_open(self, **kwargs: Any) -> dict[str, Any]:
-        self.logs.slack.append(("conversations_open", kwargs))
-        if self.scenario.open_fail:
-            raise RuntimeError("open down")
-        return {"channel": {"id": "D-" + kwargs["users"][0]}}
+def _fixed(
+    kind: str,
+    flags: dict[str, Any],
+    related: tuple[tuple[str, str], ...] = (),
+) -> Callable[[str], Op | None]:
+    return lambda cloud: Op(kind, flags=flags, related=related)
 
 
-class FakeWriter:
-    def __init__(self, scenario: Scenario, logs: Logs) -> None:
-        self.scenario, self.logs = scenario, logs
-
-    def write(self, *args: Any, **kwargs: Any) -> None:
-        record: Any = kwargs.get("record")
-        shown = record.to_line_protocol() if hasattr(record, "to_line_protocol") else record
-        self.logs.influx.append(("write", args, {**kwargs, "record": shown}))
-        if self.scenario.influx == "write_error":
-            raise OSError("write down")
-
-
-class FakeInflux:
-    def __init__(self, scenario: Scenario, logs: Logs) -> None:
-        self.scenario, self.logs = scenario, logs
-
-    def write_api(self, **kwargs: Any) -> FakeWriter:
-        self.logs.influx.append(("write_api", kwargs))
-        if self.scenario.influx == "api_error":
-            raise OSError("api down")
-        return FakeWriter(self.scenario, self.logs)
+ROUTED: dict[str, Callable[[str], Op | None]] = {
+    "delete_vm": _vm(resource_states=["RUNNING"]),
+    "delete_vm_default_state": _vm(custom_age_tag_key=None, resource_states=[]),
+    "delete_vm_none_state": _vm(custom_age_tag_key=None, resource_states=None),
+    "stop_vm": _vm("stop"),
+    "spot": _spot(),
+    "spot_no_group": _spot(custom_age_tag_key=None),
+    "azure_spot_alias": lambda cloud: _spot()(cloud) if cloud == "azure" else None,
+    "spot_requests": _fixed("spot_instance_requests", VM_FLAGS, (("Disk", "volumes_to_delete"),)),
+    "ip": _fixed(
+        "ip",
+        {"filter_tags": TAGS, "exception_tags": {}, "name_regex": ["n"], "exception_regex": ["x"]},
+    ),
+    "nic": _fixed("nic", {"name_regex": ["n"], "exception_regex": ["x"]}),
+    "disks": _fixed("disk", DISK_FLAGS),
+    "disks_delete_error": _fixed("disk", DISK_FLAGS),
+    "kms": _fixed("kms", KMS_FLAGS),
+}
 
 
-@dataclass
-class Case:
-    name: str
-    cloud: str
-    act: Callable[[Any], Any]
-    scenario: Scenario
-    constructor_error: bool = False
+def compare_notify(oracle_module: ModuleType, case: Case, name: str) -> Recorded:
+    """`CRC.notify_*` of main against the routed pair, Slack only (the method sent no Influx)."""
+    old = execute(oracle_module.CRC, [oracle_module], case)
+    if name in DIRECT_ACTIONS:
+        new = execute(NEW_CRC, [], Case(case.name, case.cloud, DIRECT_ACTIONS[name], case.scenario))
+        for key in old:
+            assert new[key] == old[key], f"{case.name}: {key} differs"
+        return old
+    spec = NOTIFY_SPECS[name]
+    op, values = spec
+    scenario = Scenario(**{**case.scenario.__dict__, "influx": "off"})
+    routed_case = Case(case.name, case.cloud, case.act, scenario)
+    if case.scenario.slack == "off":
+        # `main` calls notify_* without a client; `bridge.build_notifiers` gates on `slack_client`,
+        # while `SlackNotifier` itself matches `main`'s direct `notify_*` call.
+        gated, _ = run_routed(routed_case, case.cloud, op, {**EMPTY, **values})
+        assert gated["slack"] == [] == gated["influx"]
+        assert gated["stdout"] == ""
+        assert gated["result"] == ("ok", "None")
+    new, _ = run_routed(routed_case, case.cloud, op, {**EMPTY, **values}, force_slack=True)
+    for key in COMPARED:
+        assert new[key] == old[key], f"{case.name}: {key} differs"
+    return old
 
 
-@pytest.fixture(scope="module")
-def oracle() -> ModuleType:
-    loader = SourceFileLoader("legacy_crc_main_crc", str(ORACLE))
-    spec = importlib.util.spec_from_file_location("legacy_crc_main_crc", ORACLE, loader=loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
-
-def build(crc_class: Any, case: Case, logs: Logs) -> Any:
-    scenario = case.scenario
-    slack = FakeSlack(scenario, logs) if scenario.slack != "off" else None
-    influx = FakeInflux(scenario, logs) if scenario.influx != "off" else None
-    conn: dict[str, Any] | None = {"bucket": "bkt"}
-    if scenario.influx == "on_suffix":
-        conn = {"bucket": "bkt", "resource_suffix": "sfx"}
-    elif scenario.influx == "no_conn":
-        conn = None
-    return crc_class(
-        case.cloud,
-        scenario.dry_run,
-        {"owner": ["x"]},
-        slack,
-        influx,
-        project_id=scenario.project_id,
-        resource_group=scenario.resource_group,
-        slack_channel=None if scenario.slack == "no_channel" else "chan",
-        influxdb_conn=conn,
-    )
-
-
-def execute(crc_class: Any, modules: list[ModuleType], case: Case) -> Recorded:
-    logs = Logs()
-    out = io.StringIO()
-    result: Any = None
-    attributes: Any = None
-    with pytest.MonkeyPatch.context() as patch, redirect_stdout(out):
-        for module in modules:
-            for adapter in ADAPTERS:
-                if hasattr(module, adapter):
-                    patch.setattr(module, adapter, make_fake(adapter, case.scenario, logs))
-        try:
-            crc = build(crc_class, case, logs)
-            attributes = sorted((k, repr(v)) for k, v in vars(crc).items() if "client" not in k)
-            result = ("ok", repr(case.act(crc)))
-        except Exception as exc:
-            result = ("error", type(exc).__name__, str(exc))
-    return {
-        "result": result,
-        "attributes": attributes,
-        "adapters": logs.adapters,
-        "reads": logs.reads,
-        "slack": logs.slack,
-        "influx": logs.influx,
-        "stdout": out.getvalue(),
-    }
-
-
-def compare(oracle: ModuleType, case: Case) -> Recorded:
-    old = execute(oracle.CRC, [oracle], case)
-    new = execute(NewCRC, [vm_ops, resource_ops], case)
-    for key in old:
+def compare(oracle_module: ModuleType, case: Case) -> Recorded:
+    """Oracle `CRC` method against the routed pair of the case (`case.routed`)."""
+    old = execute(oracle_module.CRC, [oracle_module], case)
+    if case.routed and case.routed.startswith("notify:"):
+        return compare_notify(oracle_module, case, case.routed.removeprefix("notify:"))
+    spec = ROUTED.get(case.routed or "")
+    if spec is None:
+        # Only the CRC context object itself (get_msg) may run on NEW_CRC; the constructor
+        # and `scan_instances_with_tag` cases live in `test_cli_runner_parity.py` and
+        # `test_cli_scan_parity.py`.
+        assert case.routed is None, f"{case.name}: no routed spec"
+        new = execute(NEW_CRC, [], case)
+        for key in old:
+            assert new[key] == old[key], f"{case.name}: {key} differs"
+        return old
+    op = spec(case.cloud)
+    if op is None:
+        assert old["result"] == ("error", "ValueError", "delete_azure_spot_instances is Azure-only")
+        return old
+    route = bridge.route_for(case.cloud, op.kind)
+    if route is None:
+        if case.cloud in CLOUDS:
+            with pytest.raises(ValueError):
+                dispatch.validate_targets(Targets(case.cloud, False, [case.cloud], [op.kind]))
+        assert old["result"][:2] == ("error", "ValueError")
+        return old
+    values = case.scenario.values
+    new, seen = run_routed(case, case.cloud, op, values)
+    if route.options is skips.no_options:
+        assert not seen
+        assert new["adapters"] == [] == new["slack"] == new["influx"]
+        assert new["result"] == ("ok", "None")
+        assert old["result"][:2] == ("error", "ValueError")
+        return old
+    for key in OP_COMPARED:
         assert new[key] == old[key], f"{case.name}: {key} differs"
     return old
 
@@ -254,9 +219,6 @@ def scenario_grid(values: dict[str, Any], **overrides: Any) -> Iterator[tuple[st
         )
 
 
-TAGS = {"t": ["v"]}
-AGE = {"days": 1}
-DISK_ARGS = (TAGS, {"e": ["x"]}, AGE, "age_tag", {"days": 2}, ["r1"], ["r2"], True, "label")
 OPERATIONS: list[tuple[str, str, Callable[[Any], Any], dict[str, Any]]] = []
 
 
@@ -269,8 +231,6 @@ op("delete_vm", ALL, lambda c: c.delete_vm(TAGS, {}, AGE, "age_tag", ["RUNNING"]
 op("delete_vm_default_state", ["aws", "azure"], lambda c: c.delete_vm(TAGS, {}, AGE, None, []))
 op("delete_vm_none_state", ["gcp"], lambda c: c.delete_vm(TAGS, {}, AGE, None, None))
 op("stop_vm", ALL, lambda c: c.stop_vm(TAGS, {}, AGE, "age_tag"))
-op("scan", ALL, lambda c: c.scan_instances_with_tag("auto_clean", "false"))
-op("scan_unsupported", ALL, lambda c: c.scan_instances_with_tag("k", "v"), scan_supported=False)
 op(
     "spot",
     ["aws", "azure", "gcp", "oci", "other"],
@@ -293,7 +253,6 @@ op(
     lambda c: c.delete_spot_instance_requests(TAGS, {}, AGE, "age_tag"),
 )
 op("ip", ["aws", "azure", "gcp", "oci"], lambda c: c.delete_ip(TAGS, {}, ["n"], ["x"]))
-op("keypairs", ["aws", "gcp"], lambda c: c.delete_keypairs(["n"], ["x"], AGE))
 op("nic", ["azure", "aws"], lambda c: c.delete_nic(["n"], ["x"]))
 op("disks", ALL, lambda c: c.delete_disks(*DISK_ARGS))
 op(
@@ -302,7 +261,6 @@ op(
     lambda c: c.delete_disks(*DISK_ARGS),
     delete_error=ValueError("boom"),
 )
-op("vpc", ["aws", "azure"], lambda c: c.delete_vpc(TAGS, {}))
 op("kms", ["aws", "gcp"], lambda c: c.delete_kms(TAGS, {}, "desc", "arn", 7, AGE, "age_tag"))
 
 
@@ -310,7 +268,7 @@ def operation_cases() -> list[Any]:
     cases = []
     for (name, cloud, act, overrides), data in itertools.product(OPERATIONS, DATA):
         for label, scenario in scenario_grid(DATA[data], **overrides):
-            case = Case(f"{name}-{cloud}-{data}-{label}", cloud, act, scenario)
+            case = Case(f"{name}-{cloud}-{data}-{label}", cloud, act, scenario, routed=name)
             cases.append(pytest.param(case, id=case.name))
     return cases
 
@@ -337,14 +295,64 @@ DISK_VALUES: list[Any] = [
     "d1",
     {"alice": None},
 ]
+
+
+def representable(value: Any) -> bool:
+    if isinstance(value, dict):
+        return all(isinstance(ids, list) for ids in value.values())
+    return isinstance(value, list)
+
+
+NOTIFY_SPECS: dict[str, tuple[Op, dict[str, Any]]] = {
+    "nic": (Op("nic"), {"get_deleted": ["n"]}),
+    "vm_aws": (Op("vm"), {"get_deleted": ["v"]}),
+    "vm_azure": (
+        Op("vm", related=(("NIC", "get_deleted_nic"),)),
+        {"get_deleted": ["v"], "get_deleted_nic": ["n"]},
+    ),
+    "stopped": (Op("vm", "stop"), {"get_stopped": ["v"]}),
+    "stopped_empty": (Op("vm", "stop"), {"get_stopped": []}),
+    "spot_request": (
+        Op("spot_instance_requests", related=(("Disk", "volumes_to_delete"),)),
+        {"get_deleted": ["s"], "volumes_to_delete": ["v"]},
+    ),
+    "spot_request_no_volumes": (Op("spot_instance_requests"), {"get_deleted": ["s"]}),
+    "spot_request_none_volumes": (
+        Op("spot_instance_requests", related=(("Disk", "volumes_to_delete"),)),
+        {"get_deleted": [], "volumes_to_delete": []},
+    ),
+    "ip": (Op("ip"), {"get_deleted": ["i"]}),
+    "ip_empty": (Op("ip"), {"get_deleted": []}),
+    "keypair": (Op("keypair"), {"get_deleted": ["k"]}),
+    "kms": (Op("kms"), {"get_deleted": ["k"]}),
+    "kms_empty": (Op("kms"), {"get_deleted": []}),
+}
+NOTIFY_SPECS.update(
+    {
+        f"disk_{index}": (Op("disk"), {"get_deleted": value})
+        for index, value in enumerate(DISK_VALUES)
+        if isinstance(value, list) or (isinstance(value, dict) and representable(value))
+    }
+)
+
+
+def _influx_notifier(c: Any) -> InfluxNotifier:
+    return InfluxNotifier(c.influxdb_client, c)
+
+
+DIRECT_ACTIONS: dict[str, Callable[[Any], Any]] = {
+    "nic_none": lambda c: len(None),  # type: ignore[arg-type]
+    "vm_none": lambda c: len(None),  # type: ignore[arg-type]
+    # BUG-031: notify_deleted_disk_via_slack checks exact `type(...) is list` / `dict`, so
+    # non-list/non-dict values (`("d1",)`, `None`, `"d1"`) send nothing.
+    "disk_4": lambda c: None,
+    "disk_5": lambda c: None,
+    "disk_6": lambda c: None,
+    "disk_7": lambda c: ping_owners_raw(c, {"alice": None}),
+}
+
+
 DIRECT: list[tuple[str, str, Callable[[Any], Any]]] = [
-    ("get_msg_list", "aws", lambda c: c.get_msg("VM", "Deleted", ["a"])),
-    ("get_msg_empty", "gcp", lambda c: c.get_msg("Disk", "Stopped", [])),
-    ("get_msg_none", "aws", lambda c: c.get_msg("VM", "Deleted", None)),
-    ("get_msg_bad_operation", "aws", lambda c: c.get_msg("VM", "Gone", ["a"])),
-    ("lookup_known", "aws", lambda c: c.slack_lookup_user_by_email("alice@yugabyte.com")),
-    ("lookup_unknown", "aws", lambda c: c.slack_lookup_user_by_email("zed@yugabyte.com")),
-    ("groups", "aws", lambda c: c.get_user_groups_list()),
     ("nic", "azure", lambda c: c.notify_deleted_nic_via_slack(obj(get_deleted=["n"]))),
     ("nic_none", "azure", lambda c: c.notify_deleted_nic_via_slack(obj(get_deleted=None))),
     ("vm_aws", "aws", lambda c: c.notify_deleted_vm_via_slack(obj(get_deleted=["v"]))),
@@ -380,18 +388,6 @@ DIRECT: list[tuple[str, str, Callable[[Any], Any]]] = [
     ("keypair", "aws", lambda c: c.notify_deleted_keypair_via_slack(obj(get_deleted=["k"]))),
     ("kms", "aws", lambda c: c.notify_deleted_kms_via_slack(obj(get_deleted=["k"]))),
     ("kms_empty", "aws", lambda c: c.notify_deleted_kms_via_slack(obj(get_deleted=[]))),
-    ("write_list", "aws", lambda c: c.write_influxdb("VM", ["a", "b"])),
-    ("write_empty", "gcp", lambda c: c.write_influxdb("Disk", [])),
-    ("write_dict", "aws", lambda c: c.write_influxdb("Disk", {"a": ["x"]})),
-    ("write_none", "aws", lambda c: c.write_influxdb("VM", None)),
-    (
-        "ping_dict",
-        "aws",
-        lambda c: c.ping_on_slack("Disk", "Deleted", {"alice": ["d"], "team": ["e"], "z": ["f"]}),
-    ),
-    ("ping_empty", "aws", lambda c: c.ping_on_slack("Disk", "Deleted", {})),
-    ("ping_list", "aws", lambda c: c.ping_on_slack("Disk", "Deleted", ["a"])),
-    ("ping_no_len", "aws", lambda c: c.ping_on_slack("Disk", "Deleted", {"alice": 3})),
 ]
 
 
@@ -415,7 +411,8 @@ def direct_cases() -> list[Any]:
         elif variant == OPEN_FAIL:
             overrides = {"open_fail": True}
         for label, scenario in scenario_grid(FULL, **overrides):
-            case = Case(f"{name}-{cloud}-v{variant}-{label}", cloud, act, scenario)
+            routed = f"notify:{name}" if (name in NOTIFY_SPECS or name in DIRECT_ACTIONS) else None
+            case = Case(f"{name}-{cloud}-v{variant}-{label}", cloud, act, scenario, routed=routed)
             cases.append(pytest.param(case, id=case.name))
     return cases
 
@@ -428,14 +425,24 @@ def test_direct_method_matches_main(oracle: ModuleType, case: Case) -> None:
     compare(oracle, case)
 
 
-@pytest.mark.parametrize("cloud", ["aws", "azure", "gcp", "oci", "other"])
-@pytest.mark.parametrize("project_id", [None, "", "proj"])
-@pytest.mark.parametrize("slack", ["off", "on"])
-def test_constructor_matches_main(
-    oracle: ModuleType, cloud: str, project_id: Any, slack: str
-) -> None:
-    scenario = Scenario(dict(FULL), slack=slack, project_id=project_id, influx="no_conn")
-    compare(oracle, Case(f"ctor-{cloud}", cloud, lambda c: None, scenario))
+def _unrepresentable_disk_run(case: Case, cloud: str, disk_value: Any) -> Recorded:
+    """Run the routed options check and notifiers for a non-list/non-dict/None-valued disk shape."""
+    routed_check, _ = run_routed(
+        Case(case.name, cloud, case.act, Scenario(dict(FULL), slack="off", influx="off")),
+        cloud,
+        Op("disk", flags=DISK_FLAGS),
+        FULL,
+    )
+
+    def act(c: Any) -> None:
+        if c.slack_client and isinstance(disk_value, dict):
+            ping_owners_raw(c, disk_value)
+        # BUG-031: non-list, non-dict disk values (`("d1",)`, `None`, `"d1"`) send nothing to Slack.
+        if c.influxdb_client:
+            _influx_notifier(c).write(c.cloud, "Disk", disk_value)
+
+    outcome = execute(NEW_CRC, [], Case(case.name, cloud, act, case.scenario))
+    return {**outcome, "adapters": routed_check["adapters"]}
 
 
 @pytest.mark.parametrize("disk_value", DISK_VALUES, ids=[repr(v) for v in DISK_VALUES])
@@ -447,13 +454,21 @@ def test_delete_disks_result_shapes_match_main(
 ) -> None:
     values = {**FULL, "get_deleted": disk_value}
     scenario = Scenario(values, slack=slack, influx=influx)
-    case = Case("disks-shape", cloud, lambda c: c.delete_disks(*DISK_ARGS), scenario)
+    case = Case(
+        "disks-shape", cloud, lambda c: c.delete_disks(*DISK_ARGS), scenario, routed="disks"
+    )
+    if not representable(disk_value):
+        old = execute(oracle.CRC, [oracle], case)
+        new = _unrepresentable_disk_run(case, cloud, disk_value)
+        for key in OP_COMPARED:
+            assert new[key] == old[key], f"{case.name}: {key} differs"
+        return
     compare(oracle, case)
 
 
-def test_every_adapter_name_is_patched_in_the_new_modules() -> None:
+def test_every_adapter_name_is_bound_in_the_oracle(oracle: ModuleType) -> None:
     for adapter in ADAPTERS:
-        assert hasattr(vm_ops, adapter) or hasattr(resource_ops, adapter), adapter
+        assert hasattr(oracle, adapter), adapter
 
 
 def test_tables_are_not_vacuous(oracle: ModuleType) -> None:

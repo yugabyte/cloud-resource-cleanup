@@ -9,9 +9,10 @@ import pytest
 
 from crc.core.cleaner import Operation, RunContext
 from crc.core.registry import DEFAULT_REGISTRY
-from crc.oci.spot_vm import SpotVM, SpotVmCleaner, SpotVmRuntime
+from crc.oci.spot_vm import SpotVmCleaner
 from crc.oci.spot_vm.client import RegionClients
 from crc.oci.spot_vm.decide import SpotVmSettings
+from tests.helpers_ad_spot_engine import run_through_engine
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
 MUTATING = ("terminate_instance", "delete_volume")
@@ -48,7 +49,19 @@ class FakeClient:
         self.calls.append(("list_instances", compartment_id))
         return types.SimpleNamespace(data=self.instances)
 
-    def list_volume_attachments(self, compartment_id: str, instance_id: str) -> Any:
+    def list_volume_attachments(
+        self, compartment_id: str, instance_id: str = "", volume_id: str = ""
+    ) -> Any:
+        if volume_id:
+            self.calls.append(("list_volume_attachments", volume_id))
+            owners = [owner for owner, volumes in self.attachments.items() if volume_id in volumes]
+            data = [
+                types.SimpleNamespace(
+                    volume_id=volume_id, lifecycle_state="ATTACHED", instance_id=owner
+                )
+                for owner in owners
+            ]
+            return types.SimpleNamespace(data=data)
         self.calls.append(("list_volume_attachments", instance_id))
         data = [
             types.SimpleNamespace(volume_id=v, lifecycle_state="ATTACHED")
@@ -66,7 +79,9 @@ class FakeClient:
     def get_volume(self, volume_id: str) -> Any:
         self.calls.append(("get_volume", volume_id))
         tags = self.volume_tags.get(volume_id, {})
-        return types.SimpleNamespace(data=types.SimpleNamespace(freeform_tags=tags))
+        return types.SimpleNamespace(
+            data=types.SimpleNamespace(freeform_tags=tags, time_created=NOW)
+        )
 
     def delete_volume(self, volume_id: str) -> None:
         self.calls.append(("delete_volume", volume_id))
@@ -115,7 +130,7 @@ def test_plan_skips_young_untagged_and_unmatched() -> None:
 def test_plan_keeps_instance_when_attachment_listing_fails() -> None:
     client = FakeClient([inst("a")])
 
-    def failing(compartment_id: str, instance_id: str) -> Any:
+    def failing(compartment_id: str, instance_id: str = "", volume_id: str = "") -> Any:
         raise RuntimeError("down")
 
     client.list_volume_attachments = failing  # type: ignore[method-assign]
@@ -148,6 +163,7 @@ def test_apply_terminates_waits_then_deletes_checked_volumes() -> None:
         ("terminate_instance", "a", "False"),
         ("get_instance", "a"),
         ("get_volume", "v1"),
+        ("list_volume_attachments", "v1"),
         ("delete_volume", "v1"),
         ("get_volume", "v2"),
     ]
@@ -198,19 +214,17 @@ def test_registered_and_factory_requires_a_positive_age(monkeypatch: pytest.Monk
     assert isinstance(cleaner, SpotVmCleaner)
 
 
-def test_adapter_with_injected_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OCI_PRIVATE_KEY_CONTENT", "not-a-key")
-    monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
+def test_engine_runs_cleaner_with_injected_fakes() -> None:
     client = FakeClient([inst("a")], {"a": ["v1"]})
-    runtime = SpotVmRuntime(
-        clients_factory=lambda region: RegionClients(client, client, "cmp"),
-        list_regions=lambda: ["r1"],
-        pager=paginate,
-        clock=lambda: NOW,
+    cleaner = SpotVmCleaner(
+        lambda region: RegionClients(client, client, "cmp"),
+        lambda: ["r1"],
+        SpotVmSettings(filter_tags={"env": ["ci"]}, age={"hours": 5}),
+        paginate,
+        engine=True,
     )
-    spot = SpotVM(False, {"env": ["ci"]}, {}, {"hours": 5}, "", {}, runtime)
-    spot.delete()
-    assert spot.get_deleted == ["name-a"]
-    assert spot.get_deleted_volumes == ["v1"]
-    assert spot.delete_count == 1
+    outcome = run_through_engine("oci", "spot_instances", lambda _ctx: cleaner, context())
+    assert outcome.result is not None
+    assert outcome.result.succeeded == ("name-a",)
+    assert outcome.result.related["Disk"] == ("v1",)
     assert mutations(client) == [("terminate_instance", "a", "False"), ("delete_volume", "v1")]

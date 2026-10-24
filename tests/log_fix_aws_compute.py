@@ -1,9 +1,9 @@
-"""Log-fix rules of the LOG-AWS1 lane (AWS compute: disk, spot instance requests, VM).
+"""Log-fix rules of the AWS compute cleaners (disk, spot instance requests, VM).
 
 Pass ``rules=RULES`` to ``expected_logs`` / ``expected_outcome`` of ``tests.helpers_log_fix``
-for every test that uses a bug ID of this lane. ``RULES`` is the core rules plus the rules below.
+for every test that uses one of these bug IDs. ``RULES`` is the core rules plus the rules below.
 A rule may only change the level of a line or insert documented new lines; it never drops an
-oracle line or changes its text. Contract: ``docs/refactor/LOGGING.md``.
+oracle line or changes its text. Contract: ``docs/logging.md``.
 """
 
 import logging
@@ -26,14 +26,14 @@ def _is_info(record: LogRecordKey) -> bool:
 
 
 def _is_skip_line(record: LogRecordKey) -> bool:
-    """LOG-AWS1: the INFO "Skipping <resource> ..." line of one resource (WARNING and ERROR
+    """The INFO "Skipping <resource> ..." line of one resource (WARNING and ERROR
     skip lines flag an anomaly and keep their level)."""
     return _is_info(record) and any(p.search(str(record[-1])) for p in _SKIP_LINE_PATTERNS)
 
 
 def _bug_356(records: list[LogRecordKey]) -> list[LogRecordKey]:
-    """BUG-356: the core rule (age-check lines become DEBUG), then the INFO skip lines of this
-    lane become DEBUG too, text unchanged."""
+    """BUG-356: the core rule (age-check lines become DEBUG), then the INFO skip lines
+    of the AWS compute cleaners become DEBUG too, text unchanged."""
     return [
         _with_level(record, logging.DEBUG) if _is_skip_line(record) else record
         for record in helpers_log_fix.RULES["BUG-356"](records)
@@ -41,7 +41,7 @@ def _bug_356(records: list[LogRecordKey]) -> list[LogRecordKey]:
 
 
 def _bug_358_aws_vm(records: list[LogRecordKey]) -> list[LogRecordKey]:
-    """BUG-358 (AWS VM, LOG-AWS1): the INFO dump of an instance's raw tag list is DEBUG."""
+    """BUG-358: the INFO dump of an instance's raw tag list is DEBUG."""
     return [
         _with_level(record, logging.DEBUG)
         if _is_info(record) and _AWS_TAG_DUMP.search(str(record[-1]))

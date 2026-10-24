@@ -1,37 +1,29 @@
 """Engine: plan/apply orchestration with fake cleaners and notifiers in an isolated registry."""
 
 import datetime
-import importlib.util
 import logging
 import sys
 from collections.abc import Iterator
-from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
 
-from crc.cli import resource_ops, vm_ops
 from crc.core.cleaner import Candidate, Operation, Plan, Result, RunContext
 from crc.core.engine import KIND_LABELS, RunOutcome, run
 from crc.core.registry import Registry, UnknownCleanerError
 from crc.core.report import Report
 from crc.core.selection import RESOURCES, Selection
+from tests.helpers_oracle import load_legacy_crc
 
-ROOT = Path(__file__).resolve().parent.parent
-NOW = datetime.datetime(2026, 1, 1)
+NOW = datetime.datetime(2026, 1, 1)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 
 
 @pytest.fixture
 def crc_cli() -> Iterator[ModuleType]:
-    spec = importlib.util.spec_from_file_location("crc_cli_engine", ROOT / "crc.py")
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["crc_cli_engine"] = module
-    spec.loader.exec_module(module)
+    module = load_legacy_crc("crc_cli_engine")
     yield module
-    del sys.modules["crc_cli_engine"]
+    sys.modules.pop("crc_cli_engine", None)
 
 
 def make_context(dry_run: bool = False, operation: Operation = Operation.DELETE) -> RunContext:
@@ -89,15 +81,11 @@ class FakeNotifier:
             raise self.error
 
 
-def make_registry(
-    events: list[str], pairs: list[tuple[str, str]], **kwargs: object
-) -> Registry:
+def make_registry(events: list[str], pairs: list[tuple[str, str]], **kwargs: object) -> Registry:
     registry = Registry()
     for cloud, kind in pairs:
 
-        def factory(
-            context: RunContext, cloud: str = cloud, kind: str = kind
-        ) -> FakeCleaner:
+        def factory(context: RunContext, cloud: str = cloud, kind: str = kind) -> FakeCleaner:
             return FakeCleaner(cloud, kind, events, **kwargs)  # type: ignore[arg-type]
 
         registry.register(cloud, kind)(factory)
@@ -213,7 +201,6 @@ def test_fail_open_notifier_error_is_logged_and_swallowed(
             lambda c: c.delete_disks({}, {}, {}, None, {}, [], [], False, None),
         ),
         ("aws", "ip", Operation.DELETE, "ElasticIPs", lambda c: c.delete_ip({}, {}, [], [])),
-        ("aws", "keypair", Operation.DELETE, "KeyPairs", lambda c: c.delete_keypairs([], [], {})),
         ("azure", "nic", Operation.DELETE, "NIC", lambda c: c.delete_nic([], [])),
         (
             "aws",
@@ -272,7 +259,7 @@ def test_notifier_order_and_influx_fail_open_match_crc_py(
                 crc_events.append(tag)
             raise OSError("influx down")
 
-    monkeypatch.setattr(vm_ops if hasattr(vm_ops, attr) else resource_ops, attr, FakeResource)
+    monkeypatch.setattr(crc_cli, attr, FakeResource)
     crc_obj = crc_cli.CRC(
         cloud,
         False,
@@ -334,5 +321,5 @@ def test_unknown_kind_has_no_report_label() -> None:
 
 
 def test_every_selectable_kind_has_a_label() -> None:
-    for kind in (*RESOURCES, "vpc", "spot_instance_requests", "spot_instances"):
+    for kind in (*RESOURCES, "spot_instance_requests", "spot_instances"):
         assert kind in KIND_LABELS

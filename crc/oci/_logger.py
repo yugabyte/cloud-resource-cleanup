@@ -1,6 +1,6 @@
 # Copyright (c) Yugabyte, Inc.
 
-"""Thin glue between the OCI cleaners and `crc.core.logger` (rung LOG-OCI).
+"""Thin glue between the OCI cleaners and `crc.core.logger`.
 
 Log text only: these helpers report what a cleaner did to the current run and never decide
 anything. `monotonic` is bound by name so a test that patches `time.monotonic` (the spot VM

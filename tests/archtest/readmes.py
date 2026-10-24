@@ -36,10 +36,10 @@ README_EXCLUDED_DIRS = frozenset(
         "dist",
     }
 )
-# Directories (relative posix paths, "" is the repository root) exempt on their own only:
-# the root README is the user-facing CLI document, .cursor holds only environment.json,
-# and .cursor/skills only groups skill directories.
-README_EXEMPT_DIRS = frozenset({"", ".cursor", ".cursor/skills"})
+# Directories (relative posix paths, "" is the repository root) exempt on their own only: the root
+# README is the user-facing CLI document. Directories without Python code anywhere beneath them
+# (docs/, .cursor/, tests/legacy/) need no README at all.
+README_EXEMPT_DIRS = frozenset({""})
 
 
 def sections(markdown: str) -> dict[str, str]:
@@ -113,13 +113,12 @@ def package_dirs(root: Path, legacy: frozenset[str]) -> dict[Path, list[Path]]:
     return found
 
 
-def directories_with_files(root: Path) -> list[Path]:
-    """Directories that contain files (directly or in subdirectories), minus exclusions."""
+def directories_with_code(root: Path) -> list[Path]:
+    """Directories that contain `.py` files (directly or in subdirectories), minus exclusions."""
     found: set[Path] = set()
     for current, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in README_EXCLUDED_DIRS)
-        files = [f for f in filenames if not f.endswith((".pyc", ".pyo"))]
-        if not files:
+        if not any(f.endswith(".py") for f in filenames):
             continue
         directory = Path(current)
         while True:
@@ -151,7 +150,7 @@ def _check_sections(root: Path, directory: Path) -> list[str]:
         return [
             violation(
                 RULE,
-                f"{where}/ contains files but has no README.md",
+                f"{where}/ contains Python code but has no README.md",
                 f"Create {where}/README.md with the sections "
                 + ", ".join(f"`## {s}`" for s in REQUIRED_SECTIONS)
                 + ". A package with non-legacy modules lists every public name in backticks "
@@ -211,13 +210,13 @@ def _check_symbols(where: str, api_section: str, required: set[str]) -> list[str
 
 
 def check_readmes(root: Path, legacy: frozenset[str]) -> list[str]:
-    """Every directory with files has the four sections; non-legacy packages also sync symbols.
+    """Every directory with Python code has the four sections; non-legacy packages sync symbols.
 
-    A package whose modules are all legacy has no symbol sync until its refactor rung removes
-    its files from the legacy list.
+    A package whose modules are all legacy has no symbol sync until its files are removed from
+    the legacy list.
     """
     packages = package_dirs(root, legacy)
-    directories = set(directories_with_files(root)) | set(packages)
+    directories = set(directories_with_code(root)) | set(packages)
     problems: list[str] = []
     for directory in sorted(directories):
         problems.extend(_check_readme(root, directory, packages.get(directory, [])))

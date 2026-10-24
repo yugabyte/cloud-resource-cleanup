@@ -9,8 +9,9 @@ import pytest
 
 from crc.core.cleaner import Operation, RunContext
 from crc.core.registry import get
-from crc.gcp.spot_vm import SpotSettings, SpotVM, SpotVMCleaner
+from crc.gcp.spot_vm import SpotSettings, SpotVMCleaner
 from crc.gcp.spot_vm.client import InstanceView
+from tests.helpers_ad_spot_engine import run_through_engine
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
 OLD = (NOW - datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S.%f%z")
@@ -30,7 +31,7 @@ def instance(name: str, disks: Sequence[Any] = (), labels: Mapping[str, str] | N
     return types.SimpleNamespace(
         name=name,
         status="RUNNING",
-        labels=dict(labels or {}),
+        labels=dict(labels if labels is not None else {"team": "ci"}),
         scheduling=types.SimpleNamespace(preemptible=True, provisioning_model=""),
         disks=list(disks),
         metadata=None,
@@ -165,10 +166,14 @@ def test_registered_factory_requires_project_id_and_positive_age() -> None:
         )
 
 
-def test_adapter_runs_the_cleaner_with_an_injected_client() -> None:
+def test_engine_runs_the_cleaner_with_an_injected_client() -> None:
     client = FakeClient([instance("a", [leftover("d1")])])
-    spot = SpotVM(False, "p", {}, {}, {"days": 1}, None, {}, client=client, clock=lambda: NOW)
-    spot.delete()
-    assert spot.get_deleted == ["a"]
-    assert spot.delete_count == 1
-    assert spot.get_deleted_disks == ["p/z/d1"]
+    outcome = run_through_engine(
+        "gcp",
+        "spot_instances",
+        lambda _ctx: SpotVMCleaner(client, SETTINGS),
+        context(dry_run=False),
+    )
+    assert outcome.result is not None
+    assert outcome.result.succeeded == ("a",)
+    assert outcome.result.related["Disk"] == ("p/z/d1",)

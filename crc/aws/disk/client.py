@@ -3,6 +3,7 @@
 """Typed Protocols of the boto3 calls the EBS disk cleaner uses, and the default factories."""
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import boto3
@@ -74,3 +75,12 @@ def boto3_cloudwatch(region: str) -> CloudWatchClient:
 def all_regions() -> Sequence[str]:
     """Regions of the account, with the connectivity fallback of `get_all_regions`."""
     return get_all_regions(SERVICE_NAME, DEFAULT_REGION)
+
+
+@dataclass(frozen=True, slots=True)
+class DiskRuntime:
+    """Injected collaborators: the SDK client factories and the region lister."""
+
+    ec2_factory: Ec2Factory = boto3_ec2
+    cloudwatch_factory: CloudWatchFactory = boto3_cloudwatch
+    list_regions: RegionLister = all_regions

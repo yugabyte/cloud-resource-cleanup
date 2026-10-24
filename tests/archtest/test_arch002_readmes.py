@@ -11,7 +11,7 @@ from tests.archtest.readmes import (
     README_EXCLUDED_DIRS,
     README_EXEMPT_DIRS,
     check_readmes,
-    directories_with_files,
+    directories_with_code,
     documented_names,
     sections,
 )
@@ -77,7 +77,7 @@ def test_arch002_selftest_legacy_only_package_still_needs_readme(tmp_path: Path)
     _package(tmp_path, None)
     messages = check_readmes(tmp_path, frozenset({"crc/core/__init__.py"}))
     _assert_formatted(messages)
-    assert "crc/core/ contains files but has no README.md" in messages[0]
+    assert "crc/core/ contains Python code but has no README.md" in messages[0]
 
 
 def test_arch002_selftest_legacy_only_package_needs_sections(tmp_path: Path) -> None:
@@ -93,23 +93,23 @@ def _write(root: Path, relative: str, text: str = "x\n") -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def test_arch002_selftest_fires_on_any_directory_with_files(tmp_path: Path) -> None:
-    _write(tmp_path, "docs/refactor/notes.md")
+def test_arch002_selftest_fires_on_any_directory_with_code(tmp_path: Path) -> None:
+    _write(tmp_path, "tools/sub/mod.py")
     messages = check_readmes(tmp_path, frozenset())
     _assert_formatted(messages)
     assert [m.split("\n")[0] for m in messages] == [
-        "ARCH-002: docs/ contains files but has no README.md",
-        "ARCH-002: docs/refactor/ contains files but has no README.md",
+        "ARCH-002: tools/ contains Python code but has no README.md",
+        "ARCH-002: tools/sub/ contains Python code but has no README.md",
     ]
 
 
 def test_arch002_selftest_fires_on_parent_directory_without_direct_files(tmp_path: Path) -> None:
-    _write(tmp_path, "docs/refactor/notes.md")
-    _write(tmp_path, "docs/refactor/README.md", GOOD_README)
+    _write(tmp_path, "tools/sub/mod.py")
+    _write(tmp_path, "tools/sub/README.md", GOOD_README)
     messages = check_readmes(tmp_path, frozenset())
     _assert_formatted(messages)
     assert [m.split("\n")[0] for m in messages] == [
-        "ARCH-002: docs/ contains files but has no README.md"
+        "ARCH-002: tools/ contains Python code but has no README.md"
     ]
 
 
@@ -117,8 +117,9 @@ def test_arch002_selftest_every_repo_directory_fires_when_readme_removed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     legacy = load_legacy(REPO_ROOT)
-    checked = directories_with_files(REPO_ROOT)
-    assert REPO_ROOT / "docs" in checked
+    checked = directories_with_code(REPO_ROOT)
+    assert REPO_ROOT / "tests" in checked
+    assert REPO_ROOT / "docs" not in checked
     real_walk = os.walk
     real_is_file = Path.is_file
 
@@ -143,20 +144,21 @@ def test_arch002_selftest_every_repo_directory_fires_when_readme_removed(
         monkeypatch.setattr(Path, "is_file", fake_is_file)
         messages = check_readmes(REPO_ROOT, legacy)
         _assert_formatted(messages)
-        assert any(f"{where}/ contains files but has no README.md" in m for m in messages), where
+        expected = f"{where}/ contains Python code but has no README.md"
+        assert any(expected in m for m in messages), where
 
 
 def test_arch002_selftest_passes_with_readme_in_every_directory(tmp_path: Path) -> None:
-    for directory in ("docs/refactor", "tests"):
-        _write(tmp_path, f"{directory}/notes.txt")
-    for directory in ("docs", "docs/refactor", "tests"):
+    for directory in ("tools/sub", "tests"):
+        _write(tmp_path, f"{directory}/mod.py")
+    for directory in ("tools", "tools/sub", "tests"):
         _write(tmp_path, f"{directory}/README.md", GOOD_README)
     assert check_readmes(tmp_path, frozenset()) == []
 
 
 def test_arch002_selftest_non_package_readme_needs_sections(tmp_path: Path) -> None:
-    _write(tmp_path, "docs/a.md")
-    _write(tmp_path, "docs/README.md", "# docs\n\n## Purpose\nx\n")
+    _write(tmp_path, "tools/a.py")
+    _write(tmp_path, "tools/README.md", "# tools\n\n## Purpose\nx\n")
     messages = check_readmes(tmp_path, frozenset())
     _assert_formatted(messages)
     assert "Public API" in messages[0]
@@ -164,25 +166,41 @@ def test_arch002_selftest_non_package_readme_needs_sections(tmp_path: Path) -> N
 
 def test_arch002_selftest_ignores_excluded_directories(tmp_path: Path) -> None:
     for name in sorted(README_EXCLUDED_DIRS):
-        _write(tmp_path, f"{name}/inner/file.txt")
+        _write(tmp_path, f"{name}/inner/file.py")
     assert check_readmes(tmp_path, frozenset()) == []
 
 
-def test_arch002_selftest_ignores_root_and_cursor_files(tmp_path: Path) -> None:
+def test_arch002_selftest_ignores_root_files(tmp_path: Path) -> None:
     _write(tmp_path, "Makefile")
-    _write(tmp_path, ".cursor/environment.json", "{}")
-    assert set(README_EXEMPT_DIRS) == {"", ".cursor", ".cursor/skills"}
+    _write(tmp_path, "crc.py")
+    assert set(README_EXEMPT_DIRS) == {""}
     assert check_readmes(tmp_path, frozenset()) == []
 
 
-def test_arch002_selftest_cursor_subdirectories_are_checked(tmp_path: Path) -> None:
-    _write(tmp_path, ".cursor/rules/00-map.mdc")
-    _write(tmp_path, ".cursor/skills/crc-python-refactor/SKILL.md")
+def test_arch002_selftest_directories_without_python_need_no_readme(tmp_path: Path) -> None:
+    for relative in (
+        "docs/archive/reviews/R1.md",
+        "docs/logging.md",
+        ".cursor/environment.json",
+        ".cursor/rules/00-map.mdc",
+        ".cursor/skills/crc-maintain/SKILL.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "tests/legacy/crc_main.txt",
+    ):
+        _write(tmp_path, relative)
+    _write(tmp_path, "tests/mod.py")
+    _write(tmp_path, "tests/README.md", GOOD_README)
+    assert check_readmes(tmp_path, frozenset()) == []
+
+
+def test_arch002_selftest_directory_with_python_beside_docs_still_fires(tmp_path: Path) -> None:
+    _write(tmp_path, "docs/notes.md")
+    _write(tmp_path, "docs/tool/mod.py")
     messages = check_readmes(tmp_path, frozenset())
     _assert_formatted(messages)
     assert [m.split("\n")[0] for m in messages] == [
-        "ARCH-002: .cursor/rules/ contains files but has no README.md",
-        "ARCH-002: .cursor/skills/crc-python-refactor/ contains files but has no README.md",
+        "ARCH-002: docs/ contains Python code but has no README.md",
+        "ARCH-002: docs/tool/ contains Python code but has no README.md",
     ]
 
 
@@ -193,10 +211,10 @@ def test_arch002_selftest_non_legacy_package_keeps_symbol_sync(tmp_path: Path) -
     assert "Thing" in messages[0]
 
 
-def test_arch002_directories_with_files_skips_bytecode_only_dirs(tmp_path: Path) -> None:
+def test_arch002_directories_with_code_skips_bytecode_only_dirs(tmp_path: Path) -> None:
     _write(tmp_path, "pkg/mod.pyc")
     _write(tmp_path, "pkg2/mod.py")
-    assert directories_with_files(tmp_path) == [tmp_path / "pkg2"]
+    assert directories_with_code(tmp_path) == [tmp_path / "pkg2"]
 
 
 def test_arch002_selftest_fires_without_readme(tmp_path: Path) -> None:

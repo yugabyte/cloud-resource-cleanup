@@ -145,6 +145,19 @@ def resolve_targets(options: Options) -> Targets:
     )
 
 
+def check_scan_tag(options: Options) -> None:
+    """Reject an empty or blank `--scan_tag` before any cleaner can run (BUG-344).
+
+    An empty tag is falsy, so without this check the read-only scan would be skipped and the
+    destructive cleanup of the same command line would run.
+    """
+    scan_tag = options.scan_tag
+    if scan_tag is not None and not str(scan_tag).strip():
+        raise ValueError(
+            "--scan_tag must not be empty; use KEY=VALUE format, e.g. auto_clean=false"
+        )
+
+
 def validate_values(options: Options) -> None:
     """Check the type of the list and dict flags, in the order of `main`."""
     is_valid_list("resource_states", options.resource_states)
@@ -155,4 +168,3 @@ def validate_values(options: Options) -> None:
     is_valid_dict("age", options.age)
     is_valid_dict("detach_age", options.detach_age)
     is_valid_dict("influxdb", options.influxdb)
-

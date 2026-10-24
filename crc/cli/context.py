@@ -1,9 +1,11 @@
 """The settings every CRC object of one run shares, and the CRC factory."""
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from crc.cli.runner import CRC
+from crc.core import age
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,3 +35,14 @@ def make_crc(context: RunContext, cloud: Any) -> CRC:
         context.slack_channel,
         context.influxdb,
     )
+
+
+def read_max_age_env() -> str | None:
+    """The raw `MAX_AGE` text: the variable `set_max_age` exports from `--max_age`, or one a
+    Jenkins job sets itself. Read at each age decision, like the original `is_old`."""
+    return os.environ.get("MAX_AGE")
+
+
+def install_max_age_source() -> None:
+    """Give `crc.core.age` the `MAX_AGE` reader; `crc/core` itself reads no environment."""
+    age.set_max_age_source(read_max_age_env)

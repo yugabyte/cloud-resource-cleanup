@@ -80,11 +80,11 @@ class Base:
             identity_client = self.get_identity_client()
             subscriptions = identity_client.list_region_subscriptions(self.tenancy_id).data
             regions: list[str] = [sub.region_name for sub in subscriptions]
-            logging.info(f"Retrieved list of OCI regions: {regions}")
+            logging.info("Retrieved list of OCI regions: %s", regions)
             return regions
         except CONNECTIVITY_ERRORS as e:
             log_skipped_region(self.region, "list_region_subscriptions", e)
-            logging.warning(f"Falling back to static region list: {DEFAULT_REGION_FALLBACK}")
+            logging.warning("Falling back to static region list: %s", DEFAULT_REGION_FALLBACK)
             return DEFAULT_REGION_FALLBACK
 
     def get_compute_client(self, region: str) -> Any:

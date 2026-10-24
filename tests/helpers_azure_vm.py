@@ -2,8 +2,10 @@
 
 `FakeAzure.install` replaces the SDK classes `crc.azu._base` builds, the sleep of the NIC retry
 loop and the environment `Base` reads, so the real `Base` and the real delete helpers run against
-the fake. `list_all` is lazy and records every item it yields, which shows how listing and
-acting interleave. Scripts list, per name, one entry per call: an exception to raise, or None.
+the fake. `list` (configured group) and `list_all` (subscription, used by the frozen oracle) are
+lazy and record every item they yield, which shows how listing and acting interleave. A VM made
+with `group=` is only listed by `list` for that group; `list_all` lists every VM.
+Scripts list, per name, one entry per call: an exception to raise, or None.
 """
 
 import datetime
@@ -29,6 +31,7 @@ def vm(
     hours: float = 100,
     statuses: Any = RUNNING,
     created: Any = _UNSET,
+    group: str | None = None,
 ) -> types.SimpleNamespace:
     """A tagged VM (`env=ci` unless `tags` is given) created `hours` before NOW. `statuses` is
     a tuple of display statuses, or an exception that `instance_view` raises."""
@@ -37,7 +40,23 @@ def vm(
         tags={"env": "ci"} if tags is _UNSET else tags,
         time_created=NOW - datetime.timedelta(hours=hours) if created is _UNSET else created,
         statuses=statuses,
+        group=group,
     )
+
+
+def _status(index: int, display: Any) -> types.SimpleNamespace:
+    """A status entry: a plain string gets the code the Azure API gives it (the first one is the
+    provisioning state, a later `VM <state>` one the power state); a `(code, display)` tuple sets
+    the code, `None` for no code, explicitly."""
+    if isinstance(display, tuple):
+        code, display = display
+    elif index == 0:
+        code = "ProvisioningState/succeeded"
+    elif isinstance(display, str) and display.startswith("VM "):
+        code = f"PowerState/{display[3:]}"
+    else:
+        code = None
+    return types.SimpleNamespace(code=code, display_status=display)
 
 
 def not_found(status_code: int | None = 404) -> HttpResponseError:
@@ -69,12 +88,21 @@ class FakeVirtualMachines:
         self.azure.calls.append(("list_all",))
         if self.azure.list_error is not None:
             raise self.azure.list_error
-        return self._pages()
+        return self._pages(None)
 
-    def _pages(self) -> Iterator[Any]:
+    def list(self, resource_group: str, /) -> Iterator[Any]:
+        self.azure.calls.append(("list", resource_group))
+        if self.azure.list_error is not None:
+            raise self.azure.list_error
+        return self._pages(resource_group)
+
+    def _pages(self, resource_group: str | None) -> Iterator[Any]:
         for item in self.azure.vms:
             if isinstance(item, Exception):
                 raise item
+            group = getattr(item, "group", None)
+            if resource_group is not None and group not in (None, resource_group):
+                continue
             self.azure.calls.append(("yield", getattr(item, "name", None)))
             yield item
 
@@ -84,9 +112,7 @@ class FakeVirtualMachines:
         statuses = getattr(item, "statuses", RUNNING)
         if isinstance(statuses, Exception):
             raise statuses
-        return types.SimpleNamespace(
-            statuses=[types.SimpleNamespace(display_status=s) for s in statuses]
-        )
+        return types.SimpleNamespace(statuses=[_status(i, s) for i, s in enumerate(statuses)])
 
     def begin_delete(self, resource_group: str, name: str, /) -> FakePoller:
         self.azure.calls.append(("vm_begin_delete", resource_group, name))
@@ -97,6 +123,13 @@ class FakeVirtualMachines:
 
     def begin_power_off(self, resource_group: str, name: str, /) -> object:
         self.azure.calls.append(("begin_power_off", resource_group, name))
+        error = self.azure.next_error(self.azure.off_script, name)
+        if error is not None:
+            raise error
+        return object()
+
+    def begin_deallocate(self, resource_group: str, name: str, /) -> object:
+        self.azure.calls.append(("begin_deallocate", resource_group, name))
         error = self.azure.next_error(self.azure.off_script, name)
         if error is not None:
             raise error

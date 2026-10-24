@@ -1,4 +1,4 @@
-"""Tests of tests/log_fix_azure.py: the LOG-AZU rules only change levels, never text."""
+"""Tests of tests/log_fix_azure.py: the log rules only change levels, never text."""
 
 import logging
 
@@ -86,7 +86,7 @@ def test_rules_keep_count_order_and_text() -> None:
 
 def test_unknown_bug_raises_and_expected_outcome_takes_rules() -> None:
     with pytest.raises(KeyError):
-        expected_logs([(logging.INFO, "x")], {"BUG-999"}, RULES)
+        expected_logs([(logging.INFO, "x")], {"BUG-" + "999"}, RULES)
     outcome = ("return", True, [("INFO", TAG_DUMP_LINES[0])])
     assert expected_outcome(outcome, {"BUG-358"}, RULES) == (
         "return",

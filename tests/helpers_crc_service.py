@@ -39,7 +39,7 @@ def _outcome(caplog: pytest.LogCaptureFixture, call: Callable[[], Any]) -> Outco
     try:
         value = call()
         kind, result = "return", value
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         kind, result = "raise", (type(e).__name__, _norm(str(e)), type(e.__cause__).__name__)
     records = [(r.levelname, _norm(r.getMessage())) for r in caplog.records]
     return kind, result, records

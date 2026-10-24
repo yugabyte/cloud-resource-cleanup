@@ -1,8 +1,7 @@
 # Copyright (c) Yugabyte, Inc.
 
-"""Azure VM cleaner package; `crc.azu.vm.VM` stays the import path `crc.py` uses."""
+"""Azure VM cleaner package: `VmCleaner`, settings, SDK Protocols and registry factory."""
 
-from crc.azu.vm.adapter import VM
 from crc.azu.vm.cleaner import (
     DEFAULT_INSTANCE_STATES,
     Tally,
@@ -26,7 +25,6 @@ from crc.azu.vm.client import (
 
 __all__ = [
     "DEFAULT_INSTANCE_STATES",
-    "VM",
     "ComputeFactory",
     "InstanceStatus",
     "InstanceView",

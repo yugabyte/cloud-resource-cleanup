@@ -1,7 +1,7 @@
-"""LOG-AZU bug rules for the oracle log rewriter in ``tests/helpers_log_fix.py``.
+"""Azure bug rules for the oracle log rewriter in ``tests/helpers_log_fix.py``.
 
-Parity tests of the Azure lane pass ``rules=RULES`` to ``expected_logs`` / ``expected_outcome``.
-Contract: ``docs/refactor/LOGGING.md``.
+Parity tests of the Azure cleaners pass ``rules=RULES`` to ``expected_logs`` / ``expected_outcome``.
+Contract: ``docs/logging.md``.
 """
 
 import ast

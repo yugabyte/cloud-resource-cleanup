@@ -7,16 +7,13 @@ from typing import Any
 import pytest
 from botocore.exceptions import EndpointConnectionError
 
-from crc.aws.keypairs import (
-    KeyPairCleaner,
-    KeyPairRuntime,
-    KeyPairs,
-    build_keypair_cleaner,
-)
+from crc.aws.keypairs import KeyPairCleaner, build_keypair_cleaner
+from crc.core import engine
 from crc.core.cleaner import Candidate, Operation, Plan, RunContext
-from crc.core.registry import get
+from crc.core.registry import Registry, get
+from crc.core.selection import Selection
 
-NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
+NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 NOW_UTC = NOW.astimezone(datetime.UTC)
 
 
@@ -154,11 +151,13 @@ def test_registered_factory_builds_cleaner_from_context() -> None:
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
-def test_keypairs_adapter_uses_injected_runtime(dry_run: bool) -> None:
+def test_engine_runs_the_cleaner_with_injected_clients(dry_run: bool) -> None:
     aws = Aws({"r1": [pair("a", 10), pair("b", 1)]})
-    runtime = KeyPairRuntime(aws.client, aws.list_regions, lambda: NOW)
-    keypairs = KeyPairs(dry_run, [], [], {"hours": 5}, runtime)
-    keypairs.delete()
-    assert keypairs.get_deleted == ["a"]
-    assert keypairs.count == 1
+    registry = Registry()
+    registry.register("aws", "keypair")(lambda ctx: cleaner(aws))
+    (outcome,) = engine.run(Selection((("aws", "keypair"),)), context(dry_run=dry_run), registry)
+    assert [c.id for c in outcome.plan.candidates] == ["a"]
+    assert (outcome.result is None) is dry_run
+    if outcome.result is not None:
+        assert outcome.result.succeeded == ("a",)
     assert (mutating(aws.calls) == []) is dry_run

@@ -1,120 +1,136 @@
 # ARCHITECTURE.md
 
-Target architecture of the CRC Python refactor. `docs/refactor/PLAN.md` owns the
-rung schedule; this file owns the rules. Modules that do not exist yet are
-targets, built rung by rung.
+How CRC is built today. Safety rules for destructive behaviour are in
+[CLEANUP_SAFETY.md](CLEANUP_SAFETY.md); mechanical checks are in
+[tests/archtest/README.md](tests/archtest/README.md) and are not repeated here.
 
-## Layout
+## Run flow
 
 ```
-crc.py                    thin CLI: parse flags, build config, call engine
-crc/core/age.py           age parsing, positive-age checks, is-old
-crc/core/policy.py        tag, notags, exception tags, regex, age, custom age tag
-crc/core/registry.py      provider and cleaner registration decorators
-crc/core/cleaner.py       Cleaner protocol: plan() is read-only, apply() mutates
-crc/core/engine.py        selects cleaners, runs plan/apply, builds the report
-crc/core/report.py        report model used by notifiers and stdout
-crc/notify/slack.py       Slack sink
-crc/notify/influx.py      InfluxDB sink
-crc/aws|azu|gcp|oci/      one module per resource, registered by decorator
+python crc.py <flags>
+  crc/cli/args*.py        parse flags (get_argparser), JSON-style values via ast.literal_eval
+  crc/cli/main.py         read tokens, validate flags and targets, set MAX_AGE, build clients
+  crc/cli/dispatch.py     validate every pair, then loop over (cloud, resource); begin/finish
+                          the run log per pair
+    crc/cli/bridge.py     route_for(cloud, kind) -> Route; run_routed runs the pair
+  crc/core/engine.py      registry.get(cloud, kind)(context) -> plan() -> apply() -> Report
+  crc/notify/*            Slack then Influx send the Report
 ```
 
-## Dependency rules
+`crc.py` only re-exports `crc/cli`. `--scan_tag` is a separate read-only path
+(`crc/cli/scan.py`) that never deletes.
 
-- `crc.py` -> `crc.core.engine` -> `crc.core.*`.
-- Cloud packages (`crc.aws`, `crc.azu`, `crc.gcp`, `crc.oci`) depend on
-  `crc.core` only and never import each other.
-- `crc.core` never imports a cloud package or a cloud SDK (`boto3`, `azure`,
-  `google`, `oci`). Policy and age logic are pure functions on plain data.
-- Notifiers (`crc.notify`) consume the report model only.
-- Enforced by import-linter (`lint-imports`, config in `pyproject.toml`): the four
-  cloud packages are independent, `crc.core` imports no cloud package, service,
-  notify module or cloud/telemetry SDK, and `crc.notify` imports no cloud package
-  or service.
+## Layers
 
-## Cleaner contract
+| Package | Role |
+|---------|------|
+| `crc/cli` | Flags, validation, dispatch, the bridge to the engine, route tables. The layer that reads env, prints and exits (what other layers may not do: ARCH-003) |
+| `crc/core` | Engine, registry, `Cleaner` protocol, report model, run log, pure policy and age code. Imports no cloud package or SDK |
+| `crc/<cloud>` | `aws`, `azu`, `gcp`, `oci`: one package per resource kind, built on `crc.core`; clouds never import each other |
+| `crc/notify` | Slack and InfluxDB sinks that consume only the `Report` |
+
+Import direction is enforced by import-linter (`make lint`); read the contracts in `pyproject.toml`
+before moving code between layers.
+
+## Bridge and routes
+
+`crc/cli/bridge.py` runs one routed pair: optional `Route.precheck`, `init_run_logging()`, a
+`RunContext(dry_run, operation, options, now)`, a one-pair `Selection`, then `engine.run` with the
+notifiers from `build_notifiers` (Slack when a client is set, then Influx when one is set; none for
+`Route.notify=False`). A route table per cloud (`crc/cli/routes/<cloud>.py`) maps a kind to a
+`Route(options, notify, precheck)`. The `options` builder turns parsed flags into the
+`context.options` keys that the cleaner factory reads; values stay raw (`None` stays `None`).
+`bridge.build_registry` and `build_notifiers` are looked up at call time so tests can patch them
+(`tests/helpers_cli_routes.py`). Every supported pair has a route, so every pair runs through the
+engine; the two warn-only pairs (`spot_instances` on AWS, `spot_instance_requests` off AWS) have
+skip-only routes (`crc/cli/routes/skips.py`) and register no cleaner.
+
+## Engine and registry
+
+`crc/core/engine.py` `run(selection, context, registry, notifiers)` handles each `(cloud, kind)` in
+order: build the cleaner with `registry.get(cloud, kind)(context)`, require
+`supports(operation)`, call `plan()`, call `apply()` only when `context.dry_run` is false, build a
+`Report` (`Report.from_plan` or `from_result`) and send it to the notifiers. A cleaner exception
+propagates and ends the run. A notifier with `fail_open` has its error logged and swallowed;
+others re-raise. `KIND_LABELS` maps each kind to its report label.
+
+`crc/core/registry.py` maps `(cloud, kind)` to a factory `Callable[[RunContext], Cleaner]`.
+`@register("aws", "keypair")` stores it in `DEFAULT_REGISTRY`; a duplicate raises
+`DuplicateCleanerError`, a missing pair `UnknownCleanerError`. Importing the cloud package in the
+route file is what registers the cleaner. Tests build their own `Registry()`.
+
+## Cleaner: plan and apply
 
 ```python
 class Cleaner(Protocol):
     cloud: str
     kind: str
     def supports(self, operation: Operation) -> bool: ...
-    def plan(self, context: RunContext) -> Plan: ...   # discovery and policy, read-only
-    def apply(self, plan: Plan, context: RunContext) -> Result: ...  # all mutating cloud calls
+    def plan(self, context: RunContext) -> Plan: ...                 # read-only
+    def apply(self, plan: Plan, context: RunContext) -> Result: ...  # all mutations
 ```
 
-Defined in `crc/core/cleaner.py` with `Operation` (delete, stop), `Candidate`, `Skipped`,
-`Plan`, `Failure`, `Result` and `RunContext`.
+Types are frozen dataclasses in `crc/core/cleaner.py`: `Candidate`, `Skipped`, `Plan`, `Failure`,
+`Result`, `RunContext`, `Operation` (delete, stop).
 
-- `plan()` makes no mutating cloud call (no delete, stop, cancel, tag write).
-  It backs `--dry_run`: a dry run is `plan()` without `apply()`.
-- `apply()` performs the destructive calls for items already in the plan, in
-  the order required by `CLEANUP_SAFETY.md` (for example AWS spot: cancel the
-  request before terminating the instance).
-- Plans, results and the run context are frozen dataclasses; their mappings are
-  read-only copies. SDK objects do not cross the cleaner boundary; cleaners
-  normalise to `Candidate`.
-- `RunContext.now` is supplied by the caller. Cleaners never read the clock for age
-  decisions; they compare against `context.now`.
-- SDK clients, policy and logger are injected through the constructor so tests
-  pass mocks.
-- `crc/core/report.py` turns `Result` or `Plan` into a `Report` that yields the Slack
-  texts, the Influx points and payload `crc.py` sends today. Notifiers only send it.
+- `plan()` lists, normalises SDK data to `Candidate`, applies policy and decides; it makes no
+  mutating call. `--dry_run` is `plan()` without `apply()`. The plan covers every region before
+  `apply()` mutates, so a listing error in a later region stops the pair before any delete.
+- `apply()` performs the mutations for the plan only, in the order `CLEANUP_SAFETY.md` requires,
+  and isolates per-resource errors only where that file allows.
+- Age decisions compare against `context.now`; cleaners never read the clock or environment.
+  SDK clients, policy and logger are injected through the constructor.
+- SDK objects do not cross the boundary; the plan holds `Candidate` values.
 
-## Decorator registration
+## Core policy and age
 
-Cleaners self-register with a typed decorator, for example
-`@register(cloud="aws", kind="disk")`, defined in `crc/core/registry.py`. The
-registry maps `(cloud, kind)` to a cleaner factory: a callable that takes the
-`RunContext` and returns a `Cleaner` (normally the class itself). `get(cloud, kind)`,
-`kinds_for(cloud)` and `clouds()` read it back. Registering the same pair twice
-raises `DuplicateCleanerError`; unknown lookups raise `UnknownCleanerError`. Rules:
-no `@singleton`, no hidden mutable globals beyond the default `Registry` instance owned
-by the registry module, no import-time cloud calls. Tests build their own `Registry()`
-so registrations never leak. The engine selects cleaners from the registry using the
-parsed `--cloud` / `--resource` values.
+Pure functions on plain data, no I/O: `crc/core/policy*.py` (tags, `notags`, exception tags, name
+regex, managed-resource checks, age) and `crc/core/age*.py` (parse `--age`, `--detach_age`,
+`--max_age`, custom age tags, `is_old`). `crc/core` reads no environment (ARCH-003): `is_old` calls the
+`MAX_AGE` source that `crc/cli/context.py` installs (`install_max_age_source`, which passes
+`read_max_age_env` to `crc.core.age.set_max_age_source`); `main` exports the variable from `--max_age`. Fail closed: an unreadable custom age tag or bad age keeps
+the resource and records a skip. Cleaners fetch and normalise; policy decides. See
+`crc/core/README.md` for the function list.
 
-## Legacy ratchet
+## Notify and run log
 
-Modules that existed before the refactor (`crc.py`, each pre-existing
-`crc/**/*.py` module and `tests/*.py` file) are exempt from ruff and mypy
-through one explicit per-file list: ruff `extend-exclude` and the
-`[[tool.mypy.overrides]]` `ignore_errors` block in `pyproject.toml`. No
-directory or glob entries, so every new file (for example under `crc/core`,
-`crc/notify` or new tests) is checked by default. mypy checks `crc/` and
-`tests/` through `files`; `crc.py` is left out because its module name clashes
-with the `crc` package, so `crc.py` is a thin entry point and its code lives in the
-mypy-checked `crc/cli/` package. The list may only shrink. After the refactor rungs it
-holds only the five hash-locked safety test files (kept as on `main` so their hashes
-stay valid). A rung removes the modules it refactors from both places in
-the same change, and the refactored code must then pass ruff (complexity 10,
-statements 40, args 6) and mypy strict. Narrow the lists as modules move;
-never widen them.
+`crc/notify/slack.py` and `crc/notify/influx.py` build messages and points from the `Report`
+(`crc/core/report.py`); they hold no cloud logic. `crc/core/logger.py` is the per-run log
+(`RUN START`, `ACTION`, `RESULT`, ...); format and rules are in [docs/logging.md](docs/logging.md).
 
-Enforced by `tests/archtest` (rule IDs in `tests/archtest/README.md`): ARCH-001 ratchet
-only shrinks (baseline in `legacy_baseline.txt`), ARCH-002 package README sections and
-symbol sync, ARCH-003 no `re`, wall clock, env reads, `print` or `sys.exit` in cloud
-packages, ARCH-004 files of at most 400 lines, ARCH-005 read-only `plan()`, and SAF-LOCK
-(`SAF-NNN` tags in `CLEANUP_SAFETY.md` tied to hashed tests in `safety_lock.json`).
+## Add a cleaner
 
-## Add a resource cleaner
+Use `crc/aws/keypairs/` (cleaner) and `crc/cli/routes/aws.py` (route) as the model.
 
-1. Read `CLEANUP_SAFETY.md` and the nearest existing cleaner in the same cloud.
-2. Create `crc/<cloud>/<resource>.py`. Do not import another cloud package.
-3. Normalise cloud data to `Candidate` (`crc.core.cleaner`); build `Plan` and `Result`
-   from the frozen dataclasses there instead of defining new ones.
-4. Implement the class with an injected SDK client and policy. Require a real
-   age gate in `__init__` for destructive resources. Fail closed on missing or
-   invalid age, tags or telemetry.
-5. `plan(context)`: list, normalise, apply policy from `crc.core.policy`, compare ages
-   with `context.now`. No mutation.
-6. `apply(plan, context)`: perform the deletes or stops in the documented order, isolate
-   per-resource errors only where `CLEANUP_SAFETY.md` says so, chain errors with
-   `raise ... from e`.
-7. Register it with `@register(cloud=..., kind=...)` from `crc.core.registry`; the
-   factory takes the `RunContext` and returns the cleaner. Also implement `supports()`.
-8. Add offline tests under `tests/` using mocks: happy path, fail-closed path,
-   dry run makes no mutating call, call order for destructive sequences.
-9. Update the package README and, for destructive behaviour, `CLEANUP_SAFETY.md`.
-10. Remove the module from the legacy lists if it was listed, then run
-    `make check`.
+1. Read `CLEANUP_SAFETY.md`, `docs/refactor/BUGS.md` rows for the resource, and the nearest cleaner
+   of the same cloud and its package README.
+2. Create `crc/<cloud>/<kind>/` with `crc/<cloud>/<kind>/client.py` (a `Protocol` for the SDK
+   calls you use), `crc/<cloud>/<kind>/cleaner.py`, `crc/<cloud>/<kind>/__init__.py` with
+   `__all__`, and a `README.md` with the four required sections.
+3. Write the cleaner class with `supports`, `plan` and `apply` as above. Require a real age gate
+   for destructive kinds; fail closed on missing or invalid age, tags or telemetry.
+4. Register a factory: `@register("<cloud>", "<kind>")` on a function that builds the cleaner from
+   `context.options` (use `crc/core/policy*.py`, do not write ad hoc regex or age code).
+5. Route it: in `crc/cli/routes/<cloud>.py` import the package (`# noqa: F401`), add an options
+   builder from `Options` to the keys the factory reads, and `"<kind>": Route(builder)`. Put gates
+   the CLI must still raise (for example the AWS disk opt-in) in `Route.precheck`.
+6. A kind that is new to the CLI also needs, in this order: the value in `RESOURCES`
+   (`crc/cli/constants.py`, and `RESOURCES` or `EXTRA_RESOURCES` in `crc/core/selection.py`) and
+   the `--resource` choices (`crc/cli/args.py`); its pair rule in `crc/cli/pairs.py`
+   (`SUPPORTED_CLOUDS`) when some clouds lack it; a label constant in `crc/core/report.py` and its
+   entry in `KIND_LABELS` (`crc/core/engine.py`). This changes the CLI contract: follow the flag
+   workflow in [AGENTS.md](AGENTS.md). Add one `AddedResource` (and the new `RESOURCE_HELP`) to the
+   ADDED tables of `tests/helpers_ag_cli_added.py`; the oracle `tests/legacy/crc_main.txt` is never
+   edited, and new kinds are not blocked.
+7. Tests, all offline: the cleaner (happy path, fail-closed path, dry run makes no mutating call,
+   call order of destructive steps) and the routed CLI path. Extend the CLI parity tests that
+   reach the cleaner through the route: `tests/test_cli_main_parity.py` `ROUTED_CALLS` (AWS kinds;
+   the other clouds are in `tests/helpers_routed_<cloud>.py`) and the per-cloud
+   `tests/test_cli_bridge_<cloud>.py` (`tests/test_cli_bridge_parity.py` covers `keypair`). They use
+   `FakeCleaners` from `tests/helpers_cli_routes.py`, which records the options the route passed
+   to the factory. The production Jenkins commands are in `tests/fixtures/jenkins_commands.txt`,
+   checked by `tests/test_jenkins_contract.py`; keep it green unchanged.
+8. Update the package README and, for destructive behaviour, `CLEANUP_SAFETY.md`; then
+   `pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt` (once),
+   `make check`, `make smoke-offline` (a dry run per Jenkins `(cloud, kind)` pair, SDKs faked, network denied) and
+   `make raise-test-floor`.

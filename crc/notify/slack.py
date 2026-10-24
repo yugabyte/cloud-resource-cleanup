@@ -1,13 +1,13 @@
-"""Slack sink: the `notify_*` messages, owner pings and the scan-tag cleanup summary.
+"""Slack sink: the cleanup report messages, owner pings and the scan-tag cleanup summary.
 
-Moved from `crc/notifications.py` and `crc.py` without behaviour change. The Slack client is
-injected (a `slack_sdk.WebClient` in production, a fake in tests); nothing here creates one.
+The Slack client is injected (a `slack_sdk.WebClient` in production, a fake in tests);
+nothing here creates one. The line splitting is in `slack_chunks`, the posting and owner
+pings in `slack_owners`.
 """
 
-import copy
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,15 +15,27 @@ import dateutil.parser
 from slack_sdk.errors import SlackApiError
 
 from crc.core.cleaner import RunContext
-from crc.core.report import DISK, Report, format_owner_ping
+from crc.core.report import DISK, Report
+from crc.notify.slack_chunks import (
+    ITEMS_PER_MESSAGE,
+    SLACK_SAFE_CHARS,
+    _chunk_lines_into_messages,
+)
+from crc.notify.slack_owners import NOT_FOUND, SlackClient, SlackPoster
 
 logger = logging.getLogger(__name__)
 
-SlackClient = Any
-
-SLACK_SAFE_CHARS = 2800
-ITEMS_PER_MESSAGE = 20
-NOT_FOUND = "not_found"
+__all__ = [
+    "ITEMS_PER_MESSAGE",
+    "NOT_FOUND",
+    "SLACK_SAFE_CHARS",
+    "SlackClient",
+    "SlackNotifier",
+    "_chunk_lines_into_messages",
+    "human_readable_timedelta",
+    "notify_cleanup",
+    "send_slack_message",
+]
 
 
 def human_readable_timedelta(start_time: datetime | str | None) -> str:
@@ -33,7 +45,7 @@ def human_readable_timedelta(start_time: datetime | str | None) -> str:
     if isinstance(start_time, str):
         try:
             start_dt = dateutil.parser.isoparse(start_time)
-        except Exception:
+        except Exception:  # noqa: BLE001 - display-only start time, falls back to a dash
             return "-"
     else:
         start_dt = start_time
@@ -76,46 +88,6 @@ def _format_item_row(it: Mapping[str, Any]) -> str:
     return f"• *{name}* | `{rid}` | {instance_type} | {region}{state_part}{uptime_part}{view}"
 
 
-def _split_lines(lines: Sequence[str], max_chars: int, max_items: int) -> list[list[str]]:
-    messages: list[list[str]] = []
-    cur: list[str] = []
-    cur_len = 0
-    for line in lines:
-        line_len = len(line) + 1
-        if (len(cur) >= max_items) or (cur and cur_len + line_len > max_chars):
-            messages.append(cur)
-            cur = []
-            cur_len = 0
-        cur.append(line)
-        cur_len += line_len
-    if cur:
-        messages.append(cur)
-    return messages
-
-
-def _chunk_lines_into_messages(
-    header_block: list[dict[str, Any]],
-    lines: Sequence[str],
-    max_chars: int = SLACK_SAFE_CHARS,
-    max_items: int = ITEMS_PER_MESSAGE,
-) -> list[list[dict[str, Any]]]:
-    """One block list per Slack message: at most `max_items` lines and `max_chars` characters
-    per section. The header is deep-copied, never mutated."""
-    messages = _split_lines(lines, max_chars, max_items)
-    block_messages: list[list[dict[str, Any]]] = []
-    total = len(messages)
-    for idx, chunk in enumerate(messages, start=1):
-        prefix = copy.deepcopy(header_block)
-        if total > 1 and prefix and "text" in prefix[0]:
-            original_text = prefix[0]["text"].get("text", "")
-            prefix[0]["text"]["text"] = f"{original_text} — Part {idx}/{total}"
-        blocks = prefix[:]
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(chunk)}})
-        block_messages.append(blocks)
-
-    return block_messages
-
-
 def send_slack_message(
     client: SlackClient,
     channel: str,
@@ -134,7 +106,7 @@ def send_slack_message(
             err = ""
             try:
                 err = e.response.get("error")
-            except Exception:
+            except Exception:  # noqa: BLE001 - retry loop, error text falls back to str(e)
                 err = str(e)
             logger.warning(
                 "Slack API error posting to %s: %s (attempt %d/%d)",
@@ -206,20 +178,16 @@ def notify_cleanup(  # noqa: PLR0913, PLR0917 - the seven positional parameters 
             continue
 
 
-class SlackNotifier:
-    """Sends a `Report` to a Slack channel as `crc.py` does today.
+class SlackNotifier(SlackPoster):
+    """Sends a `Report` to the Slack channel the CLI configures.
 
     `fail_open` is False on purpose: a failed `chat_postMessage` is caught and printed per
-    message here (as in `crc.py`), but an error from `conversations_open` while pinging an
+    message here, but an error from `conversations_open` while pinging an
     individual owner propagates, and the engine must let it propagate too.
     """
 
     name = "slack"
     fail_open = False
-
-    def __init__(self, client: SlackClient, channel: str) -> None:
-        self.client = client
-        self.channel = channel
 
     def send(self, report: Report, context: RunContext) -> None:
         """Post every Slack message of `report`; an owner-grouped report pings the owners."""
@@ -229,86 +197,6 @@ class SlackNotifier:
             return
         for message in report.slack_messages():
             self.post(message.text, link_names=message.link_names)
-
-    def post(self, text: str, link_names: bool = False) -> None:
-        """Post `text` to `#<channel>`; a failure is printed and swallowed.
-
-        The channel is always prefixed with `#`, so a channel that already starts with `#`
-        becomes `##name` (BUG-034).
-        """
-        try:
-            if link_names:
-                self.client.chat_postMessage(
-                    channel="#" + self.channel, text=text, link_names=True
-                )
-            else:
-                self.client.chat_postMessage(channel="#" + self.channel, text=text)
-        except Exception as e:
-            print(f"Failed to send message '{text}' to Slack channel '{self.channel}': {e}")
-
-    def lookup_user_by_email(self, email: str) -> Any:
-        """Slack user id of `email`, or "not_found" on any error."""
-        try:
-            user_info = self.client.users_lookupByEmail(email=email)
-            return user_info["user"]["id"]
-        except:  # noqa: E722 - the bare except of `crc.py` is kept, it also catches BaseException
-            return NOT_FOUND
-
-    def user_groups(self) -> Any:
-        """Slack user groups, or the string "not_found" on any error (callers iterate it)."""
-        try:
-            user_groups = self.client.usergroups_list()
-            return user_groups["usergroups"]
-        except:  # noqa: E722 - the bare except of `crc.py` is kept, it also catches BaseException
-            print("Something Went Wront! Could not get user_groups.")
-            return NOT_FOUND
-
-    def ping_owners(
-        self,
-        report: Report,
-        resource: str,
-        lookup_user: Callable[[str], Any] | None = None,
-        get_groups: Callable[[], Any] | None = None,
-    ) -> None:
-        """Ping each owner of `report.by_owner`: users 1:1, groups and untagged in the channel.
-
-        `lookup_user` and `get_groups` default to this notifier's own lookups; `crc.py` passes
-        its `CRC` methods so that overriding or patching them keeps working.
-        """
-        lookup = lookup_user or self.lookup_user_by_email
-        groups = get_groups or self.user_groups
-        owners = report.by_owner or {}
-        user_groups = groups()
-        for owner, ids in owners.items():
-            print(f"Pinging '{owner}'")
-            member_id = lookup(f"{owner}@yugabyte.com")
-            if member_id == NOT_FOUND:
-                self._ping_in_channel(report, resource, owner, ids, user_groups)
-            else:
-                self._ping_user(report, resource, owner, ids, member_id)
-
-    def _ping_in_channel(
-        self, report: Report, resource: str, owner: str, ids: Sequence[str], user_groups: Any
-    ) -> None:
-        member_id = NOT_FOUND
-        for user_group in user_groups:
-            if user_group["handle"] == owner:
-                member_id = user_group["id"]
-                break
-        mention = None if member_id == NOT_FOUND else f"<!subteam^{member_id}>"
-        text = format_owner_ping(report, resource, owner, ids, mention)
-        self.post(text, link_names=True)
-
-    def _ping_user(
-        self, report: Report, resource: str, owner: str, ids: Sequence[str], member_id: str
-    ) -> None:
-        text = format_owner_ping(report, resource, owner, ids, f"<@{member_id}>")
-        response = self.client.conversations_open(users=[member_id])
-        channel_id = response["channel"]["id"]
-        try:
-            self.client.chat_postMessage(channel=channel_id, text=text, link_names=True)
-        except Exception as e:
-            print(f"Failed to send message '{text}' to Slack channel '{channel_id}': {e}")
 
     def send_cleanup(
         self,

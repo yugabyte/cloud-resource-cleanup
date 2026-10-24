@@ -213,9 +213,9 @@ def _run(
     with caplog.at_level(logging.DEBUG):
         try:
             result = module.get_all_regions(case.service, case.default_region)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
             error = (type(exc).__name__, str(exc))
-    logs = [(r.levelno, r.msg, r.args, r.getMessage()) for r in caplog.records]
+    logs = [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
     captured = capsys.readouterr()
     return {
         "calls": calls,

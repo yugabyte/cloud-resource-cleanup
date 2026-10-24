@@ -6,16 +6,12 @@ alwaysApply: false
 
 # Cloud packages
 
-- Cloud packages must not import each other (import-linter enforces it).
-- Depend on `crc.core` only; do not reach into `crc.py`.
-- Each resource implements `plan()` (read-only) and `apply()` (mutating) and is
-  registered with the registry decorator once `crc/core` exists.
-- Inject SDK clients; do not build them at import time.
-- Destructive resources need a real age gate; fail closed on bad age, tags or
-  telemetry. Keep destructive call order from `CLEANUP_SAFETY.md`.
-- Do not catch broad `Exception` silently. Catch specific SDK errors, log the
-  resource id, chain with `raise ... from e`.
-- No extra retry layer on top of SDK retries.
-- Legacy modules are listed in `pyproject.toml`; when you refactor one, remove
-  it from the lists. Never add one.
-- Tests mock the SDK; never call a real cloud API.
+- A cleaner is registered with `@register("<cloud>", "<kind>")` and routed in
+  `crc/cli/routes/<cloud>.py`; the guide is "Add a cleaner" in `ARCHITECTURE.md`.
+- `plan()` only reads; every mutation is in `apply()`, in the order `CLEANUP_SAFETY.md` gives.
+- Policy, age and tag decisions come from `crc/core`, not from new code here.
+- Inject SDK clients; never build one at import time. Normalise SDK data to `Candidate`.
+- Destructive kinds need a real age gate and fail closed on bad age, tags or telemetry.
+- Catch specific SDK errors, log the resource id, chain with `raise ... from e`; no silent
+  `except Exception`; no retry layer over SDK retries.
+- Update the package `README.md` (Public API and Safety Invariants) with the code.

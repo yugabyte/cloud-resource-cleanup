@@ -5,11 +5,50 @@ import sys
 from dataclasses import replace
 from typing import Any, NoReturn
 
+from crc.aws.vm import scan as aws_scan
+from crc.azu._base import Base as AzureBase
+from crc.cli.constants import CLOUDS
 from crc.cli.context import RunContext, make_crc
 from crc.cli.dispatch import _run_options
 from crc.cli.inputs import Options, Targets
 from crc.core import logger
+from crc.gcp.vm_client import ComputeVmClient
 from crc.notifications import notify_cleanup
+from crc.oci._base import Base as OciBase
+from crc.service import Service
+
+_NO_SCAN_CLASSES = {
+    "azure": "crc.azu.vm.adapter.VM",
+    "gcp": "crc.gcp.vm_adapter.VM",
+    "oci": "crc.oci.vm.adapter.VM",
+}
+
+
+def _prepare_scan(crc: Any) -> None:
+    """Set-up before a scan: only AWS has a finder; the other clouds still set up first.
+
+    Every cloud set up its logging; Azure read its credentials and resource group, OCI its
+    private key, GCP built its client. A failure there is reported as "error scanning".
+    """
+    if crc.cloud not in ("aws", *_NO_SCAN_CLASSES):
+        raise ValueError(f"Invalid cloud provided: {crc.cloud}. Supported clouds are {CLOUDS}")
+    Service()
+    if crc.cloud == "azure":
+        AzureBase(crc.resource_group)
+    elif crc.cloud == "oci":
+        OciBase()
+    elif crc.cloud == "gcp":
+        ComputeVmClient()
+
+
+def scan_instances_with_tag(crc: Any, tag_key: str, tag_value: str) -> Any:
+    """The AWS instances that carry the tag; NotImplementedError for the other clouds."""
+    _prepare_scan(crc)
+    if crc.cloud == "aws":
+        return aws_scan.scan_tag(tag_key, tag_value)
+    raise NotImplementedError(
+        f"<class '{_NO_SCAN_CLASSES[crc.cloud]}'> does not implement find_instances_with_tag"
+    )
 
 
 def _console_url(cloud: Any, project_id: Any, hit: Any, region: Any, name: Any, rid: Any) -> Any:
@@ -37,7 +76,7 @@ def _console_url(cloud: Any, project_id: Any, hit: Any, region: Any, name: Any, 
             resource_id = hit.get("id") or hit.get("resource_id")
             if resource_id:
                 console_url = f"https://portal.azure.com/#resource{resource_id}"
-    except Exception:
+    except Exception:  # noqa: BLE001 - read-only scan, a console URL is optional
         console_url = None
     return console_url
 
@@ -65,11 +104,11 @@ def _normalize_hit(cloud: Any, project_id: Any, hit: Any) -> dict[str, Any]:
 def _find_hits(crc: Any, cloud: Any, tag_key: str, tag_value: str) -> Any:
     """Ask the cloud for the tagged instances; a failing scan counts as no hits."""
     try:
-        return crc.scan_instances_with_tag(tag_key, tag_value) or []
+        return scan_instances_with_tag(crc, tag_key, tag_value) or []
     except NotImplementedError as e:
         print(f"[{cloud}] scan not implemented: {e}")
         return []
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - read-only scan, an error is printed and the scan returns no hits
         print(f"[{cloud}] error scanning: {e}")
         return []
 
@@ -94,7 +133,7 @@ def _report_items(cloud: Any, items: list[dict[str, Any]], context: RunContext, 
                 context.dry_run,
             )
             print(f"[{cloud}] Sent Slack notification to {slack_channel} ({len(items)} items).")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failing notification sink must not abort the run
             print(f"[{cloud}] Failed to send Slack notification: {e}")
             _print_items(items)
     else:

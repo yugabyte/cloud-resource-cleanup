@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 
 from crc.core.cleaner import Candidate, Operation, Plan, RunContext
-from crc.gcp.vm import VM, GcpVmClient, InstanceView, VmCleaner, VmSettings
+from crc.gcp.vm import GcpVmClient, InstanceView, VmCleaner, VmSettings
+from tests.helpers_ad_vm_engine import done_ids, run_vm
 
 UTC = datetime.UTC
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
@@ -56,13 +57,17 @@ class FakeClient:
         self.calls.append(("delete_instance", project_id, zone, instance))
         if instance == self.fail_on:
             raise RuntimeError("boom")
-        return {}
+        return {"name": "op"}
 
     def stop_instance(self, project_id: str, zone: str, instance: str) -> object:
         self.calls.append(("stop_instance", project_id, zone, instance))
         if instance == self.fail_on:
             raise RuntimeError("boom")
-        return {}
+        return {"name": "op"}
+
+    def get_zone_operation(self, project_id: str, zone: str, operation: str) -> Mapping[str, Any]:
+        self.calls.append(("get_zone_operation", project_id, zone, operation))
+        return {"status": "DONE"}
 
 
 def settings(**kw: Any) -> VmSettings:
@@ -145,7 +150,9 @@ def test_apply_deletes_in_order_and_records() -> None:
     assert result.succeeded == ("a", "b")
     assert client.calls == [
         ("delete_instance", PROJECT, "z1", "a"),
+        ("get_zone_operation", PROJECT, "z1", "op"),
         ("delete_instance", PROJECT, "z2", "b"),
+        ("get_zone_operation", PROJECT, "z2", "op"),
     ]
 
 
@@ -154,7 +161,10 @@ def test_apply_stops_when_the_operation_is_stop() -> None:
     plan = Plan(candidates=(Candidate(id="a", region="z"),))
     result = cleaner(client).apply(plan, ctx(operation=Operation.STOP))
     assert result.succeeded == ("a",)
-    assert client.calls == [("stop_instance", PROJECT, "z", "a")]
+    assert client.calls == [
+        ("stop_instance", PROJECT, "z", "a"),
+        ("get_zone_operation", PROJECT, "z", "op"),
+    ]
 
 
 def test_apply_skips_a_failed_call_and_logs_it(caplog: pytest.LogCaptureFixture) -> None:
@@ -189,21 +199,17 @@ def test_listing_error_propagates() -> None:
         cleaner(Broken({})).plan(ctx())
 
 
-def test_adapter_delete_and_stop_use_injected_client() -> None:
+def test_engine_delete_and_stop_use_injected_client() -> None:
     client = FakeClient({"z": [inst("a"), inst("b", days=0.1)]})
-    vm = VM(False, PROJECT, {}, {}, {"days": 1}, "", {}, client=client, clock=lambda: NOW)  # type: ignore[arg-type]
-    vm.delete()
-    vm.stop()
-    assert vm.get_deleted == ["a"]
-    assert vm.get_stopped == ["a"]
-    assert vm.delete_count == 1
-    assert vm.stopped_count == 1
+    deleted = run_vm("gcp", cleaner(client, age={"days": 1}))
+    stopped = run_vm("gcp", cleaner(client, age={"days": 1}), operation=Operation.STOP)
+    assert done_ids(deleted) == ["a"]
+    assert done_ids(stopped) == ["a"]
     assert [c[0] for c in client.calls if c[0] in MUTATING] == ["delete_instance", "stop_instance"]
 
 
-def test_adapter_dry_run_lists_only() -> None:
+def test_engine_dry_run_lists_only() -> None:
     client = FakeClient({"z": [inst("a")]})
-    vm = VM(True, PROJECT, {}, {}, {"days": 1}, "", {}, client=client, clock=lambda: NOW)  # type: ignore[arg-type]
-    vm.delete(["RUNNING", "TERMINATED"])
-    assert vm.get_deleted == ["a"]
+    outcome = run_vm("gcp", cleaner(client, instance_state=["RUNNING", "TERMINATED"]), dry_run=True)
+    assert done_ids(outcome) == ["a"]
     assert not [c for c in client.calls if c[0] in MUTATING]

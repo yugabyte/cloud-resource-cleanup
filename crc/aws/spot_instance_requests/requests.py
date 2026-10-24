@@ -63,7 +63,7 @@ def passes_age_gate(
         return False
     try:
         local_now = now.astimezone(create_time.tzinfo)
-    except Exception:
+    except Exception:  # noqa: BLE001 - naive create_time fallback to UTC (BUG-279), unchanged behaviour
         if getattr(create_time, "tzinfo", None) is None:
             create_time = create_time.replace(tzinfo=datetime.UTC)
         local_now = now.astimezone(datetime.UTC)
@@ -126,7 +126,7 @@ def filtered_requests(
             match = _decide(settings, now, request)
             if match is not None:
                 matches.append(match)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-request isolation, failure recorded, request kept
             logging.error("Error occurred while processing spot request %s: %s", request, e)
             request_id = request.get("SpotInstanceRequestId") if hasattr(request, "get") else None
             logger.current().fail(region, str(request_id or "-"), e)

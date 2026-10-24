@@ -1,74 +1,52 @@
-"""Parity: the old crc.py notify methods (frozen copy), the delegating crc.CRC and the notifiers.
+"""Parity: the frozen `main` CRC notify code (oracle) against the bridge notifiers.
 
-`tests/legacy_crc_notify_reference.txt` is the Slack and Influx code of `CRC` as it was on `main`.
-The same inputs run through it, through `crc.py` today and through `SlackNotifier` /
-`InfluxNotifier`; the fake-client calls, the printed text and the raised errors must be equal.
+The legacy side is `tests.helpers_oracle.load_legacy_crc()`: `tests/legacy/crc_main.txt`, the
+Slack and Influx code of `CRC` as it was on `main`. The routed side is what production runs:
+`crc.cli.bridge.build_notifiers` gives `SlackNotifier` / `InfluxNotifier`, and `crc.core.engine`
+builds the report from a cleaner's plan and result (`tests/helpers_cl2_notify.py`). The
+fake-client calls, the printed text and the raised errors must be equal. Where the oracle
+accepts input that the engine cannot produce (an id list that is `None` or a tuple, a value of
+an owner group without `len()`), the oracle outcome is asserted against frozen data instead.
 """
 
 import contextlib
-import importlib.util
 import io
-import sys
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from influxdb_client.client.write.point import Point
 
 from crc.core.cleaner import Candidate, Operation, Plan, Result, RunContext
 from crc.core.engine import run as run_engine
 from crc.core.registry import Registry
-from crc.core.report import DISK, KEYPAIR, KMS, NIC, SPOT_INSTANCE_REQUEST, VM, Report, Section
+from crc.core.report import (
+    DISK,
+    KEYPAIR,
+    KMS,
+    NIC,
+    SPOT_INSTANCE_REQUEST,
+    VM,
+    Report,
+    Section,
+    get_msg,
+)
 from crc.core.selection import Selection
 from crc.notify.influx import InfluxConfig, InfluxNotifier
 from crc.notify.slack import SlackNotifier
+from tests.helpers_cl2_notify import Outcome, normalise, routed_call, routed_run
+from tests.helpers_oracle import load_legacy_crc
 
-ROOT = Path(__file__).resolve().parent.parent
 NOW = datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
 CLOUDS = ["aws", "azure", "gcp", "oci"]
-Outcome = tuple[list[Any], list[Any], str, tuple[str, str] | None]
 
 
 @pytest.fixture(scope="module")
-def current() -> Iterator[ModuleType]:
-    """crc.py loaded under another name: the `crc` package already owns that name."""
-    spec = importlib.util.spec_from_file_location("crc_cli_notify_parity", ROOT / "crc.py")
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["crc_cli_notify_parity"] = module
-    spec.loader.exec_module(module)
-    yield module
-    del sys.modules["crc_cli_notify_parity"]
-
-
-@pytest.fixture(scope="module")
-def legacy() -> ModuleType:
-    source = (ROOT / "tests" / "legacy_crc_notify_reference.txt").read_text(encoding="utf-8")
-    module = ModuleType("legacy_crc_notify_reference")
-    exec(compile(source, "legacy_crc_notify_reference.txt", "exec"), module.__dict__)
-    return module
-
-
-def line_protocol(point: Any) -> str:
-    text: str = point.to_line_protocol()
-    return text
-
-
-def normalise(client: MagicMock) -> list[Any]:
-    """Influx calls with each Point replaced by its line protocol (Point has no equality)."""
-    out: list[Any] = []
-    for name, args, kwargs in client.mock_calls:
-        shown = {
-            key: line_protocol(value) if isinstance(value, Point) else value
-            for key, value in kwargs.items()
-        }
-        out.append((name, args, shown))
-    return out
+def legacy() -> Iterator[ModuleType]:
+    """`main`'s `CRC` (tests/legacy/crc_main.txt) with its adapters bound to their oracles."""
+    yield load_legacy_crc("legacy_crc_notify_parity")
 
 
 def make(
@@ -110,16 +88,9 @@ def run(
     with contextlib.redirect_stdout(stdout):
         try:
             call(instance)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
             error = (type(e).__name__, str(e))
     return slack.mock_calls, normalise(influx), stdout.getvalue(), error
-
-
-def assert_same(legacy: ModuleType, current: ModuleType, *args: Any, **kwargs: Any) -> Outcome:
-    old = run(legacy, *args, **kwargs)
-    new = run(current, *args, **kwargs)
-    assert new == old
-    return new
 
 
 def resource(**attrs: Any) -> SimpleNamespace:
@@ -159,40 +130,95 @@ NOTIFY_CASES: dict[str, tuple[str, SimpleNamespace]] = {
     "vm-without-ids": ("notify_deleted_vm_via_slack", resource(get_deleted=None)),
 }
 
+# The engine kind, operation, ids, and the related NIC ids of an Azure VM, that the cleaner
+# result of each case carries. `None`: the engine cannot produce that input (see UNROUTED).
+RoutedSpec = tuple[str, Operation, list[str], dict[str, list[str]]]
+ROUTED_CASES: dict[str, RoutedSpec | None] = {
+    "vm": ("vm", Operation.DELETE, ["vm-1", "vm-2"], {NIC: ["nic-1"]}),
+    "stopped": ("vm", Operation.STOP, ["vm-1"], {}),
+    "spot-with-volumes": (
+        "spot_instance_requests",
+        Operation.DELETE,
+        ["sir-1"],
+        {DISK: ["v-1", "v-2"]},
+    ),
+    "spot-no-volumes": ("spot_instance_requests", Operation.DELETE, ["sir-1"], {DISK: []}),
+    "spot-no-attribute": ("spot_instance_requests", Operation.DELETE, ["sir-1"], {DISK: []}),
+    "ip": ("ip", Operation.DELETE, ["1.1.1.1"], {}),
+    "keypair": ("keypair", Operation.DELETE, ["k-1"], {}),
+    "nic": ("nic", Operation.DELETE, ["from-get-deleted"], {}),
+    "kms": ("kms", Operation.DELETE, ["key-1"], {}),
+    "disk-list": ("disk", Operation.DELETE, ["v-1", "v-2"], {}),
+    "disk-empty-list": ("disk", Operation.DELETE, [], {}),
+    "disk-tuple": None,
+    "disk-none": None,
+    "empty-vm": ("vm", Operation.DELETE, [], {NIC: []}),
+    "vm-without-ids": None,
+}
+
+# Oracle outcome of the inputs the engine cannot produce: a disk id list that is neither a list
+# nor a dict is silently not notified; a VM id list of `None` raises in `len()`.
+UNROUTED: dict[str, Outcome] = {
+    "disk-tuple": ([], [], "", None),
+    "disk-none": ([], [], "", None),
+    "vm-without-ids": ([], [], "", ("TypeError", "object of type 'NoneType' has no len()")),
+}
+
+
+def routed_notify(case: str, cloud: str, **options: Any) -> Outcome:
+    """The routed outcome of a NOTIFY_CASES case: Slack only, as the oracle notify_* is."""
+    spec = ROUTED_CASES[case]
+    assert spec is not None
+    kind, operation, ids, related = spec
+    return routed_run(
+        cloud,
+        kind,
+        operation=operation,
+        succeeded=ids,
+        related={} if kind == "vm" and cloud != "azure" else related,
+        influx=False,
+        **options,
+    )
+
+
+def assert_notify_matches(
+    legacy: ModuleType, case: str, setup: Callable[[Mock], None] | None = None, **options: Any
+) -> Outcome:
+    method, obj = NOTIFY_CASES[case]
+    old = run(legacy, lambda crc: getattr(crc, method)(obj), setup, **options)
+    if ROUTED_CASES[case] is None:
+        assert old == UNROUTED[case]
+        return old
+    new = routed_notify(case, setup=setup, **options)
+    assert new == old
+    return new
+
 
 @pytest.mark.parametrize("channel", ["chan", "#chan", None])
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.parametrize("cloud", CLOUDS)
 @pytest.mark.parametrize("case", sorted(NOTIFY_CASES))
 def test_notify_methods_match_legacy(
-    legacy: ModuleType, current: ModuleType, case: str, cloud: str, dry_run: bool,
+    legacy: ModuleType,
+    case: str,
+    cloud: str,
+    dry_run: bool,
     channel: str | None,
 ) -> None:
-    method, obj = NOTIFY_CASES[case]
-    assert_same(
-        legacy, current, lambda crc: getattr(crc, method)(obj),
-        cloud=cloud, dry_run=dry_run, channel=channel,
-    )
+    assert_notify_matches(legacy, case, cloud=cloud, dry_run=dry_run, channel=channel)
 
 
 @pytest.mark.parametrize("case", sorted(NOTIFY_CASES))
-def test_notify_methods_match_legacy_when_slack_fails(
-    legacy: ModuleType, current: ModuleType, case: str
-) -> None:
-    method, obj = NOTIFY_CASES[case]
-
+def test_notify_methods_match_legacy_when_slack_fails(legacy: ModuleType, case: str) -> None:
     def fail(slack: Mock) -> None:
         slack.chat_postMessage.side_effect = RuntimeError("slack down")
 
-    assert_same(legacy, current, lambda crc: getattr(crc, method)(obj), fail, cloud="azure")
+    assert_notify_matches(legacy, case, fail, cloud="azure")
 
 
-def test_quirks_are_visible_in_the_outcome(legacy: ModuleType, current: ModuleType) -> None:
+def test_quirks_are_visible_in_the_outcome(legacy: ModuleType) -> None:
     """Azure VM sends VM names as NIC list (BUG-028), `#chan` becomes `##chan` (BUG-034)."""
-    method, obj = NOTIFY_CASES["vm"]
-    calls, _, _, _ = assert_same(
-        legacy, current, lambda crc: getattr(crc, method)(obj), cloud="azure", channel="#chan"
-    )
+    calls, _, _, _ = assert_notify_matches(legacy, "vm", cloud="azure", channel="#chan")
     texts = [c.kwargs["text"] for c in calls]
     assert texts == [
         "Deleted the following `2` azure VM(s):\n`['vm-1', 'vm-2']`",
@@ -206,16 +232,24 @@ def test_quirks_are_visible_in_the_outcome(legacy: ModuleType, current: ModuleTy
 @pytest.mark.parametrize("cloud", CLOUDS)
 @pytest.mark.parametrize("ids", [[], ["a"], ["a", "b"], None])
 def test_get_msg_matches_legacy(
-    legacy: ModuleType, current: ModuleType, operation: str, dry_run: bool, cloud: str,
+    legacy: ModuleType,
+    operation: str,
+    dry_run: bool,
+    cloud: str,
     ids: list[str] | None,
 ) -> None:
-    assert_same(
+    old = run(
         legacy,
-        current,
         lambda crc: print(crc.get_msg("Disk", operation, ids)),
         cloud=cloud,
         dry_run=dry_run,
     )
+    if ids is None:
+        assert old == ([], [], "", ("TypeError", "object of type 'NoneType' has no len()"))
+        return
+    op = Operation.DELETE if operation == "Deleted" else Operation.STOP
+    text = get_msg(cloud, "Disk", op, ids, dry_run)
+    assert old == ([], [], text + "\n", None)
 
 
 def lookup_setup(
@@ -245,101 +279,143 @@ GROUPS = [{"handle": "bob", "id": "S1"}, {"handle": "carol", "id": "S2"}]
 OWNERS = {"alice": ["v-1", "v-2"], "bob": ["v-3"], "carol": []}
 
 
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        ("U1", GROUPS, False, False),
-        ("U1", GROUPS, True, False),
-        ("U1", GROUPS, False, True),
-        ("U1", None, False, False),
-        (None, GROUPS, False, False),
-        (None, GROUPS, True, False),
-        (None, [], False, False),
-        (None, None, False, False),
-    ],
-)
+def routed_ping(setup: Callable[[Mock], None], cloud: str = "aws", **options: Any) -> Outcome:
+    """Owner pings of a disk run: the engine builds the by-owner report, Slack only."""
+    return routed_run(cloud, "disk", by_owner=OWNERS, setup=setup, influx=False, **options)
+
+
+def assert_ping_matches(
+    legacy: ModuleType, setup: Callable[[Mock], None], cloud: str = "aws", **options: Any
+) -> Outcome:
+    old = run(
+        legacy,
+        lambda crc: crc.ping_on_slack("Disk", "Deleted", OWNERS),
+        setup,
+        cloud=cloud,
+        **options,
+    )
+    new = routed_ping(setup, cloud, **options)
+    assert new == old
+    return new
+
+
+SCENARIOS = [
+    ("U1", GROUPS, False, False),
+    ("U1", GROUPS, True, False),
+    ("U1", GROUPS, False, True),
+    ("U1", None, False, False),
+    (None, GROUPS, False, False),
+    (None, GROUPS, True, False),
+    (None, [], False, False),
+    (None, None, False, False),
+]
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.parametrize("cloud", ["aws", "gcp"])
 def test_ping_on_slack_matches_legacy(
     legacy: ModuleType,
-    current: ModuleType,
     cloud: str,
     dry_run: bool,
     scenario: tuple[str | None, list[dict[str, str]] | None, bool, bool],
 ) -> None:
-    assert_same(
-        legacy, current, lambda crc: crc.ping_on_slack("Disk", "Deleted", OWNERS),
-        lookup_setup(*scenario), cloud=cloud, dry_run=dry_run,
-    )
+    assert_ping_matches(legacy, lookup_setup(*scenario), cloud, dry_run=dry_run)
 
 
 @pytest.mark.parametrize("channel", ["chan", "#chan", None])
 @pytest.mark.parametrize("groups", [GROUPS, None])
 def test_dict_disks_match_legacy(
-    legacy: ModuleType, current: ModuleType, channel: str | None,
+    legacy: ModuleType,
+    channel: str | None,
     groups: list[dict[str, str]] | None,
 ) -> None:
     setup = lookup_setup(None, groups, False, False)
     obj = resource(get_deleted=OWNERS)
-    assert_same(
-        legacy, current, lambda crc: crc.notify_deleted_disk_via_slack(obj), setup,
-        channel=channel,
-    )
+    old = run(legacy, lambda crc: crc.notify_deleted_disk_via_slack(obj), setup, channel=channel)
+    assert routed_ping(setup, channel=channel) == old
 
 
-def test_ping_failure_modes_are_the_documented_quirks(
-    legacy: ModuleType, current: ModuleType
-) -> None:
+def test_ping_failure_modes_are_the_documented_quirks(legacy: ModuleType) -> None:
     broken = lookup_setup(None, None, False, False)
-    _, _, out, error = assert_same(
-        legacy, current, lambda crc: crc.ping_on_slack("Disk", "Deleted", OWNERS), broken
-    )
+    _, _, out, error = assert_ping_matches(legacy, broken)
     assert error == ("TypeError", "string indices must be integers, not 'str'")
     assert "Something Went Wront! Could not get user_groups.\n" in out
-    _, _, _, error = assert_same(
-        legacy,
-        current,
-        lambda crc: crc.ping_on_slack("Disk", "Deleted", OWNERS),
-        lookup_setup("U1", GROUPS, False, True),
-    )
+    _, _, _, error = assert_ping_matches(legacy, lookup_setup("U1", GROUPS, False, True))
     assert error == ("RuntimeError", "cannot open")
 
 
 @pytest.mark.parametrize(
-    ("operated", "expected"),
+    ("operated", "expected", "routed_expected"),
     [
-        ({"alice": ["v-1"], "bob": None}, ("TypeError", "object of type 'NoneType' has no len()")),
-        ({"alice": ["v-1"], "bob": 3}, ("TypeError", "object of type 'int' has no len()")),
-        (["v-1"], ("AttributeError", "'list' object has no attribute 'keys'")),
+        (
+            {"alice": ["v-1"], "bob": None},
+            ("TypeError", "object of type 'NoneType' has no len()"),
+            ("TypeError", "'NoneType' object is not iterable"),
+        ),
+        (
+            {"alice": ["v-1"], "bob": 3},
+            ("TypeError", "object of type 'int' has no len()"),
+            ("TypeError", "'int' object is not iterable"),
+        ),
+        (
+            ["v-1"],
+            ("AttributeError", "'list' object has no attribute 'keys'"),
+            ("AttributeError", "'list' object has no attribute 'items'"),
+        ),
     ],
 )
 def test_ping_on_slack_bad_input_matches_legacy(
-    legacy: ModuleType, current: ModuleType, operated: Any, expected: tuple[str, str]
+    legacy: ModuleType,
+    operated: Any,
+    expected: tuple[str, str],
+    routed_expected: tuple[str, str],
 ) -> None:
-    """Groups are fetched, then every value is measured, before any owner is pinged."""
-    calls, _, out, error = assert_same(
-        legacy,
-        current,
-        lambda crc: crc.ping_on_slack("Disk", "Deleted", operated),
-        lookup_setup("U1", GROUPS, False, False),
+    """Oracle: groups are fetched, then every value is measured, before any owner is pinged.
+
+    The engine cannot hand such a value to the notifier: a cleaner's `Plan` / `Result` freezes
+    every owner group into a tuple first, so the routed run fails there, before any Slack call.
+    """
+    setup = lookup_setup("U1", GROUPS, False, False)
+    calls, _, out, error = run(
+        legacy, lambda crc: crc.ping_on_slack("Disk", "Deleted", operated), setup
     )
     assert error == expected
     assert [c[0] for c in calls] == ["usergroups_list"]
     assert out == ""
+    routed_calls, _, routed_out, routed_error = routed_run(
+        "aws", "disk", by_owner=operated, setup=setup, influx=False
+    )
+    assert routed_error == routed_expected
+    assert routed_calls == []
+    assert routed_out == ""
 
 
-def test_slack_and_user_lookups_match_legacy(legacy: ModuleType, current: ModuleType) -> None:
+def test_slack_and_user_lookups_match_legacy(legacy: ModuleType) -> None:
     for setup in (lookup_setup("U1", GROUPS, False, False), lookup_setup(None, None, False, False)):
-        assert_same(legacy, current, lambda crc: crc.slack_lookup_user_by_email("a@b.c"), setup)
-        assert_same(legacy, current, lambda crc: crc.get_user_groups_list(), setup)
+        old = run(legacy, lambda crc: print(crc.slack_lookup_user_by_email("a@b.c")), setup)
+        new = routed_call(lambda n, _crc: print(n["slack"].lookup_user_by_email("a@b.c")), setup)
+        assert new == old
+        old = run(legacy, lambda crc: print(crc.get_user_groups_list()), setup)
+        new = routed_call(lambda n, _crc: print(n["slack"].user_groups()), setup)
+        assert new == old
 
 
-def test_ping_uses_overridden_lookups(current: ModuleType) -> None:
-    instance, slack, _ = make(current, "aws", False)
-    instance.slack_lookup_user_by_email = Mock(return_value="not_found")
-    instance.get_user_groups_list = Mock(return_value=[{"handle": "alice", "id": "S9"}])
-    instance.ping_on_slack("Disk", "Deleted", {"alice": ["v-1"]})
-    assert "<!subteam^S9>" in slack.chat_postMessage.call_args.kwargs["text"]
+def test_ping_uses_overridden_lookups() -> None:
+    def ping(notifiers: dict[str, Any], crc: Any) -> None:
+        report = Report(
+            "aws", Operation.DELETE, False, (Section(DISK, ()),), by_owner={"alice": ("v-1",)}
+        )
+        notifiers["slack"].ping_owners(
+            report,
+            "Disk",
+            Mock(return_value="not_found"),
+            Mock(return_value=[{"handle": "alice", "id": "S9"}]),
+        )
+
+    calls, _, _, error = routed_call(ping)
+    assert error is None
+    assert "<!subteam^S9>" in calls[0].kwargs["text"]
 
 
 INFLUX_ARGS: list[tuple[str, Any]] = [
@@ -357,42 +433,50 @@ INFLUX_ARGS: list[tuple[str, Any]] = [
 @pytest.mark.parametrize("cloud", CLOUDS)
 def test_write_influxdb_matches_legacy(
     legacy: ModuleType,
-    current: ModuleType,
     cloud: str,
     dry_run: bool,
     suffix: str | None,
     args: tuple[str, Any],
 ) -> None:
-    assert_same(
-        legacy, current, lambda crc: crc.write_influxdb(*args),
-        cloud=cloud, dry_run=dry_run, suffix=suffix,
+    old = run(
+        legacy, lambda crc: crc.write_influxdb(*args), cloud=cloud, dry_run=dry_run, suffix=suffix
     )
+    new = routed_call(
+        lambda n, _crc: n["influx"].write(cloud, *args),
+        cloud=cloud,
+        dry_run=dry_run,
+        suffix=suffix,
+    )
+    assert new == old
 
 
-def test_write_influxdb_without_connection_matches_legacy(
-    legacy: ModuleType, current: ModuleType
-) -> None:
+def test_write_influxdb_without_connection_matches_legacy(legacy: ModuleType) -> None:
     """BUG-030: no bucket or suffix without `influxdb_conn`; the catch-all prints it."""
-    _, influx, out, error = assert_same(
-        legacy, current, lambda crc: crc.write_influxdb("VM", ["a"]), conn=False
-    )
+    old = run(legacy, lambda crc: crc.write_influxdb("VM", ["a"]), conn=False)
+    new = routed_call(lambda n, _crc: n["influx"].write("aws", "VM", ["a"]), conn=False)
+    assert new == old
+    _, influx, out, error = new
     assert error is None
     assert "has no attribute 'resource_suffix'" in out
     assert [c[0] for c in influx] == ["write_api"]
 
 
-def test_write_influxdb_failure_matches_legacy(legacy: ModuleType, current: ModuleType) -> None:
+def test_write_influxdb_failure_matches_legacy(legacy: ModuleType) -> None:
     def instance_call(crc: Any) -> None:
         crc.influxdb_client.write_api.return_value.write.side_effect = RuntimeError("down")
         crc.write_influxdb("VM", ["a"])
 
-    _, _, out, _ = assert_same(legacy, current, instance_call)
-    assert out == "Unable to push data to influxDB: down\n"
+    def routed(notifiers: dict[str, Any], crc: Any) -> None:
+        crc.influxdb_client.write_api.return_value.write.side_effect = RuntimeError("down")
+        notifiers["influx"].write("aws", "VM", ["a"])
+
+    old = run(legacy, instance_call)
+    new = routed_call(routed)
+    assert new == old
+    assert new[2] == "Unable to push data to influxDB: down\n"
 
 
-def report_for(
-    cloud: str, dry_run: bool, operation: Operation, sections: list[Section]
-) -> Report:
+def report_for(cloud: str, dry_run: bool, operation: Operation, sections: list[Section]) -> Report:
     return Report(cloud, operation, dry_run, tuple(sections))
 
 
@@ -447,7 +531,7 @@ def run_slack_notifier(
     with contextlib.redirect_stdout(stdout):
         try:
             SlackNotifier(slack, channel).send(report, context)  # type: ignore[arg-type]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
             error = (type(e).__name__, str(e))
     return slack.mock_calls, stdout.getvalue(), error
 
@@ -457,7 +541,6 @@ def run_slack_notifier(
 @pytest.mark.parametrize(("case", "cloud"), SECTION_PARAMS)
 def test_slack_notifier_matches_legacy(
     legacy: ModuleType,
-    current: ModuleType,
     case: str,
     cloud: str,
     dry_run: bool,
@@ -465,9 +548,8 @@ def test_slack_notifier_matches_legacy(
 ) -> None:
     operation, sections = SECTION_CASES[case]
     method, obj = NOTIFY_CASES[case]
-    old = assert_same(
+    old = run(
         legacy,
-        current,
         lambda crc: getattr(crc, method)(obj),
         cloud=cloud,
         dry_run=dry_run,
@@ -480,7 +562,7 @@ def test_slack_notifier_matches_legacy(
 
 @pytest.mark.parametrize(("case", "cloud"), SECTION_PARAMS)
 def test_slack_notifier_matches_legacy_when_slack_fails(
-    legacy: ModuleType, current: ModuleType, case: str, cloud: str
+    legacy: ModuleType, case: str, cloud: str
 ) -> None:
     operation, sections = SECTION_CASES[case]
     method, obj = NOTIFY_CASES[case]
@@ -488,9 +570,7 @@ def test_slack_notifier_matches_legacy_when_slack_fails(
     def fail(slack: Mock) -> None:
         slack.chat_postMessage.side_effect = RuntimeError("slack down")
 
-    old = assert_same(
-        legacy, current, lambda crc: getattr(crc, method)(obj), fail, cloud=cloud
-    )
+    old = run(legacy, lambda crc: getattr(crc, method)(obj), fail, cloud=cloud)
     report = report_for(cloud, False, operation, sections(obj))
     calls, out, error = run_slack_notifier(report, "chan", fail)
     assert (calls, out, error) == (old[0], old[2], old[3])
@@ -501,7 +581,6 @@ def test_slack_notifier_matches_legacy_when_slack_fails(
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_slack_notifier_matches_legacy_azure_vm(
     legacy: ModuleType,
-    current: ModuleType,
     dry_run: bool,
     channel: str | None,
     post_fails: bool,
@@ -512,9 +591,8 @@ def test_slack_notifier_matches_legacy_azure_vm(
         if post_fails:
             slack.chat_postMessage.side_effect = RuntimeError("slack down")
 
-    old = assert_same(
+    old = run(
         legacy,
-        current,
         lambda crc: getattr(crc, method)(obj),
         setup,
         cloud="azure",
@@ -545,16 +623,14 @@ def test_slack_notifier_matches_legacy_azure_vm(
 @pytest.mark.parametrize("cloud", ["aws", "gcp"])
 def test_slack_notifier_owner_pings_match_legacy(
     legacy: ModuleType,
-    current: ModuleType,
     cloud: str,
     dry_run: bool,
     channel: str | None,
     scenario: tuple[str | None, list[dict[str, str]] | None, bool, bool],
 ) -> None:
     setup = lookup_setup(*scenario)
-    old = assert_same(
+    old = run(
         legacy,
-        current,
         lambda crc: crc.ping_on_slack("Disk", "Deleted", OWNERS),
         setup,
         cloud=cloud,
@@ -572,12 +648,12 @@ def test_slack_notifier_owner_pings_match_legacy(
 @pytest.mark.parametrize("suffix", [None, "jenkins"])
 def test_influx_notifier_matches_legacy_writes(
     legacy: ModuleType,
-    current: ModuleType,
     dry_run: bool,
     suffix: str | None,
     write_fails: bool,
 ) -> None:
     """The three writes of a spot VM delete, as `crc.py` issues them one by one."""
+
     def writes(crc: Any) -> None:
         if write_fails:
             crc.influxdb_client.write_api.return_value.write.side_effect = RuntimeError("down")
@@ -585,7 +661,7 @@ def test_influx_notifier_matches_legacy_writes(
         crc.write_influxdb("NIC", [])
         crc.write_influxdb("Disk", ["v-1", "v-2"])
 
-    old = assert_same(legacy, current, writes, cloud="aws", dry_run=dry_run, suffix=suffix)
+    old = run(legacy, writes, cloud="aws", dry_run=dry_run, suffix=suffix)
     influx = MagicMock()
     if write_fails:
         influx.write_api.return_value.write.side_effect = RuntimeError("down")
@@ -601,9 +677,10 @@ def test_influx_notifier_matches_legacy_writes(
 @pytest.mark.parametrize("post_fails", [False, True])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_engine_with_notifiers_matches_legacy_section_and_owner_flows(
-    legacy: ModuleType, current: ModuleType, dry_run: bool, post_fails: bool
+    legacy: ModuleType, dry_run: bool, post_fails: bool
 ) -> None:
     """Engine wiring with SlackNotifier(fail_open=False) and InfluxNotifier(fail_open=True)."""
+
     def setup(slack: Mock) -> None:
         lookup_setup("U1", GROUPS, post_fails, False)(slack)
 
@@ -613,9 +690,7 @@ def test_engine_with_notifiers_matches_legacy_section_and_owner_flows(
         crc.write_influxdb("VM", vm.get_deleted)
         crc.write_influxdb("NIC", vm.get_deleted_nic)
 
-    old = assert_same(
-        legacy, current, legacy_flow, setup, cloud="azure", dry_run=dry_run, suffix="ci"
-    )
+    old = run(legacy, legacy_flow, setup, cloud="azure", dry_run=dry_run, suffix="ci")
 
     registry = Registry()
 
@@ -644,6 +719,18 @@ def test_engine_with_notifiers_matches_legacy_section_and_owner_flows(
     with contextlib.redirect_stdout(stdout):
         run_engine(Selection((("azure", "vm"),)), ctx, registry, notifiers)
     assert (slack.mock_calls, normalise(influx), stdout.getvalue(), None) == old
+    assert (
+        routed_run(
+            "azure",
+            "vm",
+            dry_run=dry_run,
+            succeeded=["vm-1"],
+            related={NIC: ["nic-1"]},
+            setup=setup,
+            suffix="ci",
+        )
+        == old
+    )
 
 
 @pytest.mark.parametrize(
@@ -656,7 +743,6 @@ def test_engine_with_notifiers_matches_legacy_section_and_owner_flows(
 )
 def test_engine_with_notifiers_matches_legacy_on_disk_owner_pings(
     legacy: ModuleType,
-    current: ModuleType,
     scenario: tuple[str | None, list[dict[str, str]] | None, bool, bool],
 ) -> None:
     """chat_postMessage errors print and continue to Influx; BUG-041/042 raise before Influx."""
@@ -667,7 +753,7 @@ def test_engine_with_notifiers_matches_legacy_on_disk_owner_pings(
         crc.notify_deleted_disk_via_slack(disk)
         crc.write_influxdb("Disk", disk.get_deleted)
 
-    old = assert_same(legacy, current, legacy_disk_flow, setup, cloud="gcp")
+    old = run(legacy, legacy_disk_flow, setup, cloud="gcp")
 
     registry = Registry()
     grouped = {k: tuple(v) for k, v in OWNERS.items()}
@@ -698,6 +784,7 @@ def test_engine_with_notifiers_matches_legacy_on_disk_owner_pings(
     with contextlib.redirect_stdout(stdout):
         try:
             run_engine(Selection((("gcp", "disk"),)), ctx, registry, notifiers)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
             error = (type(e).__name__, str(e))
     assert (slack.mock_calls, normalise(influx), stdout.getvalue(), error) == old
+    assert routed_run("gcp", "disk", by_owner=OWNERS, setup=setup) == old

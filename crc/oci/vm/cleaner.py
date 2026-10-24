@@ -3,14 +3,11 @@
 """OCI compute instance cleaner.
 
 `VmCleaner` implements the `crc.core.cleaner.Cleaner` contract: `plan()` lists the instances of
-every region and decides on them, `apply()` terminates (delete) or stops them. `VM`
-(`crc.oci.vm.adapter`) is the legacy class `crc.py` uses.
+every region and decides on them, `apply()` terminates (delete) or stops them.
 """
 
-import datetime
+import dataclasses
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import cast
 
 from crc.core import age as core_age
@@ -28,74 +25,28 @@ from crc.core.cleaner import (
 from crc.core.registry import register
 from crc.oci import _logger
 from crc.oci._base import Base
+from crc.oci._common import group_by_region
 from crc.oci.connectivity import CONNECTIVITY_ERRORS, log_skipped_region
 from crc.oci.disk.api import RegionLister, regions_of
 from crc.oci.vm.client import ApiFactory, ComputeApi, SdkInstance, compute_api_for
+from crc.oci.vm.settings import (
+    DEFAULT_INSTANCE_STATES,
+    EVALUATION_FAILED,
+    SKIP_KEYS,
+    Clock,
+    TagSpec,
+    VmSettings,
+    log_for,
+)
 
-DEFAULT_INSTANCE_STATES = ("RUNNING",)
-
-TagSpec = Mapping[str, Sequence[str]]
-SKIP_KEYS = {
-    "state is not allowed": "state",
-    "matches exception_tags or notags": "exception_tag",
-    "does not match filter_tags": "filter_mismatch",
-    "not older than age": "too_young",
-}
-Clock = Callable[[], datetime.datetime]
-
-
-@dataclass(frozen=True, slots=True)
-class VmSettings:
-    """Filters and thresholds of one run."""
-
-    filter_tags: TagSpec = field(default_factory=dict)
-    exception_tags: TagSpec = field(default_factory=dict)
-    notags: TagSpec = field(default_factory=dict)
-    age: core_age.AgeSpec = field(default_factory=dict)
-    custom_age_tag_key: str = ""
-    instance_states: Sequence[str] = DEFAULT_INSTANCE_STATES
-
-
-def _log_summary(
-    operation: Operation,
-    deleted: Sequence[str],
-    stopped: Sequence[str],
-    *,
-    dry_run: bool,
-) -> None:
-    """The closing lines of main. Both name lists are passed because main's "nothing to do"
-    warning looks at the two of them, whichever operation runs."""
-    if not deleted and not stopped:
-        logging.warning(f"No OCI instances to {operation}.")
-
-    if operation is Operation.DELETE:
-        if not dry_run:
-            logging.info(f"number of OCI instances deleted: {len(deleted)}")
-            logging.warning(f"List of OCI instances deleted: {list(deleted)}")
-        else:
-            logging.warning(
-                f"List of OCI instances (Total: {len(deleted)}) "
-                f"which will be deleted: {list(deleted)}"
-            )
-
-    if operation is Operation.STOP:
-        if not dry_run:
-            logging.info(f"number of OCI instances stopped: {len(stopped)}")
-            logging.warning(f"List of OCI instances stopped: {list(stopped)}")
-        else:
-            logging.warning(
-                f"List of OCI instances (Total: {len(stopped)}) "
-                f"which will be stopped: {list(stopped)}"
-            )
-
-
-def _log_for(operation: Operation, names: Sequence[str], *, dry_run: bool) -> None:
-    """`_log_summary` for a run that only ever fills one of the two lists."""
-    other: list[str] = []
-    if operation is Operation.DELETE:
-        _log_summary(operation, names, other, dry_run=dry_run)
-    else:
-        _log_summary(operation, other, names, dry_run=dry_run)
+__all__ = [
+    "DEFAULT_INSTANCE_STATES",
+    "Clock",
+    "TagSpec",
+    "VmCleaner",
+    "VmSettings",
+    "build_vm_cleaner",
+]
 
 
 class VmCleaner:
@@ -111,7 +62,13 @@ class VmCleaner:
         api_factory: ApiFactory,
         list_regions: RegionLister,
         settings: VmSettings,
+        *,
+        engine: bool = False,
     ) -> None:
+        """`engine` is True for the cleaner `crc.core.engine` builds: a dry-run `plan()` then
+        logs the ACTION lines per region and names its candidates by display name (the engine
+        never calls `apply()` in a dry run)."""
+        self._engine = engine
         self._api_factory = api_factory
         self._list_regions = list_regions
         self._settings = settings
@@ -138,38 +95,49 @@ class VmCleaner:
                 if isinstance(decision, Candidate):
                     candidates.append(decision)
                     selected += 1
+                    if context.dry_run and self._engine:
+                        self._record(decision, context.operation, dry_run=True)
                 else:
                     skipped.append(decision)
             _logger.region_done(region, len(instances), selected, started)
         if context.dry_run:
-            _log_for(context.operation, [c.name for c in candidates], dry_run=True)
+            log_for(context.operation, [c.name for c in candidates], dry_run=True)
+            if self._engine:
+                candidates = [dataclasses.replace(c, id=c.name) for c in candidates]
         return Plan(candidates=tuple(candidates), skipped=tuple(skipped))
 
     def apply(self, plan: Plan, context: RunContext) -> Result:
         """Act on the planned instances region by region (nothing in a dry run). A failed call
         is logged and left out of the result, as on main."""
         if context.dry_run:
-            for candidate in plan.candidates:
-                self._record(candidate, context.operation, dry_run=True)
+            if not self._engine:
+                for candidate in plan.candidates:
+                    self._record(candidate, context.operation, dry_run=True)
             return Result(succeeded=tuple(c.name for c in plan.candidates))
-        by_region: dict[str, list[Candidate]] = {}
-        for candidate in plan.candidates:
-            by_region.setdefault(candidate.region, []).append(candidate)
         done: list[str] = []
         failed: list[Failure] = []
-        for region, items in by_region.items():
+        for region, items in group_by_region(plan.candidates).items():
             api = self._api_factory(region)
             for candidate in items:
                 error = self.act(api, candidate, context.operation, done, dry_run=False)
                 if error is not None:
                     failed.append(error)
-        _log_for(context.operation, done, dry_run=False)
+        log_for(context.operation, done, dry_run=False)
         return Result(succeeded=tuple(done), failed=tuple(failed))
 
     def decide(self, instance: SdkInstance, region: str, clock: Clock) -> Candidate | Skipped:
         """State, tag and age checks, in the order of main. `clock` is only read by the age
-        check, as `datetime.now()` is on main."""
-        reason = self._skip_reason(instance, clock)
+        check, as `datetime.now()` is on main. An unexpected error while evaluating one instance
+        (BUG-162: missing or naive creation time, malformed MAX_AGE) is logged and recorded as a
+        failure and the instance is kept; the caller carries on with the next one."""
+        try:
+            reason = self._skip_reason(instance, clock)
+        except Exception as e:  # noqa: BLE001 - BUG-162 per-instance isolation, failure recorded, instance kept
+            logging.error(
+                "Error occurred while evaluating instance %s: %s", instance.display_name, e
+            )
+            _logger.record_failure(region, instance.id, e)
+            return Skipped(id=instance.id, reason=EVALUATION_FAILED, name=instance.display_name)
         if reason is not None:
             _logger.record_skip(SKIP_KEYS[reason])
             return Skipped(id=instance.id, reason=reason, name=instance.display_name)
@@ -197,13 +165,13 @@ class VmCleaner:
             if not dry_run:
                 if operation is Operation.DELETE:
                     api.terminate_instance(candidate.id)
-                    logging.info(f"Deleting instance {candidate.name}")
+                    logging.info("Deleting instance %s", candidate.name)
                 else:
                     api.stop_instance(candidate.id)
-                    logging.info(f"Stopping instance {candidate.name}")
+                    logging.info("Stopping instance %s", candidate.name)
             done.append(candidate.name)
-        except Exception as e:
-            logging.error(f"Error occurred while {operation} instance {candidate.name}: {e}")
+        except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
+            logging.error("Error occurred while %s instance %s: %s", operation, candidate.name, e)
             _logger.record_failure(candidate.region, candidate.id, e)
             return Failure(id=candidate.name, error=str(e))
         self._record(candidate, operation, dry_run=dry_run)
@@ -223,6 +191,12 @@ class VmCleaner:
         settings = self._settings
         if not policy.state_in(instance.lifecycle_state, settings.instance_states):
             return "state is not allowed"
+        if policy.oci_is_managed_or_oke_node(
+            instance.freeform_tags,
+            getattr(instance, "defined_tags", None),
+            getattr(instance, "metadata", None) or {},
+        ):
+            return "OKE or instance pool member"
         tags = policy.normalize_tags(instance.freeform_tags)
         if policy.should_skip_by_tags(tags, settings.exception_tags, settings.notags):
             return "matches exception_tags or notags"
@@ -242,7 +216,7 @@ class VmCleaner:
             cast(dict[str, str], tags), self._settings.custom_age_tag_key
         )
         if retention_age:
-            logging.info(f"Updating age for instance: {instance.display_name}")
+            logging.info("Updating age for instance: %s", instance.display_name)
         return core_age.is_old(
             policy.effective_age(retention_age, self._settings.age), now, created_time
         )
@@ -263,4 +237,4 @@ def build_vm_cleaner(context: RunContext) -> Cleaner:
         custom_age_tag_key=options.get("custom_age_tag_key") or "",
         instance_states=DEFAULT_INSTANCE_STATES if states is None else states,
     )
-    return VmCleaner(compute_api_for(base), regions_of(base), settings)
+    return VmCleaner(compute_api_for(base), regions_of(base), settings, engine=True)

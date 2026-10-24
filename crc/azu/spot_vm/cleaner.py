@@ -9,13 +9,19 @@ deletes each planned VM, then its unprotected leftover disks, then its NIC, as m
 
 import datetime
 import logging
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from crc.azu import _logger
 from crc.azu._base import Base
 from crc.azu.spot_vm.client import ComputeFactory, NetworkFactory
+from crc.azu.spot_vm.config import (
+    STOPPED_POWER_STATES,
+    SpotVmConfig,
+    TagSpec,
+    log_summary,
+    old_enough,
+)
 from crc.azu.spot_vm.disks import DiskSlot, detached_disk_refs, disk_slots
 from crc.azu.spot_vm.removal import RemovalOps, Removed, Remover
 from crc.core import age as core_age
@@ -31,39 +37,6 @@ from crc.core.cleaner import (
     Skipped,
 )
 from crc.core.registry import register
-
-STOPPED_POWER_STATES = ("VM stopped", "VM deallocated")
-
-TagSpec = Mapping[str, Sequence[str]]
-
-
-@dataclass(frozen=True, slots=True)
-class SpotVmConfig:
-    """Flags of one run. `age` must already be validated (`require_positive_age`)."""
-
-    resource_group: str
-    filter_tags: TagSpec | None
-    exception_tags: TagSpec | None
-    notags: TagSpec | None
-    age: core_age.AgeSpec
-    custom_age_tag_key: str | None
-
-
-def log_summary(removed: Removed, *, dry_run: bool) -> None:
-    """The warning lines main logs at the end of a run."""
-    if not removed.vms:
-        logging.warning("No Azure Spot VMs (stopped/deallocated) to delete.")
-    label = "which would be deleted" if dry_run else "deleted"
-    logging.warning(
-        "List of Azure Spot VMs (Total: %s) %s: %s", len(removed.vms), label, removed.vms
-    )
-    logging.warning("List of Azure NICs (Total: %s) %s: %s", len(removed.nics), label, removed.nics)
-    logging.warning(
-        "List of Azure leftover disks (delete_option!=Delete) (Total: %s) %s: %s",
-        len(removed.disks),
-        label,
-        removed.disks,
-    )
 
 
 class AzureSpotVmCleaner:
@@ -132,7 +105,7 @@ class AzureSpotVmCleaner:
             try:
                 leftovers = detached_disk_refs(candidate.name, slots, self._config.resource_group)
                 self.remover.remove_vm(candidate.name, leftovers, removed)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - SAF-005 per-VM isolation, failure logged and recorded
                 logging.error("Error deleting Spot VM %s: %s", candidate.name, e)
                 _logger.failed(self._config.resource_group, candidate.id, e)
                 failed.append(Failure(id=candidate.id, error=str(e)))
@@ -155,7 +128,7 @@ class AzureSpotVmCleaner:
                     previewed.disks.append(f"{resource_group}/{disk_name}")
             self._network_factory()
             previewed.nics.append(f"{candidate.name}-NIC")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-VM isolation in the dry-run preview, failure logged and recorded
             logging.error("Error deleting Spot VM %s: %s", candidate.name, e)
             _logger.failed(self._config.resource_group, candidate.name, e)
 
@@ -180,7 +153,7 @@ class AzureSpotVmCleaner:
             )
             if instance_view.statuses and len(instance_view.statuses) > 1:
                 return str(instance_view.statuses[1].display_status or "")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - status read failure logged, empty status keeps the VM
             logging.error("Failed to get instance view for %s: %s", vm_name, e)
         return ""
 
@@ -209,7 +182,7 @@ class AzureSpotVmCleaner:
                 "Skipping Spot VM %s: no creation time (age check not possible)", vm.name
             )
             return None, "no creation time"
-        if not self._old_enough(vm, now, time_created):
+        if not old_enough(self._config, vm, now, time_created):
             _logger.skip("younger than the age threshold or invalid custom age tag")
             return None, "younger than the age threshold or invalid custom age tag"
         return (
@@ -243,22 +216,9 @@ class AzureSpotVmCleaner:
     def _power_state(self, vm: Any) -> str | None:
         try:
             return self.power_status(vm.name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - status read failure logged, unknown power state keeps the VM
             logging.error("Error getting status for Spot VM %s: %s", vm.name, e)
             return None
-
-    def _old_enough(self, vm: Any, now: datetime.datetime, time_created: Any) -> bool:
-        current = now.astimezone(time_created.tzinfo)
-        try:
-            retention_age = core_age.validated_retention_age(
-                vm.tags or {}, self._config.custom_age_tag_key or ""
-            )
-        except ValueError:
-            return False
-        if retention_age:
-            logging.info("Updating age for Spot VM: %s", vm.name)
-        age = policy.effective_age(retention_age, self._config.age)
-        return core_age.is_old(age, current, time_created)
 
 
 @register("azure", "spot_instances")
@@ -276,3 +236,13 @@ def build_spot_vm_cleaner(context: RunContext) -> Cleaner:
         custom_age_tag_key=options.get("custom_age_tag_key"),
     )
     return AzureSpotVmCleaner(base.get_compute_client, base.get_network_client, config)
+
+
+__all__ = [
+    "STOPPED_POWER_STATES",
+    "AzureSpotVmCleaner",
+    "SpotVmConfig",
+    "TagSpec",
+    "build_spot_vm_cleaner",
+    "log_summary",
+]

@@ -8,8 +8,11 @@ from typing import Any
 import pytest
 from botocore.exceptions import EndpointConnectionError
 
-from crc.aws.snapshot import Snapshot, SnapshotCleaner, SnapshotClient, SnapshotRuntime
-from crc.core.cleaner import Candidate, Operation, Plan, RunContext
+from crc.aws.snapshot import SnapshotCleaner, SnapshotClient
+from crc.core import engine
+from crc.core.cleaner import Candidate, Cleaner, Operation, Plan, RunContext
+from crc.core.registry import Registry
+from crc.core.selection import Selection
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
 AGE_DAYS = 90
@@ -171,29 +174,26 @@ def test_supports_only_delete() -> None:
     assert not cleaner.supports(Operation.STOP)
 
 
-def test_adapter_runs_the_cleaner_with_injected_runtime(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
+def _engine_run(cleaner: SnapshotCleaner, dry_run: bool = False) -> list[str]:
+    registry = Registry()
+    built: Cleaner = cleaner
+    registry.register("aws", "snapshot")(lambda ctx: built)
+    (outcome,) = engine.run(Selection((("aws", "snapshot"),)), context(dry_run), registry)
+    assert outcome.result is not None or dry_run
+    return (
+        list(outcome.result.succeeded)
+        if outcome.result
+        else [c.id for c in outcome.plan.candidates]
+    )
+
+
+def test_engine_runs_the_cleaner_with_injected_clients() -> None:
     client = FakeClient([snap("a"), snap("b", 1)])
-    runtime = SnapshotRuntime(
-        client_factory=lambda region: client, list_regions=lambda: ["r"], clock=lambda: NOW
-    )
-    adapter = Snapshot(False, 90, None, runtime)
-    adapter.delete()
-    assert adapter.get_deleted == ["a"]
-    assert adapter.delete_count == 1
-    assert adapter.age_days == AGE_DAYS
-    assert adapter.deleted_snapshots == ["a"]
+    assert _engine_run(make({"r": client}, AGE_DAYS)) == ["a"]
+    assert client.calls[-1] == ("delete_snapshot", "a")
 
 
-def test_adapter_deletes_as_it_goes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
+def test_engine_lists_before_deleting_and_skips_the_region_on_error() -> None:
     client = FakeClient([snap("a"), {"SnapshotId": "b"}])
-    runtime = SnapshotRuntime(
-        client_factory=lambda region: client, list_regions=lambda: ["r"], clock=lambda: NOW
-    )
-    adapter = Snapshot(False, 90, None, runtime)
-    with pytest.raises(KeyError):
-        adapter.delete()
-    assert adapter.get_deleted == ["a"]
+    assert _engine_run(make({"r": client})) == []
+    assert [c for c in client.calls if c[0] == "delete_snapshot"] == []

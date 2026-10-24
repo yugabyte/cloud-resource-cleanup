@@ -21,16 +21,63 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = [
-    "tests/test_aws_disk.py",
-    "tests/test_aws_spot_instance_requests.py",
-    "tests/test_azu_spot_vm.py",
-    "tests/test_gcp_spot_vm.py",
-    "tests/test_oci_spot_vm.py",
-]
+extend-exclude = []
+
+[tool.ruff.format]
+exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "FURB", "SIM", "PERF", "C901", "PLR", "RUF"]
+select = [
+    "E", "F", "W", "I", "B", "UP", "FURB", "SIM", "PERF", "C901", "PLR", "RUF",
+    "DTZ", "BLE", "G", "LOG", "C4", "RET", "N",
+]
+# LOG015: the code and the frozen oracles log through the root logger, and the parity tests
+# compare logger names; module loggers would change the records.
+ignore = ["LOG015"]
+
+[tool.ruff.lint.per-file-ignores]
+# N802/N803: these names mirror boto3 keyword arguments and resource attributes (`Filters=`,
+# `VpcId=`, `DhcpOptions`); renaming them would break the SDK call.
+"crc/aws/*/client.py" = ["N802", "N803"]
+# Test fakes that reproduce the same boto3 / frozen oracle signatures.
+"tests/helpers_cl2_aws.py" = ["N802"]
+"tests/helpers_cl2_azu.py" = ["N802"]
+"tests/helpers_cl2_crc.py" = ["N802"]
+"tests/helpers_cl2_gcp_oracle.py" = ["N802"]
+"tests/helpers_gcp_bridge.py" = ["N802"]
+"tests/test_aws_disk_cleaner.py" = ["N803"]
+"tests/test_aws_disk_engine.py" = ["N803"]
+"tests/test_aws_disk_fix.py" = ["N803"]
+"tests/test_aws_disk_parity.py" = ["N803"]
+"tests/test_aws_elastic_ips_fix.py" = ["N803"]
+"tests/test_aws_elastic_ips.py" = ["N803"]
+"tests/test_aws_ip_parity.py" = ["N803"]
+"tests/test_aws_keypair_parity.py" = ["N803"]
+"tests/test_aws_keypairs.py" = ["N803"]
+"tests/test_aws_kms_fix.py" = ["N803"]
+"tests/test_aws_kms_parity.py" = ["N803"]
+"tests/test_aws_kms.py" = ["N803"]
+"tests/test_aws_misc_logger.py" = ["N803"]
+"tests/test_aws_snapshot_fix.py" = ["N803"]
+"tests/test_aws_snapshot_parity.py" = ["N803"]
+"tests/test_aws_snapshot.py" = ["N803"]
+"tests/test_aws_spot_instance_requests_engine.py" = ["N803"]
+"tests/test_aws_spot_instance_requests_parity.py" = ["N803"]
+"tests/test_aws_vm_parity.py" = ["N803"]
+"tests/test_aws_vm.py" = ["N803"]
+"tests/test_aws_vpc_fix.py" = ["N803"]
+"tests/test_aws_vpc_parity.py" = ["N802", "N803"]
+"tests/test_core_engine.py" = ["N802"]
+"tests/test_gcp_base_parity.py" = ["N802"]
+"tests/test_gcp_disk_parity.py" = ["N802"]
+"tests/test_gcp_vm_parity.py" = ["N802"]
+"tests/test_own1_saf_gaps.py" = ["N803"]
+# Hash-locked safety tests (tests/archtest/safety_lock.json): not editable, so ruff skips the rule.
+"tests/test_aws_vpc.py" = ["DTZ001"]
+"tests/test_core_age.py" = ["DTZ001"]
+"tests/test_core_age_fix.py" = ["DTZ001"]
+"tests/test_cli_logger.py" = ["C420"]
+"tests/test_gcp_spot_vm_engine.py" = ["C408"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -42,24 +89,13 @@ max-args = 6
 [tool.mypy]
 python_version = "3.11"
 strict = true
-# `mypy` with no arguments checks these paths. crc.py is left out because, as a
-# top-level module, it is also named `crc` and clashes with the crc/ package;
-# the CLI rung must resolve that (for example by moving its logic into crc/).
-files = ["crc", "tests"]
-exclude = ['^crc\.py$']
+# `mypy` with no arguments checks these paths. crc.py is not listed: as a top-level module it
+# is also named `crc` and clashes with the crc/ package. tests/test_crc_entry_types.py
+# type-checks a copy of it under another module name with the same strict settings.
+files = ["crc", "tests", "scripts"]
 
-# LEGACY RATCHET: this list may only shrink. Each rung removes the modules it
-# refactors. Keep it in sync with ruff `extend-exclude` above (crc.py is not
-# listed here because mypy never checks it, see `files`).
-[[tool.mypy.overrides]]
-module = [
-    "tests.test_aws_disk",
-    "tests.test_aws_spot_instance_requests",
-    "tests.test_azu_spot_vm",
-    "tests.test_gcp_spot_vm",
-    "tests.test_oci_spot_vm",
-]
-ignore_errors = true
+# LEGACY RATCHET: this list may only shrink. It is empty now; keep it in sync with ruff
+# `extend-exclude` above (crc.py is not listed here: tests/test_crc_entry_types.py checks it).
 
 # SDKs without stubs or py.typed: only the SDK, never a repository module.
 [[tool.mypy.overrides]]
@@ -72,6 +108,23 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["googleapiclient", "googleapiclient.*"]
+ignore_missing_imports = true
+
+# Cloud SDK namespace packages whose typing differs between releases: the gate must not depend
+# on the resolved version (constraints.txt pins one, these overrides make mypy indifferent to a
+# release that ships no stubs or no `py.typed`). `follow_imports = "skip"` is not used: it would
+# turn the SDK types into `Any` and make the existing `type: ignore` comments unused.
+[[tool.mypy.overrides]]
+module = [
+    "google",
+    "google.*",
+    "azure",
+    "azure.*",
+    "msrestazure",
+    "msrestazure.*",
+    "msrest",
+    "msrest.*",
+]
 ignore_missing_imports = true
 
 [tool.importlinter]

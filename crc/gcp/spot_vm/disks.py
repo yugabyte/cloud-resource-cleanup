@@ -2,13 +2,17 @@
 
 """Leftover disks of a Spot VM: disks with autoDelete=false are deleted after the VM."""
 
+import datetime
 import logging
+from collections.abc import Mapping
+from typing import Any
 
+from crc.core import age as core_age
 from crc.core import logger
 from crc.gcp.spot_vm.client import GcpSpotClient, InstanceView
-from crc.gcp.spot_vm.instances import labels_protect
+from crc.gcp.spot_vm.instances import Clock, labels_protect
 from crc.gcp.spot_vm.operations import wait_operation
-from crc.gcp.spot_vm.settings import DiskRef, SpotSettings
+from crc.gcp.spot_vm.settings import TIME_FORMAT, DiskRef, SpotSettings
 
 
 def disk_ref_from_source(source: str | None, project_id: str) -> DiskRef | None:
@@ -79,21 +83,55 @@ def disk_label(settings: SpotSettings, ref: DiskRef, fallback_zone: str) -> str:
     return _target(settings, ref, fallback_zone)[4]
 
 
+def _custom_age_keeps(
+    disk: Mapping[str, Any], labels: dict[str, str], settings: SpotSettings, clock: Clock | None
+) -> str | None:
+    """BUG-242: the keep reason when the disk carries the custom age label and is younger than
+    it, or when the label is invalid, the disk age is unreadable or no clock was injected (fail
+    closed). None when the disk has no custom age label, or is old enough for it."""
+    try:
+        retention_age = core_age.validated_retention_age(labels, settings.custom_age_tag_key or "")
+    except ValueError:
+        return "disk_invalid_age_tag"
+    if not retention_age:
+        return None
+    if clock is None:
+        return "disk_age_unknown"
+    try:
+        created = datetime.datetime.strptime(str(disk.get("creationTimestamp")), TIME_FORMAT)  # noqa: DTZ007 - TIME_FORMAT ends in %z, so the result is aware
+        now = clock().astimezone(created.tzinfo)
+        old = core_age.is_old(retention_age, now, created)
+    except (ValueError, TypeError):
+        return "disk_age_unknown"
+    return None if old else "disk_too_young"
+
+
 def disk_ok_to_delete(
-    client: GcpSpotClient, settings: SpotSettings, ref: DiskRef, fallback_zone: str
+    client: GcpSpotClient,
+    settings: SpotSettings,
+    ref: DiskRef,
+    fallback_zone: str,
+    clock: Clock | None = None,
 ) -> bool:
-    """Read the disk and keep it when its own labels match `exception_labels` or `notags`.
-    A failed read keeps the disk."""
+    """Read the disk and keep it when its own labels match `exception_labels` or `notags`, or
+    (BUG-242) when it carries the custom age label and is younger than it or the label is
+    invalid. A failed read keeps the disk."""
     project, scope, location, name, label = _target(settings, ref, fallback_zone)
     try:
         disk = client.get_disk(project, scope, location, name)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - SAF-039 a failed disk read keeps the disk
         logging.error("Failed to get leftover disk %s for label check (skipping): %s", label, e)
         logger.current().fail(location, label, e)
         return False
-    if labels_protect(disk.get("labels") or {}, settings):
+    disk_labels = disk.get("labels") or {}
+    if labels_protect(disk_labels, settings):
         logging.debug("Skipping leftover Spot disk %s: exception_labels/notags", label)
         logger.current().skip("disk_exception_tag")
+        return False
+    reason = _custom_age_keeps(disk, disk_labels, settings, clock)
+    if reason is not None:
+        logging.debug("Skipping leftover Spot disk %s: %s", label, reason)
+        logger.current().skip(reason)
         return False
     return True
 
@@ -119,7 +157,7 @@ def remove_leftover_disk(
             logger.current().fail(location, label, "disk delete operation failed or incomplete")
             return None
         logging.info("Deleted leftover Spot VM disk %s", label)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - per-disk isolation, failure logged and recorded
         logging.error("Failed to delete leftover disk %s: %s", label, e)
         logger.current().fail(location, label, e)
         return None

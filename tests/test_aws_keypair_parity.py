@@ -1,7 +1,9 @@
-"""Parity: `crc.aws.keypairs.KeyPairs` against main's version (`tests/legacy/aws_keypairs.txt`).
+"""Parity: the key pair Cleaner, run through `crc.core.engine`, against main's `KeyPairs`
+(`tests/legacy/aws_keypairs.txt`).
 
-Both run against the same fake `boto3.client`; SDK calls (in order), results, log records,
-stdout and raised errors must be identical for every case.
+Both run against the same fake `boto3.client`; SDK calls, results, log records, stdout and raised
+errors must match for every case. The one allowed difference: the cleaner lists every region
+before it deletes, so a later listing error stops the run before any delete (fewer deletes).
 """
 
 import datetime
@@ -15,13 +17,16 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnectionError
 
-from crc.aws.keypairs import KeyPairRuntime, KeyPairs, build_keypair_cleaner
+from crc.aws.keypairs import build_keypair_cleaner
+from crc.core import engine
 from crc.core.cleaner import Operation, RunContext
+from crc.core.registry import Registry
+from crc.core.selection import Selection
 from tests.helpers_log_fix import expected_logs
 from tests.log_fix_aws_misc import RULES
 
 ORACLE = Path(__file__).parent / "legacy" / "aws_keypairs.txt"
-NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
+NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 NOW_UTC = NOW.astimezone(datetime.UTC)
 TWO = 2
 
@@ -244,11 +249,6 @@ def _legacy(case: Case) -> Any:
     return _load_oracle().KeyPairs(case.dry_run, case.name_regex, case.exception_regex, case.age)
 
 
-def _new(case: Case) -> Any:
-    runtime = KeyPairRuntime(clock=lambda: NOW)
-    return KeyPairs(case.dry_run, case.name_regex, case.exception_regex, case.age, runtime)
-
-
 def _run(
     build: Callable[[Case], Any],
     case: Case,
@@ -270,7 +270,7 @@ def _run(
     error: tuple[str, str] | None = None
     try:
         cleaner.delete()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     deleted = list(cleaner.get_deleted)
     count = cleaner.count
@@ -287,7 +287,7 @@ def debug_logs(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_matches_main(
+def test_engine_matches_main(
     case: Case,
     debug_logs: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -295,13 +295,24 @@ def test_matches_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
-    assert new.calls == old.calls
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.count == old.count
-    assert new.logs == expected_logs(old.logs, LOG_BUGS, rules=RULES)
     assert new.stdout == old.stdout
+    old_deletes = [c for c in old.calls if c[0] == "delete_key_pair"]
+    new_deletes = [c for c in new.calls if c[0] == "delete_key_pair"]
+    if case.id in _INTERLEAVED_ERROR_CASES:
+        assert new_deletes == []
+        return
+    assert new_deletes == old_deletes
+    old_lists = [c for c in old.calls if c[0] == "describe_key_pairs"]
+    new_lists = [c for c in new.calls if c[0] == "describe_key_pairs"]
+    assert new_lists[: len(old_lists)] == old_lists
+    if old.error is None:
+        assert new_lists == old_lists
+    if new.error is None:
+        assert new.deleted == old.deleted
+    if case.dry_run or len(case.regions) <= 1:
+        assert new.logs == expected_logs(old.logs[:-1], LOG_BUGS, rules=RULES)
 
 
 QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
@@ -335,6 +346,13 @@ QUIRKS: Sequence[tuple[str, Callable[[Outcome], bool]]] = [
 ]
 
 
+ENGINE_QUIRKS: Mapping[str, Callable[[Outcome], bool]] = {
+    # Allowed change: every region is listed before the first delete, so a bad pattern stops the
+    # run before the earlier region is deleted (fewer deletes, never more).
+    "invalid-regex-after-earlier-region-deleted": lambda o: o.error is not None and o.deleted == [],
+}
+
+
 def _run_cleaner(
     case: Case,
     monkeypatch: pytest.MonkeyPatch,
@@ -360,16 +378,18 @@ def _run_cleaner(
         },
         now=NOW,
     )
-    cleaner = build_keypair_cleaner(ctx)
+    registry = Registry()
+    registry.register("aws", "keypair")(build_keypair_cleaner)
     error: tuple[str, str] | None = None
     deleted: list[str] = []
     try:
-        plan = cleaner.plan(ctx)
-        if case.dry_run:
-            deleted = [c.id for c in plan.candidates]
-        else:
-            deleted = list(cleaner.apply(plan, ctx).succeeded)
-    except Exception as e:
+        (outcome,) = engine.run(Selection((("aws", "keypair"),)), ctx, registry)
+        deleted = (
+            [c.id for c in outcome.plan.candidates]
+            if outcome.result is None
+            else list(outcome.result.succeeded)
+        )
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     logs = [(r.name, r.levelno, r.getMessage()) for r in caplog.records]
     return Outcome(aws.calls, deleted, len(deleted), logs, capsys.readouterr().out, error)
@@ -418,9 +438,9 @@ def test_quirk_is_preserved(
 ) -> None:
     case = next(c for c in CASES if c.id == case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert check(old), "oracle no longer shows the quirk"
-    assert check(new)
+    assert ENGINE_QUIRKS.get(case_id, check)(new)
 
 
 @pytest.mark.parametrize("case_id", ["exception-regex", "age-days"])
@@ -434,9 +454,9 @@ def test_per_keypair_skip_lines_are_debug(
     """BUG-356: the oracle logs the per-keypair skip lines at INFO, the new code at DEBUG."""
     case = next(c for c in CASES if c.id == case_id)
     old = _run(_legacy, case, monkeypatch, caplog, capsys)
-    new = _run(_new, case, monkeypatch, caplog, capsys)
+    new = _run_cleaner(case, monkeypatch, caplog, capsys)
     assert old.logs != new.logs
-    assert new.logs == expected_logs(old.logs, LOG_BUGS, rules=RULES)
+    assert new.logs == expected_logs(old.logs[:-1], LOG_BUGS, rules=RULES)
     skip_lines = [r for r in new.logs if "exception_regex" in r[2] or "not old enough" in r[2]]
     assert skip_lines
     assert {r[1] for r in skip_lines} == {logging.DEBUG}

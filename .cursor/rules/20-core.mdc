@@ -1,19 +1,21 @@
 ---
-description: Rules for crc/core and crc/notify
-globs: crc/core/**,crc/notify/**
+description: Rules for crc/core, crc/notify and crc/cli
+globs: crc/core/**,crc/notify/**,crc/cli/**
 alwaysApply: false
 ---
 
-# Core and notifiers
+# Core, notifiers and CLI
 
-- `crc.core` never imports `crc.aws`, `crc.azu`, `crc.gcp`, `crc.oci` or a
-  cloud SDK (`boto3`, `azure`, `google`, `oci`).
-- Policy and age code is pure: plain data in, decision out, no I/O, no
-  environment reads, no clock reads except through an injected `now`.
-- Use `typing.Protocol`, frozen `@dataclass(frozen=True, slots=True)` DTOs and
-  full type annotations. Must pass `mypy --strict` and ruff.
-- No `async`, `pydantic`, singletons or `Result` wrappers.
-- Parse and validate CLI values at the boundary; keep JSON-style flag values
-  such as `'{"days": 1}'` working.
-- `crc.notify` consumes the report model only; it must not import cloud code.
-- Keep functions small: complexity 10, 40 statements, 6 arguments.
+- `crc/core` policy and age code is pure: plain data in, decision out, no I/O, and time only
+  through the injected `now`; `crc/core` reads no environment (`MAX_AGE` is injected by
+  `crc/cli/context.py`, `install_max_age_source`, through `age.set_max_age_source`).
+  Fail closed on unparseable input.
+- Notifiers consume the `Report` only and hold no cloud logic.
+- New env reads, prints and exits go in `crc/cli` (other layers: ARCH-003); it parses and
+  validates flag values before any cloud call.
+- A CLI flag is an external contract (Jenkins jobs in `cloud-resource-cleanup-triggers`): never
+  rename, remove, re-type or change a default; a new flag is optional. See the flag workflow in
+  `AGENTS.md`.
+- Every kind runs on the engine path: a route in `crc/cli/routes/<cloud>.py`, no per-kind code
+  in `crc/cli` dispatch.
+- Run-log text follows `docs/logging.md`.

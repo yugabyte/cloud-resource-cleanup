@@ -1,4 +1,4 @@
-"""InfluxDB sink: one point per resource label, written as `crc.py write_influxdb` does today.
+"""InfluxDB sink: one point per resource label, sent through an injected client.
 
 The client is injected (an `influxdb_client.InfluxDBClient` in production, a fake in tests).
 """
@@ -22,7 +22,7 @@ def _fixed(names: str, count: int) -> Callable[[], tuple[str, int]]:
 
 
 class InfluxSettings(Protocol):
-    """Where the bucket and resource suffix come from; read at write time, like `crc.py`."""
+    """Where the bucket and resource suffix come from; read at write time."""
 
     @property
     def influxdb_bucket(self) -> str | None:
@@ -37,7 +37,7 @@ class InfluxSettings(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class InfluxConfig:
-    """Plain `InfluxSettings` for callers that are not the `CRC` object."""
+    """Plain `InfluxSettings` for callers that are not the CLI `CRC` object."""
 
     influxdb_bucket: str | None
     resource_suffix: str | None = None
@@ -67,9 +67,7 @@ class InfluxNotifier:
         """Write `resources` (a list or dict) as one point of measurement `cloud`."""
         self._emit(cloud, resource_name, lambda: (str(resources), len(resources)))
 
-    def _emit(
-        self, cloud: str, resource_name: str, fields: Callable[[], tuple[str, int]]
-    ) -> None:
+    def _emit(self, cloud: str, resource_name: str, fields: Callable[[], tuple[str, int]]) -> None:
         try:
             write_api = self.client.write_api(write_options=SYNCHRONOUS)
 
@@ -85,5 +83,5 @@ class InfluxNotifier:
             )
 
             write_api.write(bucket=self.settings.influxdb_bucket, record=point)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failing notification sink must not abort the run
             print(f"Unable to push data to influxDB: {e}")

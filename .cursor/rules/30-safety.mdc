@@ -6,12 +6,12 @@ alwaysApply: false
 
 # Safety and tests
 
-- `CLEANUP_SAFETY.md` is authoritative for destructive behaviour. Do not edit
-  it unless the task says so.
-- Never delete, skip, xfail or loosen an existing test. Add or strengthen only.
-- Tests are offline: mock `boto3`, Azure, GCP and OCI clients. No credentials.
+- `CLEANUP_SAFETY.md` is authoritative. Update it in the same PR when destructive behaviour
+  changes; never remove, weaken or renumber a `SAF-NNN` rule.
+- Never delete, skip, xfail or loosen a test; add or strengthen only.
+- Never edit `tests/legacy/*.txt` or `tests/archtest/*.json`, never run the `update_*.py`
+  scripts, and never hand-edit `tests/archtest/test_count_floor.txt` (`make raise-test-floor` only). A needed change to a locked test goes to the owner in the PR description.
+- Tests are offline: mock `boto3`, Azure, GCP and OCI clients; no credentials.
 - Assert fail-closed branches and destructive call order, not only happy paths.
-- Use `parametrize`, `pytest.raises(..., match=...)`, `monkeypatch`, `tmp_path`
-  and function-scoped fixtures. No `autouse` session fixtures.
-- `tests/archtest/` is a guardrail owned by CODEOWNERS.
-- The test count must not go down.
+- Use `parametrize`, `pytest.raises(..., match=...)`, `monkeypatch`, `tmp_path`, function-scoped
+  fixtures; no `autouse` session fixtures.

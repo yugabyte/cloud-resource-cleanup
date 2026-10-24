@@ -1,9 +1,8 @@
 # Copyright (c) Yugabyte, Inc.
 
-"""AWS spot instance request cleaner. `crc.aws.spot_instance_requests.SpotInstanceRequests`
-is the class `crc.py` imports; `SpotRequestCleaner` is the registered `Cleaner`."""
+"""AWS spot instance request cleaner (`SpotRequestCleaner`, registered as
+`aws` / `spot_instance_requests`)."""
 
-from crc.aws.spot_instance_requests.adapter import SpotInstanceRequests
 from crc.aws.spot_instance_requests.cleaner import (
     SpotRequestCleaner,
     SpotRuntime,
@@ -14,7 +13,6 @@ from crc.aws.spot_instance_requests.model import SpotSettings
 
 __all__ = [
     "SpotClient",
-    "SpotInstanceRequests",
     "SpotRequestCleaner",
     "SpotRuntime",
     "SpotSettings",

@@ -1,8 +1,8 @@
-"""GCP lane rules of the LOG rungs: the oracle logs rewritten with the lane's bug rules.
+"""GCP log rules: the oracle logs rewritten with the GCP bug rules.
 
 The core rules and the rewriter live in ``tests/helpers_log_fix.py``. This module adds the
-rules of the GCP lane (BUG-358) and exposes ``RULES``; GCP parity tests pass ``rules=RULES``
-to ``expected_logs`` / ``expected_outcome``. Contract: ``docs/refactor/LOGGING.md``.
+rules of the GCP cleaners (BUG-358) and exposes ``RULES``; GCP parity tests pass ``rules=RULES``
+to ``expected_logs`` / ``expected_outcome``. Contract: ``docs/logging.md``.
 """
 
 import logging

@@ -55,6 +55,17 @@ def _yb_task(tags: Mapping[str, str]) -> str:
     return policy.aws_disk_yb_task({key: value or "" for key, value in tags.items()})
 
 
+def _sensitive_yb_task(tags: Mapping[str, str]) -> str | None:
+    """The first sensitive value among every tag whose key folds to `yb_task` (BUG-282)."""
+    for key, value in tags.items():
+        if key.casefold().replace("-", "_") != "yb_task":
+            continue
+        stripped = (value or "").strip()
+        if policy.is_sensitive_yb_task(stripped):
+            return stripped
+    return None
+
+
 def older_than_floor(
     created: datetime.datetime, now: datetime.datetime, floor: Mapping[str, int]
 ) -> bool:
@@ -73,10 +84,13 @@ class VolumeFilter:
     def should_skip(self, tags: dict[str, str], name: Any, volume_id: Any) -> bool:
         """Sensitive yb_task, Kubernetes CSI, exception tags, notags, exception regex."""
         settings = self._settings
-        yb_task = _yb_task(tags)
-        if policy.is_sensitive_yb_task(yb_task):
+        sensitive = _sensitive_yb_task(tags)
+        if sensitive is not None:
             _skip(
-                "sensitive_yb_task", "Skipping volume %s: sensitive yb_task=%s", volume_id, yb_task
+                "sensitive_yb_task",
+                "Skipping volume %s: sensitive yb_task=%s",
+                volume_id,
+                sensitive,
             )
             return True
         if policy.aws_disk_skips_kubernetes(tags, settings.filter_tags):
@@ -180,4 +194,21 @@ class VolumeFilter:
         if not older_than_floor(created, now, floor):
             logger.current().skip("too_young")
             return False
+        if not older_than_floor(created, now, self._detach_floor(floor)):
+            _skip(
+                "detach_unknown_too_young",
+                "Skipping volume %s: detach time unknown and CreateTime younger than "
+                "age plus detach_age",
+                volume_id,
+            )
+            return False
         return True
+
+    def _detach_floor(self, floor: Mapping[str, int]) -> dict[str, int]:
+        """BUG-283: CloudWatch cannot see a detach from a stopped instance, so with an age gate
+        and `detach_age` the CreateTime floor grows by `detach_age` (fail closed)."""
+        settings = self._settings
+        if not settings.age or not settings.detach_age:
+            return dict(floor)
+        total = policy.age_to_timedelta(dict(floor)) + policy.age_to_timedelta(settings.detach_age)
+        return {"hours": int(total.total_seconds() // 3600)}

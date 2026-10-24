@@ -1,4 +1,4 @@
-"""Unit tests for `crc.aws.kms`: read-only `plan()`, mutating `apply()`, adapter."""
+"""Unit tests for `crc.aws.kms`: read-only `plan()`, mutating `apply()`, engine run."""
 
 import datetime
 import json
@@ -8,8 +8,9 @@ from typing import Any
 import pytest
 from botocore.exceptions import EndpointConnectionError
 
-from crc.aws.kms import Kms, KmsCleaner, KmsRuntime, KmsSettings
+from crc.aws.kms import KmsCleaner, KmsSettings
 from crc.core.cleaner import Operation, Plan, RunContext, Skipped
+from tests.helpers_wc_aws1_engine import deleted_ids, run_cleaner
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
 OLD = NOW - datetime.timedelta(days=30)
@@ -108,12 +109,15 @@ def test_plan_filters_by_pairs() -> None:
     aws = Aws({"old": OLD})
     assert cleaner(aws, filter_tags={"team": ["qa"]}).plan(context()).candidates
     assert not cleaner(aws, filter_tags={"team": ["dev"]}).plan(context()).candidates
-    assert not cleaner(aws, filter_tags={"team": ["qa", "dev"]}).plan(context()).candidates
+    assert cleaner(aws, filter_tags={"team": ["qa", "dev"]}).plan(context()).candidates
+    assert cleaner(aws, filter_tags={"team": []}).plan(context()).candidates
+    assert not cleaner(aws, filter_tags={"other": []}).plan(context()).candidates
 
 
 def test_plan_exception_tags_skip_the_key_through_keyerror() -> None:
     aws = Aws({"old": OLD})
     assert not cleaner(aws, exception_tags={"team": []}).plan(context()).candidates
+    assert not cleaner(aws, exception_tags={"other": []}).plan(context()).candidates
 
 
 def test_plan_unreachable_region_is_marked_and_logged(caplog: pytest.LogCaptureFixture) -> None:
@@ -169,21 +173,17 @@ def test_supports_only_delete() -> None:
     assert not target.supports(Operation.STOP)
 
 
-def test_adapter_accumulates_and_reports() -> None:
+def test_engine_run_twice_schedules_each_time() -> None:
     aws = Aws({"a": OLD})
-    runtime = KmsRuntime(client_factory=aws.client, clock=lambda: NOW)
-    kms = Kms(False, {}, {}, "ci", USER, WINDOW, {"days": 1}, "", runtime)
-    kms.delete()
-    kms.delete()
-    assert kms.get_deleted == ["a", "a"]
-    assert kms.kms_keys_to_delete == ["a", "a"]
-    assert len(mutating(aws.calls)) == 2 + 0
+    target = cleaner(aws, kms_pending_window=WINDOW)
+    assert deleted_ids(run_cleaner("aws", "kms", target, now=NOW)) == ["a"]
+    assert deleted_ids(run_cleaner("aws", "kms", target, now=NOW)) == ["a"]
+    assert mutating(aws.calls) == [("schedule_key_deletion", "a", str(WINDOW))] * 2
 
 
-def test_adapter_dry_run_never_schedules() -> None:
+def test_engine_dry_run_never_schedules() -> None:
     aws = Aws({"a": OLD})
-    runtime = KmsRuntime(client_factory=aws.client, clock=lambda: NOW)
-    kms = Kms(True, {}, {}, "ci", USER, WINDOW, {"days": 1}, "", runtime)
-    kms.delete()
-    assert kms.get_deleted == ["a"]
+    outcome = run_cleaner("aws", "kms", cleaner(aws), dry_run=True, now=NOW)
+    assert outcome.result is None
+    assert deleted_ids(outcome) == ["a"]
     assert mutating(aws.calls) == []

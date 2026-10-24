@@ -2,7 +2,7 @@
 
 """The Azure SDK calls the VM cleaner uses, behind small typed Protocols.
 
-The real clients come from the legacy `crc.azu._base.Base`; tests pass fakes that satisfy these
+The real clients come from `crc.azu._base.Base`; tests pass fakes that satisfy these
 Protocols instead of the SDK.
 """
 
@@ -34,6 +34,11 @@ class InstanceStatus(Protocol):
     """One entry of the instance view statuses."""
 
     @property
+    def code(self) -> str | None:
+        """Status code, for example `PowerState/running` or `ProvisioningState/succeeded`."""
+        ...
+
+    @property
     def display_status(self) -> str:
         """Human readable status, for example `VM running`."""
         ...
@@ -43,8 +48,8 @@ class InstanceView(Protocol):
     """The instance view of a VM."""
 
     @property
-    def statuses(self) -> Sequence[InstanceStatus]:
-        """Provisioning status first, power state second."""
+    def statuses(self) -> Sequence[InstanceStatus] | None:
+        """Provisioning and power state statuses; the power state has a `PowerState/` code."""
         ...
 
 
@@ -57,10 +62,10 @@ class LongRunningOperation(Protocol):
 
 
 class VmOperations(Protocol):
-    """The four `virtual_machines` calls this cleaner uses (positional arguments, as on main)."""
+    """The four `virtual_machines` calls this cleaner uses (positional arguments)."""
 
-    def list_all(self) -> Iterable[SdkVm]:
-        """List the VMs of the whole subscription."""
+    def list(self, resource_group_name: str, /) -> Iterable[SdkVm]:
+        """List the VMs of the configured resource group only."""
         ...
 
     def instance_view(self, resource_group_name: str, vm_name: str, /) -> InstanceView:
@@ -71,8 +76,8 @@ class VmOperations(Protocol):
         """Start the deletion of one VM."""
         ...
 
-    def begin_power_off(self, resource_group_name: str, vm_name: str, /) -> object:
-        """Power off one VM (it stays allocated)."""
+    def begin_deallocate(self, resource_group_name: str, vm_name: str, /) -> object:
+        """Stop and deallocate one VM (compute billing ends)."""
         ...
 
 

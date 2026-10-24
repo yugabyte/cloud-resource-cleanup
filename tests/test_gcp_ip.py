@@ -10,9 +10,10 @@ import pytest
 
 from crc.core.cleaner import Candidate, Operation, Plan, RunContext
 from crc.core.registry import get
-from crc.gcp.ip import IP, AddressView, IpCleaner
+from crc.gcp.ip import AddressView, IpCleaner
+from tests.helpers_wc_gcp_engine import deleted_ids, run_engine
 
-NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
+NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
 PROJECT = "proj-1"
 TWO = 2
 
@@ -23,6 +24,19 @@ def ctx(*, dry_run: bool = False, **options: Any) -> RunContext:
 
 def addr(name: str, status: str = "RESERVED") -> Any:
     return types.SimpleNamespace(name=name, status=status)
+
+
+class FakeOperation:
+    def __init__(self, log: list[tuple[str, ...]], address: str, error: Exception | None) -> None:
+        self.log = log
+        self.address = address
+        self.error = error
+
+    def result(self) -> object:
+        self.log.append(("result", self.address))
+        if self.error is not None:
+            raise self.error
+        return None
 
 
 class FakeClient:
@@ -39,9 +53,9 @@ class FakeClient:
         items: list[AddressView] = self.regions[region]
         return items
 
-    def delete_address(self, project_id: str, region: str, address: str) -> object:
+    def delete_address(self, project_id: str, region: str, address: str) -> FakeOperation:
         self.calls.append(("delete_address", project_id, region, address))
-        return object()
+        return FakeOperation(self.calls, address, None)
 
     def names(self) -> list[str]:
         return [call[0] for call in self.calls]
@@ -90,10 +104,10 @@ def test_plan_outside_dry_run_logs_no_summary(caplog: pytest.LogCaptureFixture) 
         (["ip-"], None, ["ip-a"]),
         (["ip-", "keep"], None, ["ip-a", "keep-b"]),
         (["zzz"], None, []),
-        (None, ["keep"], ["keep-b"]),
-        (None, ["zzz"], []),
-        (["ip-"], ["ip-a"], ["ip-a"]),
-        (["keep"], ["ip-"], []),
+        (None, ["keep"], ["ip-a"]),
+        (None, ["zzz"], ["ip-a", "keep-b"]),
+        (["ip-"], ["ip-a"], []),
+        (["keep"], ["ip-"], ["keep-b"]),
     ],
 )
 def test_plan_filters(
@@ -109,9 +123,9 @@ def test_plan_records_skip_reasons() -> None:
     plan = cleaner(client, ["b", "c"], ["c"]).plan(ctx())
     assert [(s.id, s.reason) for s in plan.skipped] == [
         ("a", "status is not RESERVED"),
-        ("b", "exception_regex"),
+        ("c", "exception_regex"),
     ]
-    assert [c.id for c in plan.candidates] == ["c"]
+    assert [c.id for c in plan.candidates] == ["b"]
 
 
 def test_plan_propagates_listing_errors() -> None:
@@ -134,8 +148,11 @@ def test_apply_deletes_in_plan_order_and_logs(caplog: pytest.LogCaptureFixture) 
     assert result.succeeded == ("a", "b", "c")
     assert client.calls == [
         ("delete_address", PROJECT, "r1", "a"),
+        ("result", "a"),
         ("delete_address", PROJECT, "r1", "b"),
+        ("result", "b"),
         ("delete_address", PROJECT, "r2", "c"),
+        ("result", "c"),
     ]
     assert [r.getMessage() for r in caplog.records] == [
         "Deleting IP address: a",
@@ -151,7 +168,7 @@ def test_apply_acts_only_on_the_plan() -> None:
     plan = Plan(candidates=(Candidate(id="b", name="b", region="r"),))
     result = cleaner(client).apply(plan, ctx())
     assert result.succeeded == ("b",)
-    assert client.calls == [("delete_address", PROJECT, "r", "b")]
+    assert client.calls == [("delete_address", PROJECT, "r", "b"), ("result", "b")]
 
 
 def test_apply_in_dry_run_deletes_nothing() -> None:
@@ -161,9 +178,11 @@ def test_apply_in_dry_run_deletes_nothing() -> None:
     assert client.calls == []
 
 
-def test_apply_error_propagates_without_summary(caplog: pytest.LogCaptureFixture) -> None:
+def test_apply_unexpected_error_propagates_without_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class Failing(FakeClient):
-        def delete_address(self, project_id: str, region: str, address: str) -> object:
+        def delete_address(self, project_id: str, region: str, address: str) -> FakeOperation:
             raise RuntimeError("quota")
 
     caplog.set_level(logging.WARNING)
@@ -180,28 +199,26 @@ def test_supports_delete_only() -> None:
 
 
 def test_factory_reads_options_and_requires_project() -> None:
-    built = get("gcp", "ip")(ctx(project_id=PROJECT, name_regex=["a"], exception_regex=["b"]))
+    built = get("gcp", "ip")(
+        ctx(project_id=PROJECT, name_regex=["a"], exception_regex=["b"], age={"days": 1})
+    )
     assert isinstance(built, IpCleaner)
     with pytest.raises(ValueError, match="project_id is required"):
         get("gcp", "ip")(ctx())
 
 
-def test_adapter_uses_injected_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
+def test_engine_uses_injected_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("google.cloud.compute_v1.RegionsClient", lambda: pytest.fail("SDK used"))
     client = FakeClient({"r1": [addr("a")], "r2": [addr("b")]})
-    ips = IP(False, PROJECT, ["a"], [], client)
-    ips.delete()
-    assert ips.get_deleted == ["a"]
-    assert ips.count == 1
+    outcome = run_engine(cleaner(client, ["a"], []), "ip")
+    assert deleted_ids(outcome) == ["a"]
     assert client.names().count("delete_address") == 1
 
 
-def test_adapter_dry_run_lists_without_deleting(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("crc.service.init_logging", lambda *args, **kwargs: None)
+def test_engine_dry_run_lists_without_deleting() -> None:
     client = FakeClient({"r": [addr("a"), addr("b")]})
-    ips = IP(True, PROJECT, [], [], client)
-    ips.delete()
-    assert ips.get_deleted == ["a", "b"]
+    outcome = run_engine(cleaner(client, [], []), "ip", dry_run=True)
+    assert outcome.result is None
+    assert deleted_ids(outcome) == ["a", "b"]
     assert "delete_address" not in client.names()
-    assert len(ips.get_deleted) == TWO
+    assert len(deleted_ids(outcome)) == TWO

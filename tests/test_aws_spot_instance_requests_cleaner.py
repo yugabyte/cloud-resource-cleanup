@@ -4,9 +4,9 @@ import logging
 
 import pytest
 
-from crc.aws.spot_instance_requests import SpotInstanceRequests, SpotRequestCleaner, SpotRuntime
+from crc.aws.spot_instance_requests import SpotRequestCleaner, SpotRuntime
 from crc.aws.spot_instance_requests.model import Waiter
-from crc.core import registry
+from crc.core import policy, registry
 from crc.core.cleaner import Operation, Plan, RunContext
 from crc.core.report import DISK, SPOT_INSTANCE_REQUEST, VM, Report
 from tests.test_aws_spot_instance_requests_parity import (
@@ -41,7 +41,6 @@ def _setup(
     cleaner.runtime = SpotRuntime(
         client_factory=cleaner.runtime.client_factory,
         list_regions=lambda: list(case.regions),
-        clock=lambda: NOW,
         waiter=Waiter(aws.sleep, aws.monotonic),
     )
     return aws, cleaner, ctx
@@ -136,10 +135,10 @@ def test_supports_delete_only() -> None:
     assert not cleaner.supports(Operation.STOP)
 
 
-def test_adapter_keeps_public_attributes() -> None:
-    adapter = SpotInstanceRequests(True, {"a": ["b"]}, {}, {"days": 1}, None, {})
-    assert adapter.get_deleted == []
-    assert adapter.volumes_to_delete == []
-    assert adapter.age == {"days": 1}
-    assert "prod" in adapter.SENSITIVE_YB_TASK
-    assert isinstance(adapter.cleaner(), SpotRequestCleaner)
+def test_cleaner_keeps_settings_and_runtime_attributes() -> None:
+    ctx = RunContext(True, Operation.DELETE, {"filter_tags": {"a": ["b"]}, "age": {"days": 1}}, NOW)
+    cleaner = registry.get("aws", "spot_instance_requests")(ctx)
+    assert isinstance(cleaner, SpotRequestCleaner)
+    assert cleaner.settings.age == {"days": 1}
+    assert cleaner.settings.filter_tags == {"a": ["b"]}
+    assert "prod" in policy.SENSITIVE_YB_TASK

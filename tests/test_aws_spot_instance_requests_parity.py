@@ -8,7 +8,6 @@ or `plan()` only in a dry run).
 """
 
 import copy
-import dataclasses
 import datetime
 import logging
 import re
@@ -22,11 +21,16 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError
 
-from crc.aws.spot_instance_requests import SpotInstanceRequests, SpotRuntime
+from crc.aws.spot_instance_requests import (
+    SpotRequestCleaner,
+    SpotRuntime,
+    build_spot_request_cleaner,
+)
 from crc.aws.spot_instance_requests.model import Waiter
 from crc.core import registry
-from crc.core.cleaner import Operation, RunContext
+from crc.core.cleaner import Cleaner, Operation, RunContext
 from crc.core.report import DISK
+from tests.helpers_ad_spot_engine import run_through_engine
 from tests.helpers_log_fix import expected_logs
 from tests.log_fix_aws_compute import RULES
 
@@ -276,7 +280,7 @@ CASES: list[Case] = [
     ),
     Case(
         "naive-create-time-error-logged",
-        one(std(requests=[{**req(), "CreateTime": datetime.datetime(2020, 1, 1)}])),
+        one(std(requests=[{**req(), "CreateTime": datetime.datetime(2020, 1, 1)}])),  # noqa: DTZ001 - naive fixture time kept: an aware value is not provably identical
     ),
     Case(
         "missing-create-time-error-logged",
@@ -758,14 +762,6 @@ def _legacy(case: Case, aws: FakeAws) -> Any:
     )
 
 
-def _adapter(case: Case, aws: FakeAws) -> Any:
-    obj = SpotInstanceRequests(
-        case.dry_run, case.filter_tags, case.exception_tags, case.age, case.custom, case.notags
-    )
-    obj._runtime = SpotRuntime(clock=lambda: NOW, waiter=Waiter(aws.sleep, aws.monotonic))
-    return obj
-
-
 def _logs(caplog: pytest.LogCaptureFixture) -> list[tuple[str, int, str]]:
     return [
         (r.name, r.levelno, re.sub(r"0x[0-9a-f]+", "0x", r.getMessage())) for r in caplog.records
@@ -796,13 +792,12 @@ def _run_class(
         obj.delete()
         deleted, volumes = list(obj.get_deleted), list(obj.volumes_to_delete)
         assert obj.delete_count == len(deleted) + len(volumes)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(aws.calls, deleted, volumes, _logs(caplog), error)
 
 
-def _run_cleaner(case: Case, mp: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> Outcome:
-    aws = _prepare(case, mp, caplog)
+def _context(case: Case) -> RunContext:
     options = {
         "filter_tags": case.filter_tags,
         "exception_tags": case.exception_tags,
@@ -810,7 +805,38 @@ def _run_cleaner(case: Case, mp: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
         "age": case.age,
         "custom_age_tag_key": case.custom,
     }
-    ctx = RunContext(case.dry_run, Operation.DELETE, options, NOW)
+    return RunContext(case.dry_run, Operation.DELETE, options, NOW)
+
+
+def _run_engine(case: Case, mp: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> Outcome:
+    aws = _prepare(case, mp, caplog)
+    ctx = _context(case)
+    error: tuple[str, str] | None = None
+    deleted: list[str] = []
+    volumes: list[str] = []
+
+    def factory(c: RunContext) -> Cleaner:
+        cleaner = build_spot_request_cleaner(c)
+        assert isinstance(cleaner, SpotRequestCleaner)
+        cleaner.runtime = SpotRuntime(waiter=Waiter(aws.sleep, aws.monotonic))
+        return cleaner
+
+    try:
+        outcome = run_through_engine("aws", "spot_instance_requests", factory, ctx)
+        if outcome.result is None:
+            deleted = [c.id for c in outcome.plan.candidates]
+            volumes = list(outcome.plan.related.get(DISK, ()))
+        else:
+            deleted = list(outcome.result.succeeded)
+            volumes = list(outcome.result.related.get(DISK, ()))
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
+        error = (type(e).__name__, str(e))
+    return Outcome(aws.calls, deleted, volumes, _logs(caplog), error)
+
+
+def _run_cleaner(case: Case, mp: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> Outcome:
+    aws = _prepare(case, mp, caplog)
+    ctx = _context(case)
     error: tuple[str, str] | None = None
     deleted: list[str] = []
     volumes: list[str] = []
@@ -818,7 +844,7 @@ def _run_cleaner(case: Case, mp: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
         cleaner = registry.get("aws", "spot_instance_requests")(ctx)
         cleaner._clients = {}  # type: ignore[attr-defined]
         cleaner.runtime = SpotRuntime(  # type: ignore[attr-defined]
-            clock=lambda: NOW, waiter=Waiter(aws.sleep, aws.monotonic)
+            waiter=Waiter(aws.sleep, aws.monotonic)
         )
         plan = cleaner.plan(ctx)
         if case.dry_run:
@@ -828,7 +854,7 @@ def _run_cleaner(case: Case, mp: pytest.MonkeyPatch, caplog: pytest.LogCaptureFi
             result = cleaner.apply(plan, ctx)
             deleted = list(result.succeeded)
             volumes = list(result.related.get(DISK, ()))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parity harness: the exception type and message are the outcome compared with the oracle
         error = (type(e).__name__, str(e))
     return Outcome(aws.calls, deleted, volumes, _logs(caplog), error)
 
@@ -842,34 +868,6 @@ def _ids(cases: list[Case]) -> list[str]:
     return [c.id for c in cases]
 
 
-@pytest.mark.parametrize("case", CASES, ids=_ids(CASES))
-def test_adapter_matches_main(
-    case: Case, debug_logs: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    old = _run_class(_legacy, case, monkeypatch, caplog)
-    new = _run_class(_adapter, case, monkeypatch, caplog)
-    old = dataclasses.replace(old, logs=expected_logs(old.logs, FIXED_BUGS, rules=RULES))
-    assert new.calls == old.calls
-    assert new.error == old.error
-    assert new.deleted == old.deleted
-    assert new.volumes == old.volumes
-    assert new.logs == old.logs
-
-
-def test_skip_lines_are_debug_only_in_new_code(
-    debug_logs: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """BUG-356 (LOG-AWS1): the INFO "Skipping ..." lines of the oracle are DEBUG now."""
-    differing = []
-    for case in CASES:
-        old = _run_class(_legacy, case, monkeypatch, caplog)
-        new = _run_class(_adapter, case, monkeypatch, caplog)
-        assert new.logs == expected_logs(old.logs, FIXED_BUGS, rules=RULES), case.id
-        if old.logs != new.logs:
-            differing.append(case.id)
-    assert differing
-
-
 def _per_region(calls: list[tuple[Any, ...]]) -> dict[str, list[tuple[Any, ...]]]:
     out: dict[str, list[tuple[Any, ...]]] = {}
     for call in calls:
@@ -877,14 +875,7 @@ def _per_region(calls: list[tuple[Any, ...]]) -> dict[str, list[tuple[Any, ...]]
     return out
 
 
-@pytest.mark.parametrize("case", CASES, ids=_ids(CASES))
-def test_cleaner_matches_main(
-    case: Case, debug_logs: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """plan() lists every region before apply() mutates: each region's call stream and the
-    log lines are the same as main's; a single region is identical including order."""
-    old = _run_class(_legacy, case, monkeypatch, caplog)
-    new = _run_cleaner(case, monkeypatch, caplog)
+def _assert_matches_main(case: Case, old: Outcome, new: Outcome) -> None:
     assert new.error == old.error
     if old.error is not None:
         return
@@ -898,6 +889,43 @@ def test_cleaner_matches_main(
     if len(case.regions) == 1:
         assert new.calls == old.calls
         assert new.logs == old_logs
+
+
+@pytest.mark.parametrize("case", CASES, ids=_ids(CASES))
+def test_engine_matches_main(
+    case: Case, debug_logs: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    old = _run_class(_legacy, case, monkeypatch, caplog)
+    new = _run_engine(case, monkeypatch, caplog)
+    _assert_matches_main(case, old, new)
+
+
+def test_skip_lines_are_debug_only_in_new_code(
+    debug_logs: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """BUG-356: the INFO "Skipping ..." lines of the oracle are DEBUG now."""
+    differing = []
+    for case in CASES:
+        old = _run_class(_legacy, case, monkeypatch, caplog)
+        new = _run_engine(case, monkeypatch, caplog)
+        old_trimmed = [r for r in old.logs if not r[2].startswith(COUNT_LOG)]
+        assert Counter(new.logs) == Counter(expected_logs(old_trimmed, FIXED_BUGS, rules=RULES)), (
+            case.id
+        )
+        if Counter(old_trimmed) != Counter(new.logs):
+            differing.append(case.id)
+    assert differing
+
+
+@pytest.mark.parametrize("case", CASES, ids=_ids(CASES))
+def test_cleaner_matches_main(
+    case: Case, debug_logs: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Plan() lists every region before apply() mutates: each region's call stream and the
+    log lines are the same as main's; a single region is identical including order."""
+    old = _run_class(_legacy, case, monkeypatch, caplog)
+    new = _run_cleaner(case, monkeypatch, caplog)
+    _assert_matches_main(case, old, new)
 
 
 def test_cases_cover_dry_and_real_and_unique_ids() -> None:

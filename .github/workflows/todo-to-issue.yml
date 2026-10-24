@@ -1,0 +1,32 @@
+# Turns every "TODO(BUG-NNN)" comment in crc/ into a GitHub issue and closes the issue when
+# the comment is removed (a fixed bug removes its comment and marks its BUGS.md row fixed).
+#
+# Repo admin action: enable Settings > Actions > General > Workflow permissions "Read and
+# write", or the job cannot create or close issues. INSERT_ISSUE_URLS stays off: the action
+# must not commit issue links back into the code.
+#
+# Runs on push to main and by hand only. Not on pull_request: the action warns that it would
+# open duplicate issues. tests/archtest ARCH-012 keeps the comments and BUGS.md in step.
+name: todo-to-issue
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  todo-to-issue:
+    if: github.repository == 'yugabyte/cloud-resource-cleanup'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: alstr/todo-to-issue-action@37bb7b56e58569ef273b60678048030a7f0c261a  # v5.1.15
+        with:
+          CLOSE_ISSUES: "true"
+          AUTO_ASSIGN: "false"
+          IDENTIFIERS: '[{"name": "TODO", "labels": []}]'
+          IGNORE: "tests/legacy/.*,docs/archive/.*"

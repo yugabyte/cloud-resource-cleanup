@@ -10,8 +10,7 @@ Companion of [SKILL.md](SKILL.md). One bug, one PR, named by its ID.
 2. Locate the code. An old row's location column cites `main` lines that have moved or are gone.
    Grep the ID
    (`rg "BUG-NNN"`): it appears in package READMEs, tests and the register. Read the owning
-   package `README.md`. Old investigation notes, if the row points to one, are in
-   `docs/archive/reviews/`.
+   package `README.md`.
 3. Reproduce offline: a test with fakes that fails today. Include the inputs that must keep their
    current behaviour (the unaffected cases).
 4. Fix toward `CLEANUP_SAFETY.md`: fail closed, never delete more than before for inputs the bug

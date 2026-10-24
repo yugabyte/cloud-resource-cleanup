@@ -28,9 +28,7 @@ The notification quirks (BUG-028 to BUG-034, BUG-041, BUG-042) now live in `crc/
 and `crc/notify/influx.py`; the `"#" + channel` prefix is applied by `SlackNotifier.post`. Their
 `Location on main` cell keeps citing `crc.py`.
 
-Related: `CLEANUP_SAFETY.md` (SAF IDs); archived history, only when a row sends you there:
-[FILTER_VARIANTS.md](../archive/FILTER_VARIANTS.md) (how each module filtered, section 7 open
-items), [STATUS.md](../archive/STATUS.md) (rung log), [PLAN.md](../archive/PLAN.md) (rung plan).
+Related: `CLEANUP_SAFETY.md` (SAF IDs).
 
 | ID | Title | Location on main | Exists on main | Effect | Risk | Found in | Status |
 |----|-------|------------------|----------------|--------|------|----------|--------|
@@ -444,12 +442,4 @@ items), [STATUS.md](../archive/STATUS.md) (rung log), [PLAN.md](../archive/PLAN.
 
 ## Notes
 
-- The three Azure VM bugs (subscription-wide list versus resource group, `begin_power_off`
-  without deallocate, unchecked `statuses[1]`) were known before R2c and are scheduled as
-  behaviour fixes in [PLAN.md](../archive/PLAN.md).
-- R2c found one correction to earlier documentation: AWS Elastic IP `notags` does not
-  "never skip" as `docs/archive/FILTER_VARIANTS.md` section 2 and `crc.core.policy.aws_eip_should_skip`
-  describe; the call `all(<bool>,)` raises `TypeError` (BUG-011). Policy keeps the
-  documented reading until a behaviour-fix rung decides.
-- The fail-open custom age tag is listed with the 9 call sites found by `git grep` on `main`;
-  `docs/archive/FILTER_VARIANTS.md` section 7 counts 11 modules.
+- AWS Elastic IP `notags` raised `TypeError` on `main` (`all(<bool>,)`, BUG-011, fixed).

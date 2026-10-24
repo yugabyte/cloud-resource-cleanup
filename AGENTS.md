@@ -50,7 +50,6 @@ tests print no `REMEDIATION:`; read the tool's own message. Rule IDs are listed 
 | [CLEANUP_SAFETY.md](CLEANUP_SAFETY.md) | Destructive-cleanup invariants (`SAF-NNN`); authoritative for safety |
 | [docs/logging.md](docs/logging.md) | Run-log line formats and rules |
 | [docs/refactor/BUGS.md](docs/refactor/BUGS.md) | Register of known bugs (`BUG-NNN`); `docs/refactor/bugs/` holds pending rows |
-| [docs/archive/](docs/archive/) | Archived history; read only when a bug row sends you there |
 | `crc/**/README.md` | Per-package purpose, public API, safety invariants; read the one you edit |
 
 Skills (task playbooks): [implement](.cursor/skills/crc-maintain/SKILL.md) for any change,

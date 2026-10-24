@@ -29,4 +29,4 @@ jobs:
           CLOSE_ISSUES: "true"
           AUTO_ASSIGN: "false"
           IDENTIFIERS: '[{"name": "TODO", "labels": []}]'
-          IGNORE: "tests/legacy/.*,docs/archive/.*"
+          IGNORE: "tests/legacy/.*"

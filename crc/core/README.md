@@ -6,8 +6,7 @@ Pure building blocks shared by every cloud package. `crc.core.age` holds the age
 logic used by `crc/service.py` and the cleaners: validating `--age` values,
 reading custom age tags, and deciding whether a resource is old enough. `crc.core.policy`
 holds the tag, notags, exception, regex, state, yb_task and managed-node filtering used by
-the cleaners, one explicitly named function per variant catalogued in
-`docs/archive/FILTER_VARIANTS.md`. Cleaners fetch and normalise; this layer decides. Every cleaner under `crc/aws`, `crc/azu`, `crc/gcp` and `crc/oci` calls it.
+the cleaners, one explicitly named function per filtering variant. Cleaners fetch and normalise; this layer decides. Every cleaner under `crc/aws`, `crc/azu`, `crc/gcp` and `crc/oci` calls it.
 
 The contracts cleaners plug into live here too: `crc.core.cleaner` (the `Cleaner` protocol
 and its frozen DTOs), `crc.core.registry` (decorator registration by cloud and kind) and

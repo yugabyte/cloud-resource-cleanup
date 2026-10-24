@@ -9,8 +9,6 @@ agent entry point (that is `AGENTS.md`). Docs here state what the code does toda
 
 - `logging.md`: the run-log contract (line formats, levels, rules).
 - `refactor/BUGS.md`: register of known bugs, `BUG-NNN` rows; `refactor/bugs/` holds pending rows.
-- `archive/`: archived history (plan, status, reviews, filter variants). Frozen; read only
-  when a bug row or a code comment sends you there. Its links may point to paths that moved.
 
 ## Safety Invariants
 

@@ -101,7 +101,7 @@ class SpotRequestCleaner:
             regions = list(self.runtime.list_regions())
         except Exception as e:  # noqa: BLE001 - region listing failure recorded, empty plan, nothing is deleted
             logging.error("Failed to list AWS regions for EC2: %s", e)
-            logger.current().fail(None, "-", e)
+            logger.current().fail(None, "-", e, logged=True)
             return Plan()
         state = SpotState()
         candidates: list[Candidate] = []

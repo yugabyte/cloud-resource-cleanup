@@ -10,6 +10,7 @@ from crc.azu.disk import AzureDiskCleaner, DiskSettings
 from crc.core import logger
 from crc.core.cleaner import Operation, RunContext
 from tests.helpers_azure_disk import NOW, FakeAzure, disk
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.helpers_wc_azu_engine import candidate_ids, engine_run
 
 
@@ -85,7 +86,7 @@ def test_bug_174_failure_is_recorded_in_the_run_log(caplog: pytest.LogCaptureFix
     lines = [r.getMessage() for r in caplog.records]
     result_line = next(line for line in lines if line.startswith("RESULT"))
     assert "failed=1" in result_line
-    assert any("id=a" in line and "nope" in line for line in lines)
+    assert_failure_printed_once(caplog, "disk a: nope")
 
 
 def test_bug_174_dry_run_never_deletes_or_waits() -> None:

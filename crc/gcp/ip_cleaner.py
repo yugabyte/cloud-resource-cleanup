@@ -144,7 +144,7 @@ class IpCleaner:
             old = core_age.is_old(self._age, now.astimezone(stamp.tzinfo), stamp)
         except Exception as e:  # noqa: BLE001 - per-address isolation, failure logged and recorded, address kept
             logging.error("Error occurred while evaluating IP address %s: %s", address.name, e)
-            logger.current().fail(region, str(getattr(address, "name", "")), e)
+            logger.current().fail(region, str(getattr(address, "name", "")), e, logged=True)
             return False
         if not old:
             logger.current().skip("too_young")
@@ -169,7 +169,7 @@ class IpCleaner:
             self._client.delete_address(self._project_id, region, candidate.id).result()
         except (GoogleAPIError, GoogleAuthError, OSError) as e:
             logging.error("Error occurred while deleting IP address %s: %s", candidate.id, e)
-            logger.current().fail(region, candidate.id, e)
+            logger.current().fail(region, candidate.id, e, logged=True)
             self.failures.append(Failure(id=candidate.id, error=str(e)))
             return False
         except Exception as e:

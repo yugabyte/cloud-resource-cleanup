@@ -5,6 +5,7 @@ compared with fixed data (the frozen `main` oracles emit no run-log lines).
 
 Key: (case, dry_run, slack, influx, scenario); scenario is "" for the plain run, else the fault
 injected into the fake GCP client (see `apply_scenario` in `tests/test_cli_bridge_gcp.py`).
+A failure has no FAILED line: its own error line already names it (BUG-410).
 """
 
 RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
@@ -922,7 +923,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=ip reason=filter_mismatch count=1",
         "SKIPPED cloud=gcp resource=ip reason=state count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=ip region=r1 id=a-2 error=GoogleAPIError: denied",
         "RESULT cloud=gcp resource=ip operation=delete dry_run=false selected=2 done=2 failed=1 skipped=3 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("ip", True, True, True, "fail_delete:a-2"): (
@@ -947,7 +947,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=disk reason=name_regex_mismatch count=1",
         "SKIPPED cloud=gcp resource=disk reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=disk region=z1 id=d1 error=GoogleAPIError: denied",
         "RESULT cloud=gcp resource=disk operation=delete dry_run=false selected=1 done=1 failed=1 skipped=5 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("disk", True, True, True, "fail_delete:d1"): (
@@ -971,7 +970,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=vm reason=state count=1",
         "SKIPPED cloud=gcp resource=vm reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=vm region=z1 id=vm1 error=GoogleAPIError: denied",
         "RESULT cloud=gcp resource=vm operation=delete dry_run=false selected=1 done=1 failed=1 skipped=4 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("vm-delete", True, True, True, "fail_delete:vm1"): (
@@ -994,7 +992,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=vm reason=state count=1",
         "SKIPPED cloud=gcp resource=vm reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=vm region=z1 id=vm1 error=GoogleAPIError: denied",
         "RESULT cloud=gcp resource=vm operation=stop dry_run=false selected=1 done=1 failed=1 skipped=4 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("vm-stop", True, True, True, "fail_delete:vm1"): (
@@ -1017,7 +1014,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=spot_instances reason=not_spot count=1",
         "SKIPPED cloud=gcp resource=spot_instances reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=spot_instances region=z1 id=vm1 error=GoogleAPIError: denied",
         "RESULT cloud=gcp resource=spot_instances operation=delete dry_run=false selected=1 done=1 failed=1 skipped=3 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("spot", True, True, True, "fail_delete:vm1"): (
@@ -1045,7 +1041,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "REGION cloud=gcp resource=disk region=z2 scanned=2 selected=1 seconds=7",
         "SKIPPED cloud=gcp resource=disk reason=name_regex_mismatch count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=disk region=z1 id=zone z1 error=RuntimeError: listing denied",
         "RESULT cloud=gcp resource=disk operation=delete dry_run=false selected=1 done=1 failed=1 skipped=1 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("disk", True, True, True, "fail_list_first"): (
@@ -1054,7 +1049,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "REGION cloud=gcp resource=disk region=z2 scanned=2 selected=1 seconds=7",
         "SKIPPED cloud=gcp resource=disk reason=name_regex_mismatch count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=disk region=z1 id=zone z1 error=RuntimeError: listing denied",
         "RESULT cloud=gcp resource=disk operation=delete dry_run=true selected=1 done=0 failed=1 skipped=1 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("vm-delete", False, True, True, "fail_list_first"): (
@@ -1063,7 +1057,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "REGION cloud=gcp resource=vm region=z2 scanned=2 selected=1 seconds=-7",
         "SKIPPED cloud=gcp resource=vm reason=state count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=vm region=z1 id=- error=RuntimeError: listing denied",
         "RESULT cloud=gcp resource=vm operation=delete dry_run=false selected=1 done=1 failed=1 skipped=1 regions=1 regions_skipped=1 duration_s=0",
     ),
     ("vm-delete", True, True, True, "fail_list_first"): (
@@ -1072,7 +1065,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "REGION cloud=gcp resource=vm region=z2 scanned=2 selected=1 seconds=-7",
         "SKIPPED cloud=gcp resource=vm reason=state count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=vm region=z1 id=- error=RuntimeError: listing denied",
         "RESULT cloud=gcp resource=vm operation=delete dry_run=true selected=1 done=0 failed=1 skipped=1 regions=1 regions_skipped=1 duration_s=0",
     ),
     ("spot", False, True, True, "fail_list_first"): (
@@ -1148,7 +1140,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=disk reason=exception_tag count=2",
         "SKIPPED cloud=gcp resource=disk reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=disk region=z2 id=zone z2 error=RuntimeError: listing denied",
         "RESULT cloud=gcp resource=disk operation=delete dry_run=false selected=1 done=1 failed=1 skipped=4 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("vm-delete", False, False, False, "fail_list_last"): (
@@ -1158,7 +1149,6 @@ RUN_LOG: dict[tuple[str, bool, bool, bool, str], tuple[str, ...]] = {
         "SKIPPED cloud=gcp resource=vm reason=exception_tag count=2",
         "SKIPPED cloud=gcp resource=vm reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=vm region=z2 id=- error=RuntimeError: listing denied",
         "RESULT cloud=gcp resource=vm operation=delete dry_run=false selected=1 done=1 failed=1 skipped=3 regions=1 regions_skipped=1 duration_s=0",
     ),
     ("spot", False, False, False, "fail_list_last"): (

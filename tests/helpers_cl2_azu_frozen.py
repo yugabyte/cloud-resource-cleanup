@@ -3,6 +3,7 @@ handlers (the current adapters, driven through the legacy `CRC` methods) before 
 
 `RUN_LOG[(kind, variant, dry)]` holds the run-log lines (ordered, REGION set); `FIXED` holds, per
 case, the fields where the fixed-bug outcome differs from `main` (BUG-003/013/077/113/174).
+A failed delete has no FAILED line: its own error line already names it (BUG-410).
 """
 
 from typing import Any
@@ -106,7 +107,6 @@ RUN_LOG: dict[tuple[str, str, bool], tuple[list[str], list[str]]] = {
             "SKIPPED cloud=azure resource=vm reason=state count=1",
             "SKIPPED cloud=azure resource=vm reason=untagged count=1",
             "ERRORS count=1",
-            "FAILED cloud=azure resource=vm region=rg id=a error=HttpResponseError: boom",
             "RESULT cloud=azure resource=vm "
             "operation=delete dry_run=false selected=1 "
             "done=1 failed=1 skipped=4 regions=1 "
@@ -348,7 +348,6 @@ RUN_LOG: dict[tuple[str, str, bool], tuple[list[str], list[str]]] = {
             "SKIPPED cloud=azure resource=vm reason=filter_tags count=1",
             "SKIPPED cloud=azure resource=vm reason=untagged count=1",
             "ERRORS count=1",
-            "FAILED cloud=azure resource=vm region=rg id=a error=HttpResponseError: boom",
             "RESULT cloud=azure resource=vm "
             "operation=delete dry_run=false selected=2 "
             "done=2 failed=1 skipped=3 regions=1 "
@@ -576,7 +575,6 @@ RUN_LOG: dict[tuple[str, str, bool], tuple[list[str], list[str]]] = {
             "SKIPPED cloud=azure resource=nic reason=in_use count=1",
             "SKIPPED cloud=azure resource=nic reason=name_regex count=1",
             "ERRORS count=1",
-            "FAILED cloud=azure resource=nic region=rg id=nic-a error=HttpResponseError: boom",
             "RESULT cloud=azure resource=nic operation=delete "
             "dry_run=false selected=0 done=0 failed=1 skipped=3 "
             "regions=1 regions_skipped=0 duration_s=S",
@@ -687,7 +685,6 @@ RUN_LOG: dict[tuple[str, str, bool], tuple[list[str], list[str]]] = {
             "SKIPPED cloud=azure resource=disk reason=notags count=1",
             "SKIPPED cloud=azure resource=disk reason=state count=1",
             "ERRORS count=1",
-            "FAILED cloud=azure resource=disk region=rg id=d error=HttpResponseError: boom",
             "RESULT cloud=azure resource=disk operation=delete "
             "dry_run=false selected=1 done=1 failed=1 skipped=3 "
             "regions=1 regions_skipped=0 duration_s=S",
@@ -827,9 +824,6 @@ RUN_LOG: dict[tuple[str, str, bool], tuple[list[str], list[str]]] = {
             "SKIPPED cloud=azure resource=spot_instances reason=not_spot count=1",
             "SKIPPED cloud=azure resource=spot_instances reason=state count=1",
             "ERRORS count=1",
-            "FAILED cloud=azure "
-            "resource=spot_instances region=rg id=s2 "
-            "error=HttpResponseError: boom",
             "RESULT cloud=azure "
             "resource=spot_instances operation=delete "
             "dry_run=false selected=1 done=1 failed=1 "

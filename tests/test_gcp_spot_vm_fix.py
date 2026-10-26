@@ -12,6 +12,7 @@ from crc.core import logger
 from crc.gcp.spot_vm import SpotSettings, SpotVMCleaner
 from crc.gcp.spot_vm.instances import reject_reason
 from tests.helpers_ad_spot_engine import run_through_engine
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.test_gcp_spot_instances import (
     NOW,
     SETTINGS,
@@ -157,7 +158,8 @@ def test_bug_229_a_delete_that_does_not_complete_is_failed_not_deleted(
     assert ("get_disk", "zone", "z", "d1") not in client.calls
     assert mutating(client) == [("delete_instance", "z", "a")]
     lines = [r.getMessage() for r in caplog.records]
-    assert any("FAILED cloud=gcp resource=spot_instances region=z id=a" in m for m in lines)
+    assert "ERRORS count=1" in lines
+    assert_failure_printed_once(caplog, "Instance delete failed/incomplete for a")
     assert any("ACTION" in m and "deleted" in m for m in lines) is False
     assert any("failed=1" in m for m in lines if m.startswith("RESULT"))
 

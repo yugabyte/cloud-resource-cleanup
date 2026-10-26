@@ -107,7 +107,7 @@ class AzureSpotVmCleaner:
                 self.remover.remove_vm(candidate.name, leftovers, removed)
             except Exception as e:  # noqa: BLE001 - SAF-005 per-VM isolation, failure logged and recorded
                 logging.error("Error deleting Spot VM %s: %s", candidate.name, e)
-                _logger.failed(self._config.resource_group, candidate.id, e)
+                _logger.failed(self._config.resource_group, candidate.id, e, logged=True)
                 failed.append(Failure(id=candidate.id, error=str(e)))
         log_summary(removed, dry_run=False)
         return Result(
@@ -130,7 +130,7 @@ class AzureSpotVmCleaner:
             previewed.nics.append(f"{candidate.name}-NIC")
         except Exception as e:  # noqa: BLE001 - per-VM isolation in the dry-run preview, failure logged and recorded
             logging.error("Error deleting Spot VM %s: %s", candidate.name, e)
-            _logger.failed(self._config.resource_group, candidate.name, e)
+            _logger.failed(self._config.resource_group, candidate.name, e, logged=True)
 
     def list_vms(self) -> list[Any]:
         """The VMs of the resource group; a failure is logged and re-raised."""

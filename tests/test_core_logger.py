@@ -335,3 +335,40 @@ def test_failed_line_with_single_line_message_is_unchanged(
         logging.ERROR,
         "FAILED cloud=aws resource=vm region=us-east-1 id=i-1 error=ValueError: bad value: 3",
     ) in _records(caplog)
+
+
+def test_logged_failure_is_counted_but_not_listed_again(caplog: pytest.LogCaptureFixture) -> None:
+    """BUG-410: a failure whose own error line was logged is not repeated as a FAILED line."""
+    run = logger.begin("aws", "snapshot", "delete", False, {}, clock=Clock())
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    run.fail("us-west-2", "snap-1", RuntimeError("in use"), logged=True)
+    run.fail("us-west-2", "snap-2", RuntimeError("denied"))
+    logger.finish()
+    assert _records(caplog) == [
+        (logging.ERROR, "ERRORS count=2"),
+        (
+            logging.ERROR,
+            "FAILED cloud=aws resource=snapshot region=us-west-2 id=snap-2 "
+            "error=RuntimeError: denied",
+        ),
+        (
+            logging.INFO,
+            "RESULT cloud=aws resource=snapshot operation=delete dry_run=false selected=0 done=0 "
+            "failed=2 skipped=0 regions=0 regions_skipped=0 duration_s=0",
+        ),
+    ]
+
+
+def test_only_logged_failures_give_errors_count_without_failed_lines(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run = logger.begin("gcp", "disk", "delete", False, {}, clock=Clock())
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    run.fail("z1", "d1", RuntimeError("busy"), logged=True)
+    logger.finish()
+    messages = [m for _, m in _records(caplog)]
+    assert messages[0] == "ERRORS count=1"
+    assert not [m for m in messages if m.startswith("FAILED")]
+    assert " failed=1 " in messages[-1]

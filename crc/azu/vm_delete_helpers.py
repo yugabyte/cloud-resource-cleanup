@@ -115,5 +115,8 @@ def delete_vm_primary_nic(
 
     logging.error("Failed to delete the NIC - %s after %s attempts", nic_name, NIC_DELETE_ATTEMPTS)
     _logger.failed(
-        resource_group, nic_name, f"NIC delete failed after {NIC_DELETE_ATTEMPTS} attempts"
+        resource_group,
+        nic_name,
+        f"NIC delete failed after {NIC_DELETE_ATTEMPTS} attempts",
+        logged=True,
     )

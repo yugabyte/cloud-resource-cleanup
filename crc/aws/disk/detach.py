@@ -175,7 +175,7 @@ class DetachGuard:
                 len(batch),
                 e,
             )
-            logger.current().fail(region, "-", e)
+            logger.current().fail(region, "-", e, logged=True)
             return []
         results_by_id = merge_metric_results(results)
         kept: list[Volume] = []

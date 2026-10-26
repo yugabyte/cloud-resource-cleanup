@@ -45,7 +45,7 @@ def live_spot_request_tags(
         logging.error(
             "describe_spot_instance_requests for %s failed during sweep: %s", request_id, e
         )
-        logger.current().fail(region, request_id, e)
+        logger.current().fail(region, request_id, e, logged=True)
         return "error", None, None
     except BotoCoreError as e:
         logging.error(
@@ -53,7 +53,7 @@ def live_spot_request_tags(
             request_id,
             e,
         )
-        logger.current().fail(region, request_id, e)
+        logger.current().fail(region, request_id, e, logged=True)
         return "error", None, None
     reqs = resp.get("SpotInstanceRequests") or []
     if not reqs:
@@ -122,4 +122,4 @@ def run_sweep(
             logging.error(
                 "Region %s: error sweeping tagged leftover volume %s: %s", region, volume_id, e
             )
-            logger.current().fail(region, str(volume_id), e)
+            logger.current().fail(region, str(volume_id), e, logged=True)

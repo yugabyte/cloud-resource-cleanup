@@ -104,7 +104,7 @@ class SpotVmCleaner:
                             record_dry_run(Plan(candidates=(checked,)))
                 except Exception as e:  # noqa: BLE001 - SAF-040 per-instance isolation, failure logged and recorded, instance kept
                     log_instance_error(getattr(instance, "display_name", "?"), e)
-                    _logger.record_failure(region, getattr(instance, "id", "?"), e)
+                    _logger.record_failure(region, getattr(instance, "id", "?"), e, logged=True)
             _logger.region_done(region, len(instances), len(candidates) - before, started)
         if context.dry_run:
             volumes = [v for c in candidates for v in c.extra["volumes"]]
@@ -136,7 +136,7 @@ class SpotVmCleaner:
                 self.terminate(clients, candidate, done, deleted)
             except Exception as e:  # noqa: BLE001 - SAF-040 per-instance isolation, failure logged and recorded
                 log_instance_error(candidate.name, e)
-                _logger.record_failure(candidate.region, candidate.id, e)
+                _logger.record_failure(candidate.region, candidate.id, e, logged=True)
                 failed.append(Failure(id=candidate.id, error=str(e)))
         log_summary(done, deleted, dry_run=False)
         return Result(
@@ -156,7 +156,7 @@ class SpotVmCleaner:
             return None
         except Exception as e:  # noqa: BLE001 - per-region isolation, failure logged and recorded, region skipped
             logging.error("Region %s: failed listing instances: %s", region, e)
-            _logger.record_failure(region, "-", e)
+            _logger.record_failure(region, "-", e, logged=True)
             return None
         self._clients[region] = clients
         return clients, instances

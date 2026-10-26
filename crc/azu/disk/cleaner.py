@@ -121,7 +121,7 @@ class AzureDiskCleaner:
                 _logger.acted(kind, self._resource_group, disk_name)
         except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
             logging.error("Error occurred while deleting disk %s: %s", disk_name, e)
-            _logger.failed(self._resource_group, str(disk_name), e)
+            _logger.failed(self._resource_group, str(disk_name), e, logged=True)
             return str(e)
         return None
 

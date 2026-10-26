@@ -109,7 +109,7 @@ class DiskCleaner:
                 yield candidate
         except Exception as e:  # noqa: BLE001 - per-zone isolation, listing failure logged and recorded, zone skipped
             logging.error("Error occurred while listing disks of zone %s: %s", zone, e)
-            logger.current().fail(zone, f"zone {zone}", e)
+            logger.current().fail(zone, f"zone {zone}", e, logged=True)
         scan.finish()
 
     def _evaluate(self, disk: DiskView, zone: str, clock: Clock) -> Candidate | None:
@@ -126,7 +126,7 @@ class DiskCleaner:
         except Exception as e:  # noqa: BLE001 - per-disk isolation, failure logged and recorded, disk kept
             name = str(getattr(disk, "name", ""))
             logging.error("Error occurred while evaluating disk %s: %s", name, e)
-            logger.current().fail(zone, name, e)
+            logger.current().fail(zone, name, e, logged=True)
             return None
 
     def _reject(self, disk: DiskView, clock: Clock) -> str | None:
@@ -158,7 +158,7 @@ class DiskCleaner:
             _record(deleted, self._settings, candidate.id, candidate.tags)
         except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
             logging.error("Error occurred while deleting disk %s: %s", candidate.id, e)
-            logger.current().fail(zone, candidate.id, e)
+            logger.current().fail(zone, candidate.id, e, logged=True)
             return False
         log_action("delete", candidate, dry_run=dry_run)
         return True
@@ -182,7 +182,7 @@ class DiskCleaner:
         if name and wait_operation(cast(GcpSpotClient, self._client), spot, "zone", zone, name):
             return True
         logging.error("Disk delete failed or incomplete for %s", candidate.id)
-        logger.current().fail(zone, candidate.id, "disk delete failed or incomplete")
+        logger.current().fail(zone, candidate.id, "disk delete failed or incomplete", logged=True)
         return False
 
     def _exception_reason(self, disk: DiskView) -> str | None:

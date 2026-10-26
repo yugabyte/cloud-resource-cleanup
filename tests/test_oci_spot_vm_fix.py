@@ -137,7 +137,8 @@ def test_failed_attachment_read_keeps_the_volume(
 ) -> None:
     failures: list[tuple[Any, ...]] = []
     monkeypatch.setattr(
-        "crc.oci._logger.record_failure", lambda r, res, err: failures.append((r, res, str(err)))
+        "crc.oci._logger.record_failure",
+        lambda r, res, err, **_: failures.append((r, res, str(err))),
     )
     assert not check(FakeBlock(CREATED), FakeCompute(RuntimeError("down")))
     assert skips == ["not_owned"]

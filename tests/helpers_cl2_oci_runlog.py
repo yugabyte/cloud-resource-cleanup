@@ -6,6 +6,7 @@ inside `logger.begin`/`logger.finish` on the same fake SDK data the test builds.
 `duration=` are normalised to 0 by the test collector. The lines do not depend on the Slack/Influx
 mode, so they are keyed by (resource, operation, dry run, second region listing error).
 The frozen oracles in `tests/legacy/` emit no run-log lines, so this is the only legacy source.
+A failure has no FAILED line: its own error line already names it (BUG-410).
 """
 
 # ruff: noqa: E501
@@ -55,7 +56,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=disk reason=attached count=1",
         "INFO SKIPPED cloud=oci resource=disk reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=disk region=r1 id=c error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=disk operation=delete dry_run=false selected=4 done=4 failed=1 skipped=2 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("disk", "delete", False, "connect"): (
@@ -66,7 +66,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=disk reason=attached count=1",
         "INFO SKIPPED cloud=oci resource=disk reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=disk region=r1 id=c error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=disk operation=delete dry_run=false selected=2 done=2 failed=1 skipped=2 regions=1 regions_skipped=1 duration_s=0",
     ),
     ("disk", "delete", False, "boom"): (
@@ -77,7 +76,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=disk reason=attached count=1",
         "INFO SKIPPED cloud=oci resource=disk reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=disk region=r1 id=c error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=disk operation=delete dry_run=false selected=2 done=2 failed=1 skipped=2 regions=1 regions_skipped=0 duration_s=0",
     ),
     ("vm", "delete", True, None): (
@@ -118,7 +116,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=vm reason=state count=1",
         "INFO SKIPPED cloud=oci resource=vm reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=vm region=r1 id=f error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=vm operation=delete dry_run=false selected=2 done=2 failed=1 skipped=2 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("vm", "delete", False, "connect"): (
@@ -128,7 +125,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=vm reason=state count=1",
         "INFO SKIPPED cloud=oci resource=vm reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=vm region=r1 id=f error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=vm operation=delete dry_run=false selected=1 done=1 failed=1 skipped=2 regions=1 regions_skipped=1 duration_s=0",
     ),
     ("vm", "delete", False, "boom"): (
@@ -138,7 +134,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=vm reason=state count=1",
         "INFO SKIPPED cloud=oci resource=vm reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=vm region=r1 id=f error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=vm operation=delete dry_run=false selected=1 done=1 failed=1 skipped=2 regions=1 regions_skipped=0 duration_s=0",
     ),
     ("vm", "stop", True, None): (
@@ -179,7 +174,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=vm reason=state count=1",
         "INFO SKIPPED cloud=oci resource=vm reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=vm region=r1 id=f error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=vm operation=stop dry_run=false selected=2 done=2 failed=1 skipped=2 regions=2 regions_skipped=0 duration_s=0",
     ),
     ("vm", "stop", False, "connect"): (
@@ -189,7 +183,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=vm reason=state count=1",
         "INFO SKIPPED cloud=oci resource=vm reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=vm region=r1 id=f error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=vm operation=stop dry_run=false selected=1 done=1 failed=1 skipped=2 regions=1 regions_skipped=1 duration_s=0",
     ),
     ("vm", "stop", False, "boom"): (
@@ -199,7 +192,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=vm reason=state count=1",
         "INFO SKIPPED cloud=oci resource=vm reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=vm region=r1 id=f error=RuntimeError: boom",
         "INFO RESULT cloud=oci resource=vm operation=stop dry_run=false selected=1 done=1 failed=1 skipped=2 regions=1 regions_skipped=0 duration_s=0",
     ),
     ("spot_instances", "delete", True, None): (
@@ -234,7 +226,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=spot_instances reason=not_preemptible count=1",
         "INFO SKIPPED cloud=oci resource=spot_instances reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=spot_instances region=r2 id=- error=RuntimeError: list down",
         "INFO RESULT cloud=oci resource=spot_instances operation=delete dry_run=true selected=2 done=0 failed=1 skipped=3 regions=1 regions_skipped=0 duration_s=0",
     ),
     ("spot_instances", "delete", False, None): (
@@ -269,7 +260,6 @@ FROZEN_RUN_LINES: dict[tuple[str, str, bool, str | None], tuple[str, ...]] = {
         "INFO SKIPPED cloud=oci resource=spot_instances reason=not_preemptible count=1",
         "INFO SKIPPED cloud=oci resource=spot_instances reason=too_young count=1",
         "ERROR ERRORS count=1",
-        "ERROR FAILED cloud=oci resource=spot_instances region=r2 id=- error=RuntimeError: list down",
         "INFO RESULT cloud=oci resource=spot_instances operation=delete dry_run=false selected=2 done=2 failed=1 skipped=3 regions=1 regions_skipped=0 duration_s=0",
     ),
 }

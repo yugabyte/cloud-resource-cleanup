@@ -147,11 +147,11 @@ Run log (module logger.py, imported as "from crc.core import logger"). Pure stdl
 per-run lines; the contract is in docs/logging.md. Log text only: it never
 decides what a cleaner selects or deletes.
 
-- `RunLog`: counters and log lines of one cleaner run (methods hold_header, release_header, region, region_skipped, action, skip, fail, finish); a run made by `current()` without `begin()` is unattached and logs nothing.
+- `RunLog`: counters and log lines of one cleaner run (methods hold_header, release_header, region, region_skipped, action, skip, fail, finish; fail takes a logged flag for a failure whose own error line was already logged); a run made by `current()` without `begin()` is unattached and logs nothing.
 - `begin()`: start a run, make it current and hold the RUN START line until `logging_ready()` (or the next run-log line once the root logger has handlers) (non-empty options as sorted compact JSON); takes an injectable clock.
 - `logging_ready()`: emit the current run's held RUN START line, if any; called by init_logging in crc.utils once the handlers exist; a no-op without a run or a held header, safe to call twice.
 - `current()`: the current run, or a fresh unattached `RunLog` so cleaners and tests never crash.
-- `finish()`: end the current run and log any held RUN START line, the SKIPPED lines per reason, the ERRORS and FAILED lines (always one line each; a multi-line error message is joined with a vertical bar) when a failure was recorded, then the RESULT line; a no-op when no run began.
+- `finish()`: end the current run and log any held RUN START line, the SKIPPED lines per reason, the ERRORS line when a failure was recorded and a FAILED line for each failure not recorded as already logged (always one line each; a multi-line error message is joined with a vertical bar), then the RESULT line; a no-op when no run began.
 
 ## Safety Invariants
 

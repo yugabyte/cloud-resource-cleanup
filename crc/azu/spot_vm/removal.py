@@ -146,10 +146,10 @@ class Remover:
                 self._disk_gone(label, rg_from_id, disks)
                 return
             logging.error("Failed to delete disk %s: %s", label, e)
-            _logger.failed(resource_group, label, e)
+            _logger.failed(resource_group, label, e, logged=True)
         except Exception as e:  # noqa: BLE001 - per-disk isolation, failure logged and recorded
             logging.error("Failed to delete disk %s: %s", label, e)
-            _logger.failed(resource_group, label, e)
+            _logger.failed(resource_group, label, e, logged=True)
 
     @staticmethod
     def _disk_gone(label: str, rg_from_id: bool, disks: list[str]) -> None:

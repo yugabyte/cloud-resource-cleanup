@@ -37,6 +37,7 @@ class _Failure:
     region: str | None
     resource_id: str
     error: BaseException | str
+    logged: bool
 
 
 def _json(value: Any) -> str:
@@ -145,12 +146,20 @@ class RunLog:
         """Count a skipped resource under a short snake_case reason; logs nothing."""
         self._skips[reason] = self._skips.get(reason, 0) + 1
 
-    def fail(self, region: str | None, resource_id: str, error: BaseException | str) -> None:
-        """Record a failure for the end-of-run list (the inline error line stays)."""
-        self._failures.append(_Failure(region, resource_id, error))
+    def fail(
+        self,
+        region: str | None,
+        resource_id: str,
+        error: BaseException | str,
+        *,
+        logged: bool = False,
+    ) -> None:
+        """Record a failure: counted in ERRORS and RESULT, and listed as a FAILED line at the
+        end unless `logged` (the caller already logged an error line naming the resource)."""
+        self._failures.append(_Failure(region, resource_id, error, logged))
 
     def finish(self) -> None:
-        """Log SKIPPED lines, the ERRORS list when any, and the RESULT line."""
+        """Log SKIPPED lines, ERRORS and the FAILED lines not already logged, and RESULT."""
         self._emit_header(force=True)
         where = f"cloud={self.cloud} resource={self.resource}"
         for reason in sorted(self._skips):
@@ -158,6 +167,8 @@ class RunLog:
         if self._failures:
             self._log(logging.ERROR, f"ERRORS count={len(self._failures)}")
             for failure in self._failures:
+                if failure.logged:
+                    continue
                 self._log(
                     logging.ERROR,
                     f"FAILED {where} region={failure.region or '-'} id={failure.resource_id} "

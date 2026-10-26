@@ -187,7 +187,6 @@ def test_bug_063_start_error_is_recorded_in_the_run_log_and_the_loop_goes_on(
     assert errors == [
         "Error occurred while deleting IP address a: 403 denied",
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=ip region=r1 id=a error=PermissionDenied: 403 denied",
     ]
     assert ("delete", "c") in client.calls
 

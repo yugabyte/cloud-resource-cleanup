@@ -51,13 +51,16 @@ RESULT cloud=<c> resource=<r> operation=<op> dry_run=<true|false> selected=<n> d
   `exception_tag`, `used_by_ami`, `not_ours`, `state`, ...); nothing is logged per skip.
 - `RunLog.region_skipped(region, error)` counts a region skipped for a connectivity error; the
   existing warning line stays.
-- `RunLog.fail(region, resource_id, error)` records a failure; the per-resource error line stays
-  where it is.
+- `RunLog.fail(region, resource_id, error, logged=False)` records a failure; the per-resource error
+  line stays where it is. Pass `logged=True` when the caller has just logged a WARNING or ERROR line
+  naming the resource (id, name, zone or region): the failure is then counted but gets no `FAILED`
+  line, so each failure is printed once (BUG-410). Without that line, leave the default: the
+  `FAILED` line is then the only place the resource id appears.
 - `FAILED` is always one line (BUG-365): the message is split on line breaks, parts stripped, empty
   parts dropped, the rest joined with ` | `.
 - `finish()` logs, in order: one INFO `SKIPPED` line per reason sorted by reason; if there are
-  failures, ERROR `ERRORS count=<n>` and one ERROR `FAILED` line per failure in order; then always
-  INFO `RESULT`.
+  failures, ERROR `ERRORS count=<n>` (every failure) and one ERROR `FAILED` line per failure not
+  recorded with `logged=True`, in order; then always INFO `RESULT`.
 - `RESULT`: `selected` = ACTION lines, `done` = ACTION lines of kind `deleted` or `stopped` (0 in
   a dry run), `failed` = `fail()` calls, `skipped` = sum of skip counts, `regions` = `region()`
   calls, `regions_skipped` = `region_skipped()` calls. Key order and spelling are fixed; the

@@ -70,7 +70,7 @@ def _cancel(
             env.region,
         )
     except ERRORS as e:
-        logger.current().fail(env.region, match.request_id, e)
+        logger.current().fail(env.region, match.request_id, e, logged=True)
         logging.error(
             "Failed to cancel spot request %s in %s: %s — not terminating "
             "its instance (persistent requests would relaunch)",
@@ -94,7 +94,7 @@ def _terminate_ambiguous(
         match.request_id,
         error,
     )
-    logger.current().fail(env.region, instance_id, error)
+    logger.current().fail(env.region, instance_id, error, logged=True)
     state, _ = instance_state_and_dot_false_volumes(client, instance_id)
     if state in {None, "shutting-down", "terminated"}:
         logging.info(
@@ -140,7 +140,7 @@ def _terminate_call(
             match.request_id,
             e,
         )
-        logger.current().fail(env.region, instance_id, e)
+        logger.current().fail(env.region, instance_id, e, logged=True)
         return False
     except Exception as e:  # noqa: BLE001 - SAF-033 ambiguous failure re-checks the instance state and keeps it unless proven gone
         return _terminate_ambiguous(env, client, match, instance_id, e)
@@ -198,7 +198,9 @@ def cleanup_one(env: CleanupEnv, client: SpotClient, match: RequestMatch) -> Non
                 match.request_id,
                 match.instance_id,
             )
-            logger.current().fail(env.region, match.request_id, "failed to tag leftover volumes")
+            logger.current().fail(
+                env.region, match.request_id, "failed to tag leftover volumes", logged=True
+            )
             return
         tagged = tagged_or_none
     if not _cancel(env, client, match, inspection, tagged):

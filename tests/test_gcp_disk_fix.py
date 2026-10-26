@@ -15,6 +15,7 @@ from crc.core import logger
 from crc.core.cleaner import Operation, RunContext
 from crc.gcp.disk import DiskCleaner, DiskSettings, DiskView, build_disk_cleaner
 from crc.gcp.spot_vm.settings import DEFAULT_WAIT_SEC
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.helpers_wc_gcp_engine import deleted_ids, run_engine
 
 UTC = datetime.UTC
@@ -278,9 +279,8 @@ def test_bug_126_failed_or_incomplete_operation_is_not_recorded(
     assert applied == ["b"]
     assert [c[2] for c in client.calls if c[0] == "delete_disk"] == ["a", "b"]
     logger.finish()
-    assert failed_lines(run_log) == [
-        "FAILED cloud=gcp resource=disk region=z id=a error=disk delete failed or incomplete"
-    ]
+    assert failed_lines(run_log) == []
+    assert_failure_printed_once(run_log, "Disk delete failed or incomplete for a")
 
 
 @pytest.mark.parametrize(
@@ -342,11 +342,11 @@ def test_bug_127_evaluation_error_on_one_disk_keeps_it_and_continues(
     assert planned == applied == ["a", "c", "d"]
     assert [c[2] for c in client.calls if c[0] == "delete_disk"] == ["a", "c", "d"]
     logger.finish()
-    failures = failed_lines(run_log)
-    assert len(failures) == 1
-    assert failures[0].startswith("FAILED cloud=gcp resource=disk region=z1 id=bad error=")
+    assert failed_lines(run_log) == []
     errors = [r.getMessage() for r in run_log.records if r.levelno == logging.ERROR]
     assert errors[0].startswith("Error occurred while evaluating disk bad: ")
+    assert "ERRORS count=1" in errors
+    assert_failure_printed_once(run_log, "evaluating disk bad: ")
 
 
 def test_bug_127_missing_attribute_on_one_disk_is_recorded() -> None:
@@ -368,9 +368,8 @@ def test_bug_127_listing_error_of_a_zone_is_recorded_and_the_zone_skipped(
         ("list_disks", "z3"),
     ]
     logger.finish()
-    assert failed_lines(run_log) == [
-        "FAILED cloud=gcp resource=disk region=z2 id=zone z2 error=PermissionError: denied"
-    ]
+    assert failed_lines(run_log) == []
+    assert_failure_printed_once(run_log, "listing disks of zone z2: denied")
 
 
 def test_bug_127_listing_error_while_iterating_keeps_earlier_disks() -> None:

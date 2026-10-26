@@ -121,7 +121,7 @@ def disk_ok_to_delete(
         disk = client.get_disk(project, scope, location, name)
     except Exception as e:  # noqa: BLE001 - SAF-039 a failed disk read keeps the disk
         logging.error("Failed to get leftover disk %s for label check (skipping): %s", label, e)
-        logger.current().fail(location, label, e)
+        logger.current().fail(location, label, e, logged=True)
         return False
     disk_labels = disk.get("labels") or {}
     if labels_protect(disk_labels, settings):
@@ -154,11 +154,13 @@ def remove_leftover_disk(
         op_name = operation.get("name")
         if op_name and not wait_operation(client, settings, scope, location, op_name, project):
             logging.error("Disk delete operation failed/incomplete for %s; not counted", label)
-            logger.current().fail(location, label, "disk delete operation failed or incomplete")
+            logger.current().fail(
+                location, label, "disk delete operation failed or incomplete", logged=True
+            )
             return None
         logging.info("Deleted leftover Spot VM disk %s", label)
     except Exception as e:  # noqa: BLE001 - per-disk isolation, failure logged and recorded
         logging.error("Failed to delete leftover disk %s: %s", label, e)
-        logger.current().fail(location, label, e)
+        logger.current().fail(location, label, e, logged=True)
         return None
     return label

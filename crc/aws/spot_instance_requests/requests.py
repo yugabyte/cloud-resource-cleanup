@@ -129,5 +129,5 @@ def filtered_requests(
         except Exception as e:  # noqa: BLE001 - per-request isolation, failure recorded, request kept
             logging.error("Error occurred while processing spot request %s: %s", request, e)
             request_id = request.get("SpotInstanceRequestId") if hasattr(request, "get") else None
-            logger.current().fail(region, str(request_id or "-"), e)
+            logger.current().fail(region, str(request_id or "-"), e, logged=True)
     return matches

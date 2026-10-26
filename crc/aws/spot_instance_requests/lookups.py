@@ -120,7 +120,9 @@ def inspect_instance(
                 match.request_id,
                 match.instance_id,
             )
-            logger.current().fail(region, match.request_id, "describe_instances failed")
+            logger.current().fail(
+                region, match.request_id, "describe_instances failed", logged=True
+            )
             return None
         volumes_from_bdm = bool(leftover_volumes)
     if not leftover_volumes:

@@ -27,6 +27,7 @@ from tests import helpers_azure_spot as hs
 from tests import helpers_azure_vm as hv
 from tests.helpers_ad_spot_engine import run_through_engine
 from tests.helpers_ad_vm_engine import run_vm
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.helpers_wc_azu_engine import candidate_ids, engine_run
 
 _PREFIXES = ("RUN START", "REGION", "ACTION", "SKIPPED", "ERRORS", "FAILED", "RESULT")
@@ -223,12 +224,12 @@ def test_nic_failure_after_three_attempts_is_listed(
         "ACTION deleted cloud=azure resource=nic region=rg id=nic-a name=nic-a",
         "SKIPPED cloud=azure resource=nic reason=in_use count=1",
         "ERRORS count=1",
-        "FAILED cloud=azure resource=nic region=rg id=nic-b error=RuntimeError: busy",
         "RESULT cloud=azure resource=nic operation=delete dry_run=false selected=1 done=1 "
         "failed=1 skipped=1 regions=1 regions_skipped=0 duration_s=2",
     ]
     errors = [r.levelno for r in caplog.records if r.getMessage().startswith(("ERRORS", "FAILED"))]
-    assert errors == [logging.ERROR, logging.ERROR]
+    assert errors == [logging.ERROR]
+    assert_failure_printed_once(caplog, "NIC nic-b: busy")
 
 
 def test_nic_dry_run_and_no_double_action_from_plan_and_apply(
@@ -291,10 +292,10 @@ def test_vm_delete_reports_skips_and_failures(
         "SKIPPED cloud=azure resource=vm reason=state count=1",
         "SKIPPED cloud=azure resource=vm reason=too_young count=1",
         "ERRORS count=1",
-        "FAILED cloud=azure resource=vm region=rg id=vm-bad error=RuntimeError: view failed",
         "RESULT cloud=azure resource=vm operation=delete dry_run=false selected=1 done=1 "
         "failed=1 skipped=3 regions=1 regions_skipped=0 duration_s=2",
     ]
+    assert_failure_printed_once(caplog, "vm-bad instance: view failed")
 
 
 def test_vm_stop_and_dry_run_kinds(
@@ -324,11 +325,8 @@ def test_vm_nic_failure_after_24_attempts_is_listed(
     _begin("vm", dry_run=False)
     _engine_vm(azure, dry_run=False)
     logger.finish()
-    lines = _lines(caplog)
-    assert (
-        "FAILED cloud=azure resource=vm region=rg id=vm-a-NIC "
-        "error=NIC delete failed after 24 attempts" in lines
-    )
+    assert "ERRORS count=1" in _lines(caplog)
+    assert_failure_printed_once(caplog, "Failed to delete the NIC - vm-a-NIC after 24 attempts")
 
 
 def test_vm_failed_delete_counts_as_selected_without_action(
@@ -343,9 +341,7 @@ def test_vm_failed_delete_counts_as_selected_without_action(
     lines = _lines(caplog)
     assert not [x for x in lines if x.startswith("ACTION")]
     assert "REGION cloud=azure resource=vm region=rg scanned=1 selected=1 seconds=S" in lines
-    assert "FAILED cloud=azure resource=vm region=rg id=vm-a error=RuntimeError: delete failed" in (
-        lines
-    )
+    assert_failure_printed_once(caplog, "vm-a instance: delete failed")
     assert "selected=0 done=0 failed=1 skipped=0" in lines[-1]
 
 
@@ -412,7 +408,7 @@ def test_spot_real_run_reports_region_action_skips_and_failures(
     assert "SKIPPED cloud=azure resource=spot_instances reason=not_spot count=1" in lines
     assert "SKIPPED cloud=azure resource=spot_instances reason=state count=1" in lines
     assert "ERRORS count=1" in lines
-    assert any(line.startswith("FAILED") and "id=s2 error=RuntimeError:" in line for line in lines)
+    assert_failure_printed_once(caplog, "Spot VM s2")
     assert "selected=1 done=1 failed=1 skipped=3 regions=1" in lines[-1]
 
 

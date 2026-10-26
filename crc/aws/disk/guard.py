@@ -37,11 +37,11 @@ def region_guard(region: str, flag_error: Callable[[], None]) -> Iterator[None]:
             return
         flag_error()
         logging.error("Region %s: ClientError during EBS disk cleanup: %s", region, e)
-        logger.current().fail(region, "-", e)
+        logger.current().fail(region, "-", e, logged=True)
     except Exception as e:  # noqa: BLE001 - SAF-003 region guard, error flagged and logged, other regions continue
         flag_error()
         logging.error("Region %s: error during EBS disk cleanup: %s", region, e)
-        logger.current().fail(region, "-", e)
+        logger.current().fail(region, "-", e, logged=True)
 
 
 def log_summary(labels: Sequence[str], *, dry_run: bool, had_errors: bool) -> None:

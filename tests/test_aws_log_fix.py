@@ -21,6 +21,7 @@ from crc.aws.vm.cleaner import VmCleaner, VmSettings
 from crc.core import logger, registry
 from crc.core.cleaner import Operation, RunContext
 from tests.helpers_ad_vm_engine import run_vm
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.test_aws_disk_cleaner import FakeCloudWatch, FakeEc2, volume
 from tests.test_aws_spot_instance_requests_parity import (
     Case,
@@ -116,9 +117,8 @@ def test_vm_real_run_with_a_failure_lists_it_at_the_end(caplog: pytest.LogCaptur
     assert "ACTION deleted cloud=aws resource=vm region=us-west-2 id=a name=n-a" in out
     assert "ACTION deleted cloud=aws resource=vm region=us-west-2 id=c name=n-c" in out
     assert not any("id=b" in line and line.startswith("ACTION") for line in out)
-    assert out[-3:] == [
+    assert out[-2:] == [
         "ERRORS count=1",
-        "FAILED cloud=aws resource=vm region=us-west-2 id=b error=RuntimeError: denied",
         result_line(
             "vm",
             "delete",
@@ -128,7 +128,8 @@ def test_vm_real_run_with_a_failure_lists_it_at_the_end(caplog: pytest.LogCaptur
     ]
     assert caplog.records[-1].levelno == logging.INFO
     errors = [r.levelno for r in caplog.records if r.getMessage().startswith(("ERRORS", "FAILED"))]
-    assert errors == [logging.ERROR, logging.ERROR]
+    assert errors == [logging.ERROR]
+    assert_failure_printed_once(caplog, "instance b: denied")
 
 
 def test_vm_connectivity_skip_counts_the_region(caplog: pytest.LogCaptureFixture) -> None:
@@ -249,10 +250,8 @@ def test_disk_real_run_with_delete_failure(caplog: pytest.LogCaptureFixture) -> 
     cleaner.apply(cleaner.plan(disk_context(False)), disk_context(False))
     out = lines(caplog)
     assert "ACTION deleted cloud=aws resource=disk region=us-west-2 id=vol-a name=-" in out
-    assert out[-3] == "ERRORS count=1"
-    assert out[-2].startswith(
-        "FAILED cloud=aws resource=disk region=us-west-2 id=vol-b error=ClientError: "
-    )
+    assert out[-2] == "ERRORS count=1"
+    assert_failure_printed_once(caplog, "vol-b")
     assert out[-1] == result_line(
         "disk",
         "delete",
@@ -279,9 +278,9 @@ def test_disk_connectivity_skip_and_region_error(caplog: pytest.LogCaptureFixtur
     )
     DiskCleaner(build_settings({"age": {"days": 1}}), runtime).plan(disk_context(True))
     out = lines(caplog)
-    assert out[-3:] == [
+    assert_failure_printed_once(caplog, "ap-south-1")
+    assert out[-2:] == [
         "ERRORS count=1",
-        "FAILED cloud=aws resource=disk region=ap-south-1 id=- error=RuntimeError: boom",
         result_line(
             "disk",
             "delete",
@@ -359,8 +358,8 @@ def test_spot_cancel_failure_is_listed(
     cleaner, ctx = spot_cleaner(Case("x", one(spec)), monkeypatch, False)
     cleaner.apply(cleaner.plan(ctx), ctx)
     out = lines(caplog)
-    assert out[-3] == "ERRORS count=1"
-    assert out[-2].startswith(f"FAILED {SPOT} id=sir-1 error=ClientError: ")
+    assert out[-2] == "ERRORS count=1"
+    assert_failure_printed_once(caplog, "sir-1")
     assert out[-1].endswith(
         "selected=0 done=0 failed=1 skipped=0 regions=1 regions_skipped=0 duration_s=0"
     )
@@ -397,7 +396,7 @@ def test_spot_volume_and_sweep_failures_carry_region(
     cleaner.apply(cleaner.plan(ctx), ctx)
     out = lines(caplog)
     assert "ERRORS count=1" in out
-    assert any(line.startswith(f"FAILED {SPOT} id=sir-gone error=ClientError: ") for line in out)
+    assert_failure_printed_once(caplog, "sir-gone")
     assert out[-1].endswith(
         "selected=0 done=0 failed=1 skipped=1 regions=1 regions_skipped=0 duration_s=0"
     )

@@ -100,7 +100,7 @@ class VmCleaner:
     def _listing_failed(zone: str, error: Exception) -> None:
         logging.error("Zone %s: failed listing GCP instances: %s", zone, error)
         logger.current().region_skipped(zone, error)
-        logger.current().fail(zone, "-", error)
+        logger.current().fail(zone, "-", error, logged=True)
 
     def _evaluate(self, instance: InstanceView, zone: str, clock: Clock) -> Candidate | None:
         try:
@@ -118,7 +118,7 @@ class VmCleaner:
         except Exception as e:  # noqa: BLE001 - per-instance isolation, failure logged and recorded, instance kept
             name = getattr(instance, "name", None) or "?"
             logging.error("Error occurred while evaluating instance %s: %s", name, e)
-            logger.current().fail(zone, name, e)
+            logger.current().fail(zone, name, e, logged=True)
             return None
 
     def _reject(self, instance: InstanceView, clock: Clock) -> str | None:
@@ -144,7 +144,7 @@ class VmCleaner:
             logging.error(
                 "Error occurred while %s instance %s: %s", operation.value, candidate.id, e
             )
-            logger.current().fail(candidate.region, candidate.id, e)
+            logger.current().fail(candidate.region, candidate.id, e, logged=True)
             return False
         log_action(operation.value, candidate, dry_run=dry_run)
         return True

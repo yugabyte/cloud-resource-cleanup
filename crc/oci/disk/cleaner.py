@@ -209,7 +209,7 @@ class DiskCleaner:
             deleted.append(candidate.name)
         except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
             logging.error("Error occurred while deleting %s %s: %s", kind, candidate.name, e)
-            _logger.record_failure(candidate.region, candidate.id, e)
+            _logger.record_failure(candidate.region, candidate.id, e, logged=True)
             return Failure(id=candidate.name, error=str(e))
         _logger.record_action(
             Operation.DELETE,

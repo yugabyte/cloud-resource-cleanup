@@ -188,13 +188,15 @@ def wait_volume_available_then_delete(
             if code == "InvalidVolume.NotFound":
                 return "already_gone"
             logging.error("Error waiting/deleting volume %s: %s", volume_id, e)
-            logger.current().fail(region, volume_id, e)
+            logger.current().fail(region, volume_id, e, logged=True)
             return None
         except BotoCoreError as e:
             logging.error("Transport error waiting/deleting volume %s: %s", volume_id, e)
-            logger.current().fail(region, volume_id, e)
+            logger.current().fail(region, volume_id, e, logged=True)
             return None
         waiter.sleep(settings.poll_interval_sec)
     logging.error("Timed out waiting for volume %s to become available; not deleted", volume_id)
-    logger.current().fail(region, volume_id, "timed out waiting for the volume to become available")
+    logger.current().fail(
+        region, volume_id, "timed out waiting for the volume to become available", logged=True
+    )
     return None

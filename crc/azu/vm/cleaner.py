@@ -108,7 +108,7 @@ class VmCleaner:
                 self.act(candidate.id, context.operation, tally, dry_run=False)
             except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
                 log_processing_error(candidate.id, e)
-                _logger.failed(self._resource_group, candidate.id, e)
+                _logger.failed(self._resource_group, candidate.id, e, logged=True)
                 failed.append(Failure(id=candidate.id, error=str(e)))
         log_summary(context.operation, tally, dry_run=False)
         if context.operation is Operation.DELETE:
@@ -175,7 +175,7 @@ class VmCleaner:
             reason = self.state_skip_reason(candidate.id, self._settings.instance_states)
         except Exception as e:  # noqa: BLE001 - state read failure recorded, VM skipped (fail closed)
             log_processing_error(candidate.id, e)
-            _logger.failed(self._resource_group, candidate.id, e)
+            _logger.failed(self._resource_group, candidate.id, e, logged=True)
             return Skipped(id=candidate.id, reason="status unavailable")
         if reason is None:
             return candidate

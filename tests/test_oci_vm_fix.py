@@ -62,7 +62,9 @@ class FakeRunLog:
     def skip(self, reason: str) -> None:
         self.skips.append(reason)
 
-    def fail(self, region: str | None, resource_id: str, error: Any) -> None:
+    def fail(
+        self, region: str | None, resource_id: str, error: Any, *, logged: bool = False
+    ) -> None:
         self.failures.append((region, resource_id, str(error)))
 
     def region(self, *args: Any) -> None: ...

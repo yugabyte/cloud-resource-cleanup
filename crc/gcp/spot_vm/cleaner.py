@@ -48,7 +48,7 @@ def log_summary(instances: list[str], disks: list[str], *, dry_run: bool) -> Non
 
 def _log_failure(name: object, error: Exception, zone: str) -> None:
     logging.error("Error processing GCP Spot VM %s: %s", name, error)
-    logger.current().fail(zone, str(name), error)
+    logger.current().fail(zone, str(name), error, logged=True)
 
 
 def _leftover(candidate: Candidate) -> tuple[DiskRef, ...]:
@@ -217,7 +217,9 @@ class SpotVMCleaner:
             "Instance delete failed/incomplete for %s; skipping leftover disk deletes",
             candidate.name,
         )
-        logger.current().fail(zone, candidate.id, "instance delete failed or incomplete")
+        logger.current().fail(
+            zone, candidate.id, "instance delete failed or incomplete", logged=True
+        )
         return False
 
 

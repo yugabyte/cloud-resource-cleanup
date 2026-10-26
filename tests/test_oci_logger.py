@@ -19,6 +19,7 @@ from crc.oci.spot_vm.decide import SpotVmSettings
 from crc.oci.vm import VmCleaner, VmSettings
 from tests.helpers_ad_spot_engine import run_through_engine
 from tests.helpers_ad_vm_engine import run_vm
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.helpers_wc_oci_disk import run_disk
 
 NOW = datetime.datetime(2026, 3, 1, 12, 0, 0, tzinfo=datetime.UTC)
@@ -164,13 +165,13 @@ def test_vm_engine_counts_a_skipped_region_and_a_failed_terminate(
         (logging.INFO, "REGION cloud=oci resource=vm region=r2 scanned=2 selected=2 seconds=0"),
         (logging.INFO, "ACTION deleted cloud=oci resource=vm region=r2 id=b name=name-b"),
         (logging.ERROR, "ERRORS count=1"),
-        (logging.ERROR, "FAILED cloud=oci resource=vm region=r2 id=a error=RuntimeError: denied"),
         (
             logging.INFO,
             "RESULT cloud=oci resource=vm operation=delete dry_run=false selected=1 done=1 "
             "failed=1 skipped=0 regions=1 regions_skipped=1 duration_s=7",
         ),
     ]
+    assert_failure_printed_once(caplog, "instance name-a: denied")
 
 
 def test_vm_tag_dict_is_debug_and_no_run_means_no_new_lines(
@@ -293,13 +294,13 @@ def test_disk_failed_delete_is_listed_at_the_end(caplog: pytest.LogCaptureFixtur
     logger.finish()
     assert _lines(caplog, "ERRORS", "FAILED", "RESULT") == [
         (logging.ERROR, "ERRORS count=1"),
-        (logging.ERROR, "FAILED cloud=oci resource=disk region=r1 id=a error=RuntimeError: busy"),
         (
             logging.INFO,
             "RESULT cloud=oci resource=disk operation=delete dry_run=false selected=1 done=1 "
             "failed=1 skipped=0 regions=1 regions_skipped=0 duration_s=7",
         ),
     ]
+    assert_failure_printed_once(caplog, "name-a: busy")
 
 
 def test_disk_cleaner_plan_reports_region_and_skipped_region(
@@ -474,16 +475,12 @@ def test_spot_vm_attachment_failure_is_a_listed_failure(caplog: pytest.LogCaptur
     assert _lines(caplog, "ERRORS", "FAILED", "RESULT") == [
         (logging.ERROR, "ERRORS count=1"),
         (
-            logging.ERROR,
-            "FAILED cloud=oci resource=spot_instances region=r1 id=a "
-            "error=RuntimeError: no attachments",
-        ),
-        (
             logging.INFO,
             "RESULT cloud=oci resource=spot_instances operation=delete dry_run=false selected=0 "
             "done=0 failed=1 skipped=0 regions=1 regions_skipped=0 duration_s=7",
         ),
     ]
+    assert_failure_printed_once(caplog, "Failed to list volume attachments for a")
 
 
 @pytest.mark.parametrize(("dry_run", "kind"), [(False, "deleted"), (True, "would_delete")])

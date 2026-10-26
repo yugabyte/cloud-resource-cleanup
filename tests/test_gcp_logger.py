@@ -24,6 +24,7 @@ from tests import test_gcp_ip as ips
 from tests import test_gcp_spot_instances as spots
 from tests import test_gcp_vm as vms
 from tests.helpers_ad_vm_engine import run_vm
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.helpers_wc_gcp_engine import run_engine
 
 SCAN_SECONDS = 7
@@ -88,7 +89,6 @@ def test_vm_delete_logs_region_actions_skips_and_failure(caplog: pytest.LogCaptu
         skipped("vm", "state", 1),
         skipped("vm", "too_young", 1),
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=vm region=z2 id=bad error=RuntimeError: boom",
         result(
             "vm",
             "delete",
@@ -96,6 +96,7 @@ def test_vm_delete_logs_region_actions_skips_and_failure(caplog: pytest.LogCaptu
             "selected=2 done=2 failed=1 skipped=2 regions=2 regions_skipped=0 duration_s=0",
         ),
     ]
+    assert_failure_printed_once(caplog, "instance bad: boom")
 
 
 def test_vm_stop_dry_run_logs_would_stop_from_plan(caplog: pytest.LogCaptureFixture) -> None:
@@ -163,7 +164,6 @@ def test_disk_logs_regions_skips_actions_and_failure(caplog: pytest.LogCaptureFi
         skipped("disk", "exception_tag", 1),
         skipped("disk", "too_young", 1),
         "ERRORS count=1",
-        "FAILED cloud=gcp resource=disk region=z2 id=bad error=RuntimeError: denied",
         result(
             "disk",
             "delete",
@@ -171,6 +171,7 @@ def test_disk_logs_regions_skips_actions_and_failure(caplog: pytest.LogCaptureFi
             "selected=1 done=1 failed=1 skipped=3 regions=2 regions_skipped=0 duration_s=0",
         ),
     ]
+    assert_failure_printed_once(caplog, "disk bad: denied")
 
 
 def test_disk_dry_run_logs_would_delete_and_never_done(caplog: pytest.LogCaptureFixture) -> None:
@@ -211,8 +212,8 @@ def test_disk_engine_failure_is_recorded(caplog: pytest.LogCaptureFixture) -> No
     begin("disk")
     run_engine(disks.cleaner(client), "disk", now=disks.NOW)
     logger.finish()
-    lines = run_lines(caplog)
-    assert "FAILED cloud=gcp resource=disk region=z id=bad error=RuntimeError: denied" in lines
+    assert "ERRORS count=1" in run_lines(caplog)
+    assert_failure_printed_once(caplog, "disk bad: denied")
 
 
 def test_ip_logs_regions_actions_and_skips(caplog: pytest.LogCaptureFixture) -> None:
@@ -359,9 +360,8 @@ def test_spot_failed_instance_delete_is_recorded(caplog: pytest.LogCaptureFixtur
     cleaner.apply(cleaner.plan(spots.context(dry_run=False)), spots.context(dry_run=False))
     logger.finish()
     lines = run_lines(caplog)
-    assert (
-        "FAILED cloud=gcp resource=spot_instances region=z id=a error=RuntimeError: nope" in lines
-    )
+    assert "ERRORS count=1" in lines
+    assert_failure_printed_once(caplog, "Spot VM a: nope")
     assert not [line for line in lines if line.startswith("ACTION")]
 
 

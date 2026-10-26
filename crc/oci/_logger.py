@@ -53,6 +53,8 @@ def record_skip(reason: str) -> None:
     logger.current().skip(reason)
 
 
-def record_failure(region: str | None, resource_id: str, error: BaseException | str) -> None:
-    """Record one per-resource failure for the end-of-run list."""
-    logger.current().fail(region, resource_id, error)
+def record_failure(
+    region: str | None, resource_id: str, error: BaseException | str, *, logged: bool = False
+) -> None:
+    """Record one per-resource failure; `logged` when an error line already named it."""
+    logger.current().fail(region, resource_id, error, logged=logged)

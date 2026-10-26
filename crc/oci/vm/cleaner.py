@@ -136,7 +136,7 @@ class VmCleaner:
             logging.error(
                 "Error occurred while evaluating instance %s: %s", instance.display_name, e
             )
-            _logger.record_failure(region, instance.id, e)
+            _logger.record_failure(region, instance.id, e, logged=True)
             return Skipped(id=instance.id, reason=EVALUATION_FAILED, name=instance.display_name)
         if reason is not None:
             _logger.record_skip(SKIP_KEYS[reason])
@@ -172,7 +172,7 @@ class VmCleaner:
             done.append(candidate.name)
         except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
             logging.error("Error occurred while %s instance %s: %s", operation, candidate.name, e)
-            _logger.record_failure(candidate.region, candidate.id, e)
+            _logger.record_failure(candidate.region, candidate.id, e, logged=True)
             return Failure(id=candidate.name, error=str(e))
         self._record(candidate, operation, dry_run=dry_run)
         return None

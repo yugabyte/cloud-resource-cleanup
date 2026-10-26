@@ -54,7 +54,7 @@ def attached_volume_ids(
         ).data
     except Exception as e:  # noqa: BLE001 - SAF-040 attachment list failure keeps the volumes
         logging.error("Failed to list volume attachments for %s: %s", instance_id, e)
-        _logger.record_failure(region, instance_id, e)
+        _logger.record_failure(region, instance_id, e, logged=True)
         return None
 
     volume_ids: list[str] = []
@@ -75,7 +75,7 @@ def attached_volume_ids(
 
 def _poll_failed(instance_id: str, error: Exception, region: str | None = None) -> bool:
     logging.error("Error polling OCI instance %s during terminate wait: %s", instance_id, error)
-    _logger.record_failure(region, instance_id, error)
+    _logger.record_failure(region, instance_id, error, logged=True)
     return False
 
 
@@ -107,7 +107,7 @@ def wait_terminated(
         "will still attempt leftover volume deletes",
         instance_id,
     )
-    _logger.record_failure(region, instance_id, "timed out waiting for TERMINATED")
+    _logger.record_failure(region, instance_id, "timed out waiting for TERMINATED", logged=True)
     return False
 
 
@@ -141,7 +141,7 @@ def volume_owned(
         ).data
     except Exception as e:  # noqa: BLE001 - SAF-040 attachment list failure keeps the volume
         logging.error("Failed to list attachments of volume %s (keeping it): %s", volume_id, e)
-        _logger.record_failure(region, volume_id, e)
+        _logger.record_failure(region, volume_id, e, logged=True)
         return _not_owned(volume_id, "attachment list failed")
     for attachment in attachments:
         lifecycle = (getattr(attachment, "lifecycle_state", "") or "").upper()
@@ -165,7 +165,7 @@ def volume_passes_tag_check(
         volume = block.get_volume(volume_id).data
     except Exception as e:  # noqa: BLE001 - SAF-040 a failed volume read keeps the volume
         logging.error("Failed to get volume %s for tag check (skipping): %s", volume_id, e)
-        _logger.record_failure(region, volume_id, e)
+        _logger.record_failure(region, volume_id, e, logged=True)
         return False
     if tags_protect(settings, volume.freeform_tags):
         logging.debug("Skipping leftover volume %s: exception_tags/notags", volume_id)
@@ -186,7 +186,7 @@ def delete_leftover(
         done.append(volume_id)
     except Exception as e:  # noqa: BLE001 - SAF-040 per-volume isolation, failure logged and recorded
         logging.error("Failed to delete leftover volume %s: %s", volume_id, e)
-        _logger.record_failure(region, volume_id, e)
+        _logger.record_failure(region, volume_id, e, logged=True)
 
 
 def checked_volumes(

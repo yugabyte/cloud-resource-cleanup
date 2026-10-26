@@ -64,7 +64,9 @@ def volume_ok_to_delete(
     tags = describe_volume_tag_list(client, volume_id)
     if tags is None:
         logging.error("Skipping leftover volume %s: could not read tags (fail closed)", volume_id)
-        logger.current().fail(region, volume_id, "could not read volume tags (fail closed)")
+        logger.current().fail(
+            region, volume_id, "could not read volume tags (fail closed)", logged=True
+        )
         return False
     if volume_tags_protect(settings, own_volume_tags(tags)):
         logging.debug(

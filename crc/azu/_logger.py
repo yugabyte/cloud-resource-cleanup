@@ -64,6 +64,8 @@ def acted(kind: str, resource_group: str, resource_id: str, name: str | None = N
     logger.current().action(kind, resource_group, resource_id, name or resource_id)
 
 
-def failed(resource_group: str, resource_id: str, error: BaseException | str) -> None:
-    """Record one per-resource failure for the end-of-run list."""
-    logger.current().fail(resource_group, resource_id, error)
+def failed(
+    resource_group: str, resource_id: str, error: BaseException | str, *, logged: bool = False
+) -> None:
+    """Record one per-resource failure; `logged` when an error line already named it."""
+    logger.current().fail(resource_group, resource_id, error, logged=logged)

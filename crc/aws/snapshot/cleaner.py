@@ -47,7 +47,7 @@ def skip_failed_region(region: str, error: BaseException) -> None:
         type(error).__name__,
         error,
     )
-    logger.current().fail(region, "-", error)
+    logger.current().fail(region, "-", error, logged=True)
 
 
 class SnapshotCleaner:
@@ -152,7 +152,7 @@ class SnapshotCleaner:
             logging.info("Deleted snapshot %s", snap_id)
         except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
             logging.error("Failed to delete snapshot %s: %s", snap_id, e)
-            run.fail(region, snap_id, e)
+            run.fail(region, snap_id, e, logged=True)
             return Failure(id=snap_id, error=str(e))
         run.action("deleted", region, snap_id)
         return None

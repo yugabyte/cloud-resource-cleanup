@@ -169,7 +169,7 @@ class DiskCleaner:
     def _volume_error(self, template: str, region: str, volume_id: Any, e: Exception) -> None:
         self.had_errors = True
         logging.error(template, region, volume_id, e)
-        logger.current().fail(region, str(volume_id), e)
+        logger.current().fail(region, str(volume_id), e, logged=True)
 
     def _drop_recently_attached(
         self, region: str, volumes: list[Volume], now: datetime.datetime
@@ -207,7 +207,7 @@ class DiskCleaner:
         except ClientError as e:
             code = (e.response.get("Error") or {}).get("Code")
             logging.error("Failed to delete volume %s (%s): %s", volume_id, code, e)
-            logger.current().fail(candidate.region, volume_id, e)
+            logger.current().fail(candidate.region, volume_id, e, logged=True)
             self.had_errors = True
             return Failure(id=str(volume_id), error=str(e))
         return None

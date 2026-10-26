@@ -27,6 +27,7 @@ from tests import test_aws_elastic_ips as eip_t
 from tests import test_aws_keypairs as kp_t
 from tests import test_aws_kms as kms_t
 from tests import test_aws_snapshot as snap_t
+from tests.helpers_failed_once import assert_failure_printed_once
 from tests.helpers_wc_aws1_engine import run_cleaner
 
 TWO_SKIPS = 2
@@ -276,7 +277,8 @@ def test_snapshot_dry_run_lines(run_lines: Any) -> None:
 def test_snapshot_real_run_failure_is_listed_and_ami_skip_is_debug(
     run_lines: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """BUG-359: no INFO line per snapshot used by an AMI; BUG-362: the failed delete is listed."""
+    """BUG-359: no INFO line per snapshot used by an AMI; BUG-362: the failed delete is counted;
+    BUG-410: it is printed once, by its own error line."""
     begin, lines = run_lines
     begin("snapshot", dry_run=False)
     _snapshots(dry_run=False, fail={"old": ValueError("busy")}).delete()
@@ -285,10 +287,8 @@ def test_snapshot_real_run_failure_is_listed_and_ami_skip_is_debug(
     assert (logging.DEBUG, "Skipping snapshot ami, used by AMI") in [
         (r.levelno, r.getMessage()) for r in caplog.records
     ]
-    assert out[-3:-1] == [
-        "ERRORS count=1",
-        "FAILED cloud=aws resource=snapshot region=us-west-2 id=old error=ValueError: busy",
-    ]
+    assert out[-2] == "ERRORS count=1"
+    assert_failure_printed_once(caplog, "Failed to delete snapshot old: busy")
     assert " selected=0 done=0 failed=1 skipped=3 " in out[-1]
 
 

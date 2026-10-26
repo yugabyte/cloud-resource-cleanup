@@ -185,7 +185,7 @@ class VmCleaner:
                 )
             except Exception as e:  # noqa: BLE001 - per-resource isolation, failure logged and recorded, resource kept
                 logging.error("%s %s: %s", _ERROR_TEXT[operation], candidate.id, e)
-                logger.current().fail(candidate.region, candidate.id, e)
+                logger.current().fail(candidate.region, candidate.id, e, logged=True)
                 failures.append(Failure(id=candidate.id, error=str(e)))
         for name in names:
             logging.info(_DONE_TEXT[operation].format(name))

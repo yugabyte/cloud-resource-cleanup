@@ -180,7 +180,7 @@ class AzureNicCleaner:
                 if failure_count:
                     logging.info("Retrying deletion of NIC %s", nic_name)
         logging.error("Failed to delete the NIC - %s", nic_name)
-        _logger.failed(self._resource_group, nic_name, last_exception or last_error)
+        _logger.failed(self._resource_group, nic_name, last_exception or last_error, logged=True)
         return last_error
 
     def decide(self, nic: Any) -> tuple[Candidate | None, str]:

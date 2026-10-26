@@ -16,6 +16,7 @@ from slack_sdk.errors import SlackApiError
 
 from crc.core.cleaner import RunContext
 from crc.core.report import DISK, Report
+from crc.notify.digest_record import DigestTarget, build_record, write_record
 from crc.notify.slack_chunks import (
     ITEMS_PER_MESSAGE,
     SLACK_SAFE_CHARS,
@@ -189,14 +190,36 @@ class SlackNotifier(SlackPoster):
     name = "slack"
     fail_open = False
 
+    digest: DigestTarget | None = None
+
     def send(self, report: Report, context: RunContext) -> None:
-        """Post every Slack message of `report`; an owner-grouped report pings the owners."""
+        """Post every Slack message of `report`; an owner-grouped report pings the owners.
+
+        With a `digest` target the channel messages go into a digest record instead; owner
+        pings are posted as always. If the record cannot be written, one warning is logged and
+        the messages are posted directly.
+        """
         if report.by_owner is not None:
             label = report.sections[0].label if report.sections else DISK
             self.ping_owners(report, label)
+            self._write_digest(report, context)
+            return
+        if self._write_digest(report, context):
             return
         for message in report.slack_messages():
             self.post(message.text, link_names=message.link_names)
+
+    def _write_digest(self, report: Report, context: RunContext) -> bool:
+        """Write the digest record; True when written, False when off or when it failed."""
+        if self.digest is None:
+            return False
+        try:
+            record = build_record(report, self.channel, self.digest, context.now)
+            write_record(self.digest.directory, record, context.now)
+        except Exception as e:  # noqa: BLE001 - fail safe: a lost notification is worse than a direct post
+            logger.warning("Slack digest record not written (%s: %s)", type(e).__name__, e)
+            return False
+        return True
 
     def send_cleanup(
         self,

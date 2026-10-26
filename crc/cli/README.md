@@ -26,6 +26,9 @@ plain `dict`, as on `main`.
 
 ## Public API
 
+- `read_digest_target()`: the Slack digest target (the CRC_SLACK_DIGEST_DIR directory and the Jenkins STAGE_NAME, BUILD_URL, BUILD_NUMBER, JOB_NAME), or None when the directory variable is unset or empty (module digest_target.py).
+- `main()` of module digest.py (run by the root script crc_digest.py with --dir and --dry_run) returns the exit status: reads SLACK_BOT_TOKEN (2 when missing, except in dry run), drops records whose build is not BUILD_NUMBER (when set), builds the WebClient, posts the digest (1 when a channel's top message failed, else 0); dry run prints the Block Kit JSON.
+- `attach_digest()`: gives each Slack notifier of a pair the digest target; with it the notifier writes a digest record instead of posting the channel messages (module bridge.py).
 - `route_for()`: the route of a (cloud, kind) pair, or None when the pair is not in the route tables (module bridge.py).
 - `is_routed_kind()`: True when at least one cloud routes the kind.
 - `run_routed()`: run one routed pair through the engine with its notifiers.

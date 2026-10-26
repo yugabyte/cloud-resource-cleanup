@@ -1,0 +1,22 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "db-stress-tests-cleanup-notifications",
+  "cloud": "gcp",
+  "dry_run": false,
+  "failures": [],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "ip",
+  "operation": "delete",
+  "resource_suffix": "STRESS_TESTS",
+  "sections": [
+    {
+      "ids": [],
+      "label": "IP"
+    }
+  ],
+  "stage": "GCP IPs",
+  "version": 1,
+  "written_at": "2026-10-26T08:03:30Z"
+}

@@ -42,6 +42,8 @@ reused. `tests/archtest/safety_lock.json` maps IDs to the tests that lock them.
   (`log_skipped_region` in `crc/aws/connectivity.py`).
 - [SAF-002] The only explicit `sys.exit(0)` in this repository is the read-only
   `--scan_tag` path in `crc/cli/scan.py`. It forces `--dry_run` and never deletes.
+  The Slack digest poster `crc_digest.py` deletes nothing either; it returns its exit
+  status (0, 1 or 2) from `main()` to `SystemExit` in the root script.
 - [SAF-003] Inside the per-region loop, the AWS disk cleaner catches per-volume and
   per-region errors, sets `had_errors`, and finishes with an error log rather
   than raising. An uncaught exception would exit non-zero and fail the Jenkins

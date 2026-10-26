@@ -9,6 +9,7 @@ are looked up in this module at call time, the seam the CLI parity tests patch.
 from datetime import UTC, datetime
 from typing import Any
 
+from crc.cli.digest_target import read_digest_target
 from crc.cli.inputs import Options, Targets
 from crc.cli.routes import NotifyMode, Route
 from crc.cli.routes import aws as aws_routes
@@ -62,6 +63,19 @@ def build_notifiers(crc: Any, route: Route) -> list[engine.Notifier]:
     if route.extra_notifiers is not None:
         notifiers.extend(route.extra_notifiers(crc))
     return notifiers
+
+
+def attach_digest(crc: Any, kind: Any, notifiers: list[engine.Notifier]) -> None:
+    """Give each `SlackNotifier` the digest target when `CRC_SLACK_DIGEST_DIR` is set."""
+    slack = [notifier for notifier in notifiers if isinstance(notifier, SlackNotifier)]
+    if not slack:
+        return
+    # `resource_suffix` is set only with `--influxdb` (BUG-030), hence the default.
+    target = read_digest_target(kind, getattr(crc, "resource_suffix", None))
+    if target is None:
+        return
+    for notifier in slack:
+        notifier.digest = target
 
 
 class _ReportThenRaise:
@@ -137,7 +151,9 @@ def run_routed(
     deferred: list[_ReportThenRaise] = []
     if route.notify is NotifyMode.REPORT_THEN_RERAISE:
         cleaners, deferred = _deferring(cleaners, str(cloud), str(kind))
-    outcomes = engine.run(selection, context, cleaners, build_notifiers(crc, route))
+    notifiers = build_notifiers(crc, route)
+    attach_digest(crc, kind, notifiers)
+    outcomes = engine.run(selection, context, cleaners, notifiers)
     for cleaner in deferred:
         if cleaner.error is not None:
             raise cleaner.error

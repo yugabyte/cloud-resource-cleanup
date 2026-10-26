@@ -1,0 +1,24 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "yba-crc-cleanup-notifications",
+  "cloud": "aws",
+  "dry_run": false,
+  "failures": [],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "kms",
+  "operation": "delete",
+  "resource_suffix": "ONLY_YBA",
+  "sections": [
+    {
+      "ids": [
+        "df6ea260-beaf-4be2-b4eb-47a58bf16cd7"
+      ],
+      "label": "KMS key"
+    }
+  ],
+  "stage": "AWS KMS 3 Days old",
+  "version": 1,
+  "written_at": "2026-10-26T07:34:59Z"
+}

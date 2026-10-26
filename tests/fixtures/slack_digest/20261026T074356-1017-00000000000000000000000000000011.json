@@ -1,0 +1,31 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "yba-crc-cleanup-notifications",
+  "cloud": "aws",
+  "dry_run": false,
+  "failures": [
+    {
+      "error": "instance doesn't have Name Tag",
+      "id": "i-0da16a5038026bab8"
+    },
+    {
+      "error": "instance doesn't have Name Tag",
+      "id": "i-0ae3d246dda3947ee"
+    }
+  ],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "vm",
+  "operation": "stop",
+  "resource_suffix": "ONLY_YBA",
+  "sections": [
+    {
+      "ids": [],
+      "label": "VM"
+    }
+  ],
+  "stage": "AWS Stopped VMs 5 Days old",
+  "version": 1,
+  "written_at": "2026-10-26T07:43:56Z"
+}

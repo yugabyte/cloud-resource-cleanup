@@ -21,6 +21,20 @@ Slack (module slack.py):
 - `send_slack_message()`: chat_postMessage with up to three attempts on a Slack API error.
 - `human_readable_timedelta()`: uptime text such as 3d 04h 12m 05s, a dash when unknown.
 
+Slack digest (spec in [docs/refactor/slack-digest-spec.md](../../docs/refactor/slack-digest-spec.md)):
+
+- `DigestTarget`: the record directory and the Jenkins run facts a `SlackNotifier` writes into its record (module digest_record.py).
+- `build_record()`: the version 1 record of a report, a plain dict; pure.
+- `record_name()`: the record file name, UTC time, pid and a random hex.
+- `write_record()`: writes a record atomically (temp file, then a rename) and creates the directory.
+- `DigestRecord`: one parsed version 1 record (module digest_load.py).
+- `load_records()`: the records of a directory; a file that does not parse or is not version 1 is skipped with one warning.
+- `DigestMessage`: the fallback text and blocks of one Slack message (module digest_blocks.py).
+- `build_top_message()`: the summary message of one channel: header, one line per stage that found something, a line for the checks that found nothing, build link.
+- `build_replies()`: the thread replies of one channel: the ids of each non-empty section and the failures, as bullets, split into parts.
+- `build_messages()`: top message then replies, per channel (module digest_post.py).
+- `post_digest()`: posts each channel's top message and its replies in the thread; returns the number of channels whose top message failed.
+
 InfluxDB (module influx.py):
 
 - `InfluxNotifier`: writes one point per report section; every write is caught and printed; fail open.
@@ -42,6 +56,11 @@ InfluxDB (module influx.py):
 - A failed `chat_postMessage` is printed and swallowed per message; an error from
   `conversations_open` propagates, so `SlackNotifier.fail_open` is False. Influx failures are
   swallowed per point (`InfluxNotifier.fail_open` is True).
+- With a digest target (`CRC_SLACK_DIGEST_DIR` set, read in `crc/cli`) `SlackNotifier` writes a
+  record instead of posting the channel messages; owner pings are still posted. If the record
+  cannot be written it logs one warning and posts the messages directly. Without a target the
+  behaviour is unchanged. The digest poster only reads records and posts; a failed post of one
+  channel or reply is logged and the other channels are still posted.
 - This package imports `crc.core` only: never `crc.aws`, `crc.azu`, `crc.gcp`, `crc.oci` or
   `crc.service`, and `crc.core` never imports it (import-linter contracts in `pyproject.toml`).
 - Log messages and printed messages are part of the behaviour; keep them identical.

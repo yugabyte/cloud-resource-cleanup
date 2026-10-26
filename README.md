@@ -67,7 +67,7 @@ Get started with `cloud-resource-cleanup` today and see the difference it can ma
 
 # Get Started
 ## Prerequisites
-* Python 3.11
+* Python 3.12
 * Required python packages
   * boto3 (for AWS)
   * msrestazure (for Azure)

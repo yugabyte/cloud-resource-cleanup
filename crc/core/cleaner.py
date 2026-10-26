@@ -9,10 +9,7 @@ import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Protocol, TypeVar
-
-K = TypeVar("K")
-V = TypeVar("V")
+from typing import Any, Protocol
 
 
 class Operation(enum.StrEnum):
@@ -22,7 +19,7 @@ class Operation(enum.StrEnum):
     STOP = "stop"
 
 
-def _frozen_map(value: Mapping[K, V]) -> Mapping[K, V]:
+def _frozen_map[K, V](value: Mapping[K, V]) -> Mapping[K, V]:
     """Read-only copy: later changes to the caller's mapping do not leak in."""
     return MappingProxyType(dict(value))
 

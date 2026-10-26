@@ -5,7 +5,7 @@ check enforces. Detail lives one hop away.
 
 ## What this repo is
 
-`cloud-resource-cleanup` (CRC) is a synchronous Python 3.11 CLI that Jenkins runs to stop and
+`cloud-resource-cleanup` (CRC) is a synchronous Python 3.12 CLI that Jenkins runs to stop and
 delete leftover test resources on AWS, Azure, GCP and OCI. Entry point `crc.py`; the code is in
 `crc/`. It deletes real resources, so safety beats elegance. Jenkins jobs in the
 `cloud-resource-cleanup-triggers` repo call `python crc.py <flags>`: every flag, environment
@@ -14,7 +14,7 @@ variable and JSON-style value (`--age '{"days": 1}'`) must keep working.
 ## Commands
 
 ```
-pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt   # once; Python 3.11 or newer
+pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt   # once; Python 3.12 or newer
 make check-fast            # lint + tests minus the three slow CLI parity files, about 25 s
 make check                 # everything CI runs, about 60 s; green before every commit
 make lint                  # ruff check, ruff format --check, mypy, lint-imports only

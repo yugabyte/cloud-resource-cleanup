@@ -493,7 +493,7 @@ def test_age_literal_values(
         (["-c", "aws", "--age", "{days: 1}"], 2, "invalid literal_eval value"),
         (["--cloud", "ibm"], 2, "invalid choice: 'ibm'"),
         ([], 2, "the following arguments are required: -c/--cloud"),
-        (["-c", "aws", "--kms_pending_window", "31"], 2, "invalid choice: 31"),
+        (["-c", "aws", "--kms_pending_window", "31"], 2, "invalid choice: '31'"),
         (["-c", "aws", "--kms_pending_window", "x"], 2, "invalid int value: 'x'"),
     ],
 )

@@ -1,0 +1,1 @@
+# Legacy ratchet baseline (see ARCH-001). Empty on purpose: no file may enter the ratchet.

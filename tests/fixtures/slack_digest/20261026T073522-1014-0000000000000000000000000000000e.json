@@ -1,0 +1,42 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "yba-crc-cleanup-notifications",
+  "cloud": "azure",
+  "dry_run": false,
+  "failures": [],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "vm",
+  "operation": "delete",
+  "resource_suffix": "ONLY_YBA",
+  "sections": [
+    {
+      "ids": [
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n1",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n2",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n3",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n4",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-readonly1-n1",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-readonly1-n2",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-readonly1-n3"
+      ],
+      "label": "VM"
+    },
+    {
+      "ids": [
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n1-nic",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n2-nic",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n3-nic",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-n4-nic",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-readonly1-n1-nic",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-readonly1-n2-nic",
+        "yb-dev-ui-auto-azu-2026130-b93-canaryrr-492-readonly1-n3-nic"
+      ],
+      "label": "NIC"
+    }
+  ],
+  "stage": "Azure VMs and NICs 6 Hours old",
+  "version": 1,
+  "written_at": "2026-10-26T07:35:22Z"
+}

@@ -1,18 +1,17 @@
 # Copyright (c) Yugabyte, Inc.
 
+"""
+This module contains a function to get all available regions on AWS for a specific service.
+"""
+
 import logging
-from typing import List
 
 import boto3
 
 from crc.aws.connectivity import CONNECTIVITY_ERRORS
 
-"""
-This module contains a function to get all available regions on AWS for a specific service.
-"""
 
-
-def get_all_regions(service_name: str, default_region_name: str) -> List[str]:
+def get_all_regions(service_name: str, default_region_name: str) -> list[str]:
     """
     Returns a list of all regions available on AWS for a given service.
 
@@ -25,10 +24,10 @@ def get_all_regions(service_name: str, default_region_name: str) -> List[str]:
     """
     try:
         client = boto3.client(service_name, region_name=default_region_name)
-        regions = [
+        regions: list[str] = [
             region["RegionName"] for region in client.describe_regions()["Regions"]
         ]
-        logging.info(f"Retrieved list of regions: {regions}")
+        logging.info("Retrieved list of regions: %s", regions)
         return regions
     except CONNECTIVITY_ERRORS as e:
         logging.warning(
@@ -38,6 +37,6 @@ def get_all_regions(service_name: str, default_region_name: str) -> List[str]:
             type(e).__name__,
         )
         session = boto3.session.Session()
-        regions = session.get_available_regions(service_name)
-        logging.info(f"Retrieved list of regions (static): {regions}")
-        return regions
+        static_regions: list[str] = session.get_available_regions(service_name)
+        logging.info("Retrieved list of regions (static): %s", static_regions)
+        return static_regions

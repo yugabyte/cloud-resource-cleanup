@@ -1,0 +1,30 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "yba-crc-cleanup-notifications",
+  "cloud": "aws",
+  "dry_run": true,
+  "failures": [],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "vm",
+  "operation": "delete",
+  "resource_suffix": "ONLY_YBA",
+  "sections": [
+    {
+      "ids": [
+        "primary-vm-instance-jenk-id20592-20260608-063944",
+        "uitest-onprem-sample0.8850217107568628",
+        "uitest-onprem-sample0.019871073473906153",
+        "uitest-onprem-sample0.16930573620698042",
+        "uitest-onprem-sample0.29772965235542037",
+        "uitest-onprem-sample0.21445563187917627",
+        "uitest-onprem-sample0.8983890399192324"
+      ],
+      "label": "VM"
+    }
+  ],
+  "stage": "Dry Run: iTest AWS VMs with Autoclean=False label",
+  "version": 1,
+  "written_at": "2026-10-26T07:37:12Z"
+}

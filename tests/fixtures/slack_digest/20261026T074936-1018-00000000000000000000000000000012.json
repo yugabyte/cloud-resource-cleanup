@@ -1,0 +1,34 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": {
+    "qa-team": [
+      "qa-disk-1"
+    ],
+    "unknown": [
+      "yb-itest-disk-2",
+      "yb-itest-disk-3"
+    ]
+  },
+  "channel": "crc-untagged-resources-notifications",
+  "cloud": "gcp",
+  "dry_run": false,
+  "failures": [],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "disk",
+  "operation": "delete",
+  "resource_suffix": null,
+  "sections": [
+    {
+      "ids": [
+        "qa-disk-1",
+        "yb-itest-disk-2",
+        "yb-itest-disk-3"
+      ],
+      "label": "Disk"
+    }
+  ],
+  "stage": "Gcp Disks detached 1 day ago",
+  "version": 1,
+  "written_at": "2026-10-26T07:49:36Z"
+}

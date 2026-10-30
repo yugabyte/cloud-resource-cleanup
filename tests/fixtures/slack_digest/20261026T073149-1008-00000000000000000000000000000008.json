@@ -1,0 +1,22 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "yba-crc-cleanup-notifications",
+  "cloud": "oci",
+  "dry_run": false,
+  "failures": [],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "disk",
+  "operation": "delete",
+  "resource_suffix": "ONLY_YBA",
+  "sections": [
+    {
+      "ids": [],
+      "label": "Disk"
+    }
+  ],
+  "stage": "OCI Disks 6 Hours old",
+  "version": 1,
+  "written_at": "2026-10-26T07:31:49Z"
+}

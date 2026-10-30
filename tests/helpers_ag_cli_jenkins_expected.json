@@ -1,0 +1,2716 @@
+{
+ "00-f36f1c1097": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "00-f36f1c1097 aws ip",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "exception_tags": null,
+    "filter_tags": {
+     "crc": [
+      "gke"
+     ],
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "dev-itest",
+      "dev-uitest",
+      "uitest-keep-universe",
+      "dev-uitest-keep-universe",
+      "test",
+      "testing",
+      "manual-testing",
+      "manual_testing",
+      "Test",
+      "internal_testing"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "ip"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "01-86b97fa26c": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "01-86b97fa26c aws keypair",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_regex": null,
+    "name_regex": [
+     "yb-itest",
+     "yb-itests",
+     "ui-auto",
+     "-itest-key"
+    ]
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "keypair"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "02-8eb3310431": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "02-8eb3310431 aws spot_instance_requests",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "spot_instance_requests"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "03-eba308c63a": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "03-eba308c63a aws vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "itest_yba",
+      "ybtest",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "04-d51d0b496f": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "04-d51d0b496f aws vm --dry_run",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": null,
+    "filter_tags": {
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "05-e86dc61dbc": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "05-e86dc61dbc aws spot_instance_requests",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "spot_instance_requests"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "06-6da4fe720a": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "06-6da4fe720a aws vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "itest_yba-keep-universe",
+      "ybtest_keep_resources"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "07-1fc237c411": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "07-1fc237c411 aws vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 5
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "itest_yba-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest",
+      "ybtest_keep_resources",
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "instance_state": [
+     "stopped"
+    ],
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "08-214a13be21": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "08-214a13be21 aws kms",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 2
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": null,
+    "kms_key_description": "Yugabyte Master Key",
+    "kms_pending_window": 7,
+    "kms_user": "arn:aws:iam::123456789012:user/jenkins-slave"
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "kms"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "09-51a1491696": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "09-51a1491696 aws kms",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 3
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": null,
+    "kms_key_description": "Yugabyte Master Key",
+    "kms_pending_window": 7,
+    "kms_user": "arn:aws:iam::454529406029:user/qa-jenkins-slave"
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "kms"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "10-a659c7a912": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "10-a659c7a912 aws snapshot",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age_days": 90,
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ]
+    }
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "snapshot"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "11-d68c09d92b": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "11-d68c09d92b aws disk",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 7
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "detach_age": {
+     "days": 3
+    },
+    "exception_regex": null,
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "itest_yba",
+      "ybtest",
+      "dev-itest",
+      "dev-uitest",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe"
+     ]
+    },
+    "name_regex": null,
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "12-3a215916af": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "12-3a215916af aws disk",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 30
+    },
+    "custom_age_tag_key": null,
+    "detach_age": {
+     "days": 7
+    },
+    "exception_regex": null,
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": null,
+    "name_regex": null,
+    "notags": {
+     "yb_task": []
+    }
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "13-15c1257867": {
+  "dry_runs": [],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "13-15c1257867 aws vm --scan_tag --dry_run",
+  "max_age_env": [],
+  "max_age_env_after_run": null,
+  "operations": [],
+  "options": [],
+  "pairs": [],
+  "scan_notified": 0,
+  "scanned": [
+   [
+    "autoclean",
+    "false"
+   ]
+  ],
+  "slack_channels": [],
+  "slack_clients": 1
+ },
+ "14-ef512eeaf2": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "14-ef512eeaf2 gcp disk",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": null,
+    "custom_age_tag_key": "max_retention_age",
+    "detach_age": {
+     "days": 1
+    },
+    "exception_regex": null,
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe"
+     ]
+    },
+    "name_regex": null,
+    "notags": null,
+    "project_id": "yugabyte",
+    "slack_notify_users": false,
+    "slack_user_label": null
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "15-b9866b1aa4": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "15-b9866b1aa4 azure disk",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "uitest",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "16-ed67427325": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "16-ed67427325 azure disk",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "17-94ea23041f": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "17-94ea23041f azure ip",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_tags": null,
+    "filter_tags": {
+     "crc": [
+      "gke"
+     ],
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "test",
+      "testing",
+      "manual-testing",
+      "manual_testing",
+      "Test",
+      "internal_testing"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "ip"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "18-caa0322ee5": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "18-caa0322ee5 azure vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "uitest",
+      "dev-itest",
+      "dev-uitest",
+      "ybtest"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "19-796a77c642": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "19-796a77c642 azure vm --dry_run",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": null,
+    "filter_tags": {
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "uitest",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "20-c5961c2f6b": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "20-c5961c2f6b azure vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest_keep_resources"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "21-9d15e800e1": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "21-9d15e800e1 azure vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 5
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "uitest",
+      "dev-itest",
+      "dev-uitest",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest",
+      "ybtest_keep_resources",
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "instance_state": [
+     "stopped"
+    ],
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "22-5a00060f72": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "22-5a00060f72 azure nic",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_regex": null,
+    "name_regex": [
+     "yb-itest",
+     "yb-itests",
+     "ui-auto"
+    ],
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "nic"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "23-2555295726": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "23-2555295726 azure spot_instances",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": null,
+    "notags": null,
+    "resource_group": "yugabyte-rg"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "spot_instances"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "24-c753b3d227": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "24-c753b3d227 gcp ip",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_regex": null,
+    "name_regex": [
+     "itest",
+     "itests",
+     "ui-auto"
+    ],
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "ip"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "25-281ee439e5": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "25-281ee439e5 gcp vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest",
+      "ybtest"
+     ]
+    },
+    "notags": null,
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "26-a8e19e1c1a": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "26-a8e19e1c1a gcp vm --dry_run",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": null,
+    "filter_tags": {
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null,
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "27-501363c1fb": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "27-501363c1fb gcp vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest_keep_resources"
+     ]
+    },
+    "notags": null,
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "28-139277ebf6": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "28-139277ebf6 gcp vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 5
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest",
+      "ybtest_keep_resources",
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "instance_state": [
+     "TERMINATED"
+    ],
+    "notags": null,
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "29-e9d9118cb1": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "29-e9d9118cb1 oci vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest",
+      "ybtest"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "30-b303021636": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "30-b303021636 oci vm --dry_run",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": null,
+    "filter_tags": {
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "31-2436ebf046": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "31-2436ebf046 oci vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest_keep_resources"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "32-0d0dfe2bdc": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "32-0d0dfe2bdc oci vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 5
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "uitest",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "dev-itest",
+      "dev-uitest",
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest",
+      "ybtest_keep_resources",
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "instance_state": [
+     "STOPPED"
+    ],
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "33-5e4271312f": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "33-5e4271312f oci disk",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "hours": 6
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "bug_bash_22_9_2023",
+      "itest",
+      "itests",
+      "itest-system",
+      "db-cross-functional",
+      "uitest",
+      "dev-itest",
+      "dev-uitest",
+      "ybtest"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "34-dfdacb0591": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "34-dfdacb0591 oci disk",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "itest-keep-universe",
+      "itest-system-keep-universe",
+      "db-cross-functional-keep-universe",
+      "uitest-keep-universe",
+      "dev-itest-keep-universe",
+      "dev-uitest-keep-universe",
+      "ybtest_keep_resources"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "yba-crc-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "35-978f2d7bad": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "35-978f2d7bad aws ip",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "exception_tags": null,
+    "filter_tags": {
+     "yb_task": [
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "ip"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "36-eb262dd1a3": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "36-eb262dd1a3 aws keypair",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_regex": null,
+    "name_regex": [
+     "yb-stress-auto"
+    ]
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "keypair"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "37-003c442c02": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "37-003c442c02 aws vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "notags": null
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "38-eb9eb9f7aa": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "38-eb9eb9f7aa azure disk",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "disk"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "39-5467efd10a": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "39-5467efd10a azure ip",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_tags": null,
+    "filter_tags": {
+     "yb_task": [
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "ip"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "40-62184298e4": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "40-62184298e4 azure vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "notags": null,
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "41-daf41ee387": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "41-daf41ee387 gcp ip",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "exception_regex": null,
+    "name_regex": [
+     "yb-stress-auto"
+    ],
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "ip"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "42-9794f0f7df": {
+  "dry_runs": [
+   false
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "42-9794f0f7df gcp vm",
+  "max_age_env": [
+   "{\"days\": 21}"
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": {
+     "days": 1
+    },
+    "custom_age_tag_key": "max_retention_age",
+    "exception_tags": {
+     "auto_clean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "autoclean": [
+      "false",
+      "False",
+      "FALSE"
+     ],
+     "crc": [
+      "gke"
+     ]
+    },
+    "filter_tags": {
+     "yb_task": [
+      "stress",
+      "stress-dev",
+      "stress-chaos",
+      "stress-lru-cdc",
+      "stress-smoke-cdc",
+      "smoke-core",
+      "stress-smoke-core",
+      "stress-sqlancer",
+      "stress-lru-core",
+      "stress-scale"
+     ]
+    },
+    "notags": null,
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "db-stress-tests-cleanup-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "43-f12e504608": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "43-f12e504608 aws vm -d",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": null,
+    "custom_age_tag_key": null,
+    "exception_tags": null,
+    "filter_tags": null,
+    "notags": {
+     "yb_dept": [],
+     "yb_owner": [],
+     "yb_task": []
+    }
+   }
+  ],
+  "pairs": [
+   [
+    "aws",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "crc-untagged-resources-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "44-217145c5fa": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "44-217145c5fa azure vm -d",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": null,
+    "custom_age_tag_key": null,
+    "exception_tags": null,
+    "filter_tags": null,
+    "notags": {
+     "yb_dept": [],
+     "yb_owner": [],
+     "yb_task": []
+    },
+    "resource_group": "rg-jenkins"
+   }
+  ],
+  "pairs": [
+   [
+    "azure",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "crc-untagged-resources-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "45-4fa9be3f11": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "45-4fa9be3f11 gcp vm -d",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": null,
+    "custom_age_tag_key": null,
+    "exception_tags": null,
+    "filter_tags": null,
+    "notags": {
+     "yb_dept": [],
+     "yb_owner": [],
+     "yb_task": []
+    },
+    "project_id": "yugabyte"
+   }
+  ],
+  "pairs": [
+   [
+    "gcp",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "crc-untagged-resources-notifications"
+  ],
+  "slack_clients": 1
+ },
+ "46-1a7e13a5a3": {
+  "dry_runs": [
+   true
+  ],
+  "exit_code": 0,
+  "influx_clients": 0,
+  "label": "46-1a7e13a5a3 oci vm -d",
+  "max_age_env": [
+   null
+  ],
+  "max_age_env_after_run": null,
+  "operations": [
+   "delete"
+  ],
+  "options": [
+   {
+    "age": null,
+    "custom_age_tag_key": null,
+    "exception_tags": null,
+    "filter_tags": null,
+    "notags": {
+     "yb_dept": [],
+     "yb_owner": [],
+     "yb_task": []
+    }
+   }
+  ],
+  "pairs": [
+   [
+    "oci",
+    "vm"
+   ]
+  ],
+  "scan_notified": 0,
+  "scanned": [],
+  "slack_channels": [
+   "crc-untagged-resources-notifications"
+  ],
+  "slack_clients": 1
+ }
+}

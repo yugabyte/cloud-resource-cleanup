@@ -1,0 +1,62 @@
+{
+  "build_number": "16654",
+  "build_url": "https://jenkins.dev.yugabyte.com/job/cloud-resource-cleanups/job/cloud-resource-cleanups/16654/",
+  "by_owner": null,
+  "channel": "yba-crc-cleanup-notifications",
+  "cloud": "aws",
+  "dry_run": false,
+  "failures": [
+    {
+      "error": "instance doesn't have Name Tag",
+      "id": "i-0f7682b86ea2483d2"
+    }
+  ],
+  "job_name": "cloud-resource-cleanups/cloud-resource-cleanups",
+  "kind": "vm",
+  "operation": "delete",
+  "resource_suffix": "ONLY_YBA",
+  "sections": [
+    {
+      "ids": [
+        "yb-dev-ui-auto-aws-2026130-b93-canarymultiaz-77-1-n4",
+        "yb-dev-ui-auto-aws-2026130-b93-tls-17-n3",
+        "yb-itest-jenk-is8701-c6639e84c8-20261025-233833-n2",
+        "yb-dev-ui-auto-aws-2026130-b93-tls-17-n4",
+        "yb-dev-ui-auto-aws-2026130-b93-tls-17-n1",
+        "yb-itest-jenk-is8701-41eb59a78e-20261025-233833-n3",
+        "yb-dev-ui-auto-aws-2026130-b93-hcvault-24-n1",
+        "yb-itest-jenk-is8701-41eb59a78e-20261025-233833-n2",
+        "yb-itest-jenk-is8701-c6639e84c8-20261025-233833-n3",
+        "yb-dev-ui-auto-aws-2026130-b93-canarymultiaz-77-1-n3",
+        "yb-itest-jenk-is8701-c6639e84c8-20261025-233833-n1",
+        "yb-dev-ui-auto-aws-2026130-b93-hcvault-24-n4",
+        "yb-dev-ui-auto-aws-2026130-b93-hcvault-24-n3",
+        "yb-itest-jenk-is8701-b086edfc46-20261025-233833-n2",
+        "yb-itest-jenk-is8701-b086edfc46-20261025-233833-n1",
+        "yb-itest-jenk-is8701-b086edfc46-20261025-233833-n3",
+        "yb-itest-jenk-is8701-41eb59a78e-20261025-233833-n1",
+        "yb-dev-ui-auto-aws-2026130-b93-canarymultiaz-77-1-n1",
+        "yb-itest-jenk-is8701-82a90cc48e-20261025-233833-n2",
+        "yb-itest-jenk-is8701-82a90cc48e-20261025-233833-n3",
+        "yb-itest-jenk-is8701-82a90cc48e-20261025-233833-n1",
+        "yb-itest-jenk-is8701-ee8d21f970-20261025-233833-n2",
+        "yb-itest-jenk-is8701-ee8d21f970-20261025-233833-n1",
+        "yb-itest-jenk-is8701-ee8d21f970-20261025-233833-n3",
+        "yb-dev-ui-auto-aws-2026130-b93-canarymultiaz-77-1-n2",
+        "uitest-onprem-sample0.4494083735512161",
+        "yb-itest-jenk-is8700-08bf154af9-20261025-203433-readonly1-n5",
+        "uitest-onprem-sample0.5946434260213836",
+        "yb-dev-ui-auto-aws-2026130-b93-tls-17-n2",
+        "yb-itest-jenk-is8700-08bf154af9-20261025-203433-readonly1-n2",
+        "yb-dev-ui-auto-aws-2026130-b93-hcvault-24-n2",
+        "yb-itest-jenk-is8700-08bf154af9-20261025-203433-readonly1-n4",
+        "yb-itest-jenk-is8700-08bf154af9-20261025-203433-readonly1-n3",
+        "yb-itest-jenk-is8700-08bf154af9-20261025-203433-readonly1-n1"
+      ],
+      "label": "VM"
+    }
+  ],
+  "stage": "AWS VMs 6 Hours old",
+  "version": 1,
+  "written_at": "2026-10-26T07:37:35Z"
+}

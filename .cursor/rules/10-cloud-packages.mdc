@@ -1,0 +1,17 @@
+---
+description: Rules for cloud provider packages
+globs: crc/aws/**,crc/azu/**,crc/gcp/**,crc/oci/**
+alwaysApply: false
+---
+
+# Cloud packages
+
+- A cleaner is registered with `@register("<cloud>", "<kind>")` and routed in
+  `crc/cli/routes/<cloud>.py`; the guide is "Add a cleaner" in `ARCHITECTURE.md`.
+- `plan()` only reads; every mutation is in `apply()`, in the order `CLEANUP_SAFETY.md` gives.
+- Policy, age and tag decisions come from `crc/core`, not from new code here.
+- Inject SDK clients; never build one at import time. Normalise SDK data to `Candidate`.
+- Destructive kinds need a real age gate and fail closed on bad age, tags or telemetry.
+- Catch specific SDK errors, log the resource id, chain with `raise ... from e`; no silent
+  `except Exception`; no retry layer over SDK retries.
+- Update the package `README.md` (Public API and Safety Invariants) with the code.

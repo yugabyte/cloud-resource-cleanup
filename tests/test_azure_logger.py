@@ -1,0 +1,454 @@
+"""The Azure cleaners report to `crc.core.logger` (REGION, ACTION, SKIPPED, FAILED).
+
+Azure has no regions: one REGION line per resource group, `region=<resource group>`. Every case
+runs the Cleaner through `crc.core.engine` (ip, nic, disk) or the VM classes under a begun run
+and asserts the exact lines; the tag dumps
+(BUG-358) and the per-leftover-disk skip lines are DEBUG with unchanged text.
+"""
+
+import logging
+import re
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+
+from crc.azu import _logger
+from crc.azu.disk import AzureDiskCleaner, DiskSettings
+from crc.azu.nic import AzureNicCleaner
+from crc.azu.spot_vm import build_spot_vm_cleaner
+from crc.azu.vm import VmCleaner, VmSettings
+from crc.core import logger
+from crc.core.cleaner import Operation, RunContext
+from tests import helpers_azure_disk as hd
+from tests import helpers_azure_ip as hi
+from tests import helpers_azure_nic as hn
+from tests import helpers_azure_spot as hs
+from tests import helpers_azure_vm as hv
+from tests.helpers_ad_spot_engine import run_through_engine
+from tests.helpers_ad_vm_engine import run_vm
+from tests.helpers_failed_once import assert_failure_printed_once
+from tests.helpers_wc_azu_engine import candidate_ids, engine_run
+
+_PREFIXES = ("RUN START", "REGION", "ACTION", "SKIPPED", "ERRORS", "FAILED", "RESULT")
+ENV = {"env": ["ci"]}
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        self.now += 2
+        return self.now
+
+
+@pytest.fixture(autouse=True)
+def _caplog_info(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    caplog.set_level(logging.DEBUG)
+    logger.finish()
+    yield
+    logger.finish()
+
+
+def _begin(resource: str, *, dry_run: bool) -> None:
+    logger.begin("azure", resource, "delete", dry_run, {}, clock=_Clock())
+
+
+def _lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith(_PREFIXES)]
+    return [re.sub(r"seconds=\d+", "seconds=S", line) for line in lines]
+
+
+# ----- disk ---------------------------------------------------------------------------------
+
+
+def _disks(monkeypatch: pytest.MonkeyPatch) -> hd.FakeAzure:
+    azure = hd.FakeAzure(
+        [
+            hd.disk("a", {"env": "ci"}),
+            hd.disk("b", {"env": "ci"}, state="Reserved"),
+            hd.disk("c", {"other": "x"}),
+            hd.disk("d", {"env": "ci"}),
+        ]
+    )
+    azure.install(monkeypatch)
+    return azure
+
+
+def _disk(*, dry_run: bool = False) -> Any:
+    options = {
+        "resource_group": "rg",
+        "filter_tags": ENV,
+        "exception_tags": None,
+        "age": None if dry_run else {"days": 1},
+        "custom_age_tag_key": None,
+        "notags": None,
+    }
+    return engine_run("disk", options, dry_run=dry_run, now=hd.NOW)
+
+
+def test_disk_real_run_reports_region_actions_and_skips(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _disks(monkeypatch)
+    _begin("disk", dry_run=False)
+    _disk()
+    logger.finish()
+    assert _lines(caplog) == [
+        "RUN START cloud=azure resource=disk operation=delete dry_run=false",
+        "REGION cloud=azure resource=disk region=rg scanned=4 selected=2 seconds=S",
+        "ACTION deleted cloud=azure resource=disk region=rg id=a name=a",
+        "ACTION deleted cloud=azure resource=disk region=rg id=d name=d",
+        "SKIPPED cloud=azure resource=disk reason=filter_tags count=1",
+        "SKIPPED cloud=azure resource=disk reason=state count=1",
+        "RESULT cloud=azure resource=disk operation=delete dry_run=false selected=2 done=2 "
+        "failed=0 skipped=2 regions=1 regions_skipped=0 duration_s=2",
+    ]
+
+
+def test_disk_dry_run_logs_would_delete_and_done_is_zero(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = _disks(monkeypatch)
+    _begin("disk", dry_run=True)
+    _disk(dry_run=True)
+    logger.finish()
+    lines = _lines(caplog)
+    assert lines[1:4] == [
+        "REGION cloud=azure resource=disk region=rg scanned=4 selected=2 seconds=S",
+        "ACTION would_delete cloud=azure resource=disk region=rg id=a name=a",
+        "ACTION would_delete cloud=azure resource=disk region=rg id=d name=d",
+    ]
+    assert "selected=2 done=0 failed=0 skipped=2" in lines[-1]
+    assert [c for c in azure.calls if c[0] == "begin_delete"] == []
+
+
+def test_disk_tag_dump_is_debug_with_unchanged_text(caplog: pytest.LogCaptureFixture) -> None:
+    azure = hd.FakeAzure([hd.disk("a", {"env": "ci"})])
+    cleaner = AzureDiskCleaner(
+        lambda: azure.client(None, "sub"), "rg", DiskSettings(filter_tags={"env": ["ci"]})
+    )
+    cleaner.decide(hd.disk("a", {"env": "ci"}), hd.NOW)
+    dumps = [r for r in caplog.records if r.getMessage() == "{'env': 'ci'}"]
+    assert [r.levelno for r in dumps] == [logging.DEBUG]
+
+
+def test_disk_cleaner_plan_dry_run_logs_each_action_once(caplog: pytest.LogCaptureFixture) -> None:
+    azure = hd.FakeAzure([hd.disk("a", {"env": "ci"})])
+    cleaner = AzureDiskCleaner(
+        lambda: azure.client(None, "sub"), "rg", DiskSettings(filter_tags={"env": ["ci"]})
+    )
+    context = RunContext(dry_run=True, operation=Operation.DELETE, options={}, now=hd.NOW)
+    _begin("disk", dry_run=True)
+    plan = cleaner.plan(context)
+    cleaner.apply(plan, context)
+    logger.finish()
+    assert [line for line in _lines(caplog) if line.startswith("ACTION")] == [
+        "ACTION would_delete cloud=azure resource=disk region=rg id=a name=a"
+    ]
+
+
+def _engine_ip(*, dry_run: bool) -> None:
+    options = {
+        "resource_group": "rg",
+        "filter_tags": ENV,
+        "exception_tags": {},
+        "notags": {},
+        "age": None if dry_run else {"days": 1},
+    }
+    engine_run("ip", options, dry_run=dry_run, now=hi.NOW)
+
+
+# ----- ip -----------------------------------------------------------------------------------
+
+
+def test_ip_real_and_dry_run(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = hi.FakeAzure(
+        [hi.ip("a", {"env": "ci"}), hi.ip("b", {"env": "ci"}, config={"id": "x"}), hi.ip("c", {})]
+    )
+    azure.install(monkeypatch)
+    _begin("ip", dry_run=False)
+    _engine_ip(dry_run=False)
+    logger.finish()
+    assert _lines(caplog)[1:] == [
+        "ACTION deleted cloud=azure resource=ip region=rg id=a name=a",
+        "REGION cloud=azure resource=ip region=rg scanned=3 selected=1 seconds=S",
+        "SKIPPED cloud=azure resource=ip reason=filter_tags count=1",
+        "SKIPPED cloud=azure resource=ip reason=in_use count=1",
+        "RESULT cloud=azure resource=ip operation=delete dry_run=false selected=1 done=1 "
+        "failed=0 skipped=2 regions=1 regions_skipped=0 duration_s=2",
+    ]
+    caplog.clear()
+    _begin("ip", dry_run=True)
+    _engine_ip(dry_run=True)
+    logger.finish()
+    lines = _lines(caplog)
+    assert lines[1:3] == [
+        "REGION cloud=azure resource=ip region=rg scanned=3 selected=1 seconds=S",
+        "ACTION would_delete cloud=azure resource=ip region=rg id=a name=a",
+    ]
+    assert "selected=1 done=0" in lines[-1]
+
+
+def _engine_nic(*, dry_run: bool) -> Any:
+    options = {
+        "resource_group": "rg",
+        "name_regex": ["nic"],
+        "exception_regex": None,
+        "age": None if dry_run else {"days": 1},
+    }
+    return engine_run("nic", options, dry_run=dry_run, now=hn.NOW)
+
+
+# ----- nic ----------------------------------------------------------------------------------
+
+
+def test_nic_failure_after_three_attempts_is_listed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    boom = RuntimeError("busy")
+    azure = hn.FakeAzure(
+        [hn.nic("nic-a"), hn.nic("nic-b"), hn.nic("nic-c", "vm")],
+        begin_script={"nic-b": [boom, boom, boom]},
+    )
+    azure.install(monkeypatch)
+    _begin("nic", dry_run=False)
+    outcome = _engine_nic(dry_run=False)
+    logger.finish()
+    assert candidate_ids(outcome) == ["nic-a"]
+    assert _lines(caplog)[1:] == [
+        "REGION cloud=azure resource=nic region=rg scanned=3 selected=2 seconds=S",
+        "ACTION deleted cloud=azure resource=nic region=rg id=nic-a name=nic-a",
+        "SKIPPED cloud=azure resource=nic reason=in_use count=1",
+        "ERRORS count=1",
+        "RESULT cloud=azure resource=nic operation=delete dry_run=false selected=1 done=1 "
+        "failed=1 skipped=1 regions=1 regions_skipped=0 duration_s=2",
+    ]
+    errors = [r.levelno for r in caplog.records if r.getMessage().startswith(("ERRORS", "FAILED"))]
+    assert errors == [logging.ERROR]
+    assert_failure_printed_once(caplog, "NIC nic-b: busy")
+
+
+def test_nic_dry_run_and_no_double_action_from_plan_and_apply(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = hn.FakeAzure([hn.nic("nic-a")])
+    azure.install(monkeypatch)
+    _begin("nic", dry_run=True)
+    _engine_nic(dry_run=True)
+    logger.finish()
+    assert "ACTION would_delete cloud=azure resource=nic region=rg id=nic-a name=nic-a" in _lines(
+        caplog
+    )
+    caplog.clear()
+    cleaner = AzureNicCleaner(lambda: azure.client(None, "s"), "rg", ["nic"], None)
+    context = RunContext(dry_run=True, operation=Operation.DELETE, options={}, now=hn.NOW)
+    _begin("nic", dry_run=True)
+    cleaner.apply(cleaner.plan(context), context)
+    logger.finish()
+    assert [x for x in _lines(caplog) if x.startswith("ACTION")] == [
+        "ACTION would_delete cloud=azure resource=nic region=rg id=nic-a name=nic-a"
+    ]
+
+
+# ----- vm -----------------------------------------------------------------------------------
+
+
+def _engine_vm(
+    azure: hv.FakeAzure, *, dry_run: bool, operation: Operation = Operation.DELETE
+) -> Any:
+    cleaner = VmCleaner(
+        lambda: azure.compute_client(None, "s"),
+        lambda: azure.network_client(None, "s"),
+        "rg",
+        VmSettings(filter_tags=ENV, age={"hours": 1}),
+    )
+    return run_vm("azure", cleaner, dry_run=dry_run, operation=operation, now=hv.NOW)
+
+
+def test_vm_delete_reports_skips_and_failures(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = hv.FakeAzure(
+        [
+            hv.vm("vm-a"),
+            hv.vm("vm-young", hours=0.1),
+            hv.vm("vm-off", statuses=hv.STOPPED),
+            hv.vm("vm-bad", statuses=RuntimeError("view failed")),
+            hv.vm("vm-other", tags={"x": "y"}),
+        ]
+    )
+    azure.install(monkeypatch)
+    _begin("vm", dry_run=False)
+    _engine_vm(azure, dry_run=False)
+    logger.finish()
+    assert _lines(caplog)[1:] == [
+        "REGION cloud=azure resource=vm region=rg scanned=5 selected=1 seconds=S",
+        "ACTION deleted cloud=azure resource=vm region=rg id=vm-a name=vm-a",
+        "SKIPPED cloud=azure resource=vm reason=filter_tags count=1",
+        "SKIPPED cloud=azure resource=vm reason=state count=1",
+        "SKIPPED cloud=azure resource=vm reason=too_young count=1",
+        "ERRORS count=1",
+        "RESULT cloud=azure resource=vm operation=delete dry_run=false selected=1 done=1 "
+        "failed=1 skipped=3 regions=1 regions_skipped=0 duration_s=2",
+    ]
+    assert_failure_printed_once(caplog, "vm-bad instance: view failed")
+
+
+def test_vm_stop_and_dry_run_kinds(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = hv.FakeAzure([hv.vm("vm-a")])
+    azure.install(monkeypatch)
+    _begin("vm", dry_run=False)
+    _engine_vm(azure, dry_run=False, operation=Operation.STOP)
+    logger.finish()
+    assert "ACTION stopped cloud=azure resource=vm region=rg id=vm-a name=vm-a" in _lines(caplog)
+    caplog.clear()
+    _begin("vm", dry_run=True)
+    _engine_vm(azure, dry_run=True, operation=Operation.STOP)
+    logger.finish()
+    lines = _lines(caplog)
+    assert "ACTION would_stop cloud=azure resource=vm region=rg id=vm-a name=vm-a" in lines
+    assert "selected=1 done=0" in lines[-1]
+
+
+def test_vm_nic_failure_after_24_attempts_is_listed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    boom = RuntimeError("nic busy")
+    azure = hv.FakeAzure([hv.vm("vm-a")], scripts={"nic_begin": {"vm-a-NIC": [boom] * 24}})
+    azure.install(monkeypatch)
+    _begin("vm", dry_run=False)
+    _engine_vm(azure, dry_run=False)
+    logger.finish()
+    assert "ERRORS count=1" in _lines(caplog)
+    assert_failure_printed_once(caplog, "Failed to delete the NIC - vm-a-NIC after 24 attempts")
+
+
+def test_vm_failed_delete_counts_as_selected_without_action(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    boom = RuntimeError("delete failed")
+    azure = hv.FakeAzure([hv.vm("vm-a")], scripts={"vm_begin": {"vm-a": [boom]}})
+    azure.install(monkeypatch)
+    _begin("vm", dry_run=False)
+    _engine_vm(azure, dry_run=False)
+    logger.finish()
+    lines = _lines(caplog)
+    assert not [x for x in lines if x.startswith("ACTION")]
+    assert "REGION cloud=azure resource=vm region=rg scanned=1 selected=1 seconds=S" in lines
+    assert_failure_printed_once(caplog, "vm-a instance: delete failed")
+    assert "selected=0 done=0 failed=1 skipped=0" in lines[-1]
+
+
+def test_vm_tag_dump_is_debug_with_unchanged_text(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = hv.FakeAzure([])
+    azure.install(monkeypatch)
+    cleaner = VmCleaner(
+        lambda: azure.compute_client(None, "s"),
+        lambda: azure.network_client(None, "s"),
+        "rg",
+        VmSettings(filter_tags=ENV, age={"hours": 1}),
+    )
+    cleaner.decide(hv.vm("vm-a"), lambda: hv.NOW)
+    dumps = [r for r in caplog.records if r.getMessage() == "{'env': 'ci'}"]
+    assert [r.levelno for r in dumps] == [logging.DEBUG]
+
+
+# ----- spot vm ------------------------------------------------------------------------------
+
+
+def _run_spot(*, dry_run: bool) -> None:
+    ctx = RunContext(
+        dry_run=dry_run,
+        operation=Operation.DELETE,
+        options={"resource_group": hs.RG, "age": {"days": 1}},
+        now=hs.NOW,
+    )
+    run_through_engine("azure", "spot_instances", build_spot_vm_cleaner, ctx)
+
+
+def test_spot_real_run_reports_region_action_skips_and_failures(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    boom = RuntimeError("delete denied")
+    azure = hs.FakeAzure(
+        [
+            hs.vm("s1"),
+            hs.vm("s2"),
+            hs.vm("s-young", age=None),
+            hs.vm("s-run"),
+            hs.vm("s-reg", priority="Regular"),
+        ],
+        power={
+            "s1": hs.DEALLOCATED,
+            "s2": hs.DEALLOCATED,
+            "s-young": hs.DEALLOCATED,
+            "s-run": ["Provisioning succeeded", "VM running"],
+        },
+        script={("vm_begin", "s2"): [boom]},
+    )
+    azure.install(monkeypatch)
+    _begin("spot_instances", dry_run=False)
+    _run_spot(dry_run=False)
+    logger.finish()
+    lines = _lines(caplog)
+    region = f"REGION cloud=azure resource=spot_instances region={hs.RG} scanned=5 selected=2"
+    assert f"{region} seconds=S" in lines
+    assert (
+        f"ACTION deleted cloud=azure resource=spot_instances region={hs.RG} id=s1 name=s1" in lines
+    )
+    assert "SKIPPED cloud=azure resource=spot_instances reason=no_creation_time count=1" in lines
+    assert "SKIPPED cloud=azure resource=spot_instances reason=not_spot count=1" in lines
+    assert "SKIPPED cloud=azure resource=spot_instances reason=state count=1" in lines
+    assert "ERRORS count=1" in lines
+    assert_failure_printed_once(caplog, "Spot VM s2")
+    assert "selected=1 done=1 failed=1 skipped=3 regions=1" in lines[-1]
+
+
+def test_spot_dry_run_and_leftover_disk_skips_are_debug(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    azure = hs.FakeAzure(
+        [hs.vm("s1", os_disk=hs.slot("disk-1", rg="other-rg"))],
+        power={"s1": hs.DEALLOCATED},
+    )
+    azure.install(monkeypatch)
+    _begin("spot_instances", dry_run=True)
+    _run_spot(dry_run=True)
+    logger.finish()
+    lines = _lines(caplog)
+    assert (
+        f"ACTION would_delete cloud=azure resource=spot_instances region={hs.RG} id=s1 name=s1"
+        in lines
+    )
+    assert "selected=1 done=0" in lines[-1]
+    skips = [r for r in caplog.records if r.getMessage().startswith("Skipping leftover Spot disk")]
+    assert [r.levelno for r in skips] == [logging.DEBUG]
+    assert (
+        "SKIPPED cloud=azure resource=spot_instances "
+        "reason=leftover_disk_outside_resource_group count=1" in lines
+    )
+
+
+# ----- helpers ------------------------------------------------------------------------------
+
+
+def test_reason_slug_maps_known_reasons_and_slugs_the_rest() -> None:
+    assert _logger.reason_slug("not older than the age threshold") == "too_young"
+    assert _logger.reason_slug("Disk: State!!") == "disk_state"
+    assert _logger.reason_slug("???") == "other"
+
+
+def test_no_run_begun_logs_nothing_extra(caplog: pytest.LogCaptureFixture) -> None:
+    _logger.region_done("rg", 1, 1, _logger.started())
+    _logger.acted("deleted", "rg", "x")
+    _logger.skip("too young")
+    _logger.failed("rg", "x", "boom")
+    assert _lines(caplog) == []
